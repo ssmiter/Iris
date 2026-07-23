@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+**/node_modules/
+
+# 构建产物
+dist/
+target/
+*.class
+
+# 运行时数据（个人数据绝不入库）
+workspace/
+*.db
+*.db-journal
+.weave/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 密钥与本地配置
+.env
+application-local.yml
+**/apiclient_key.pem
+
+# 系统
+.DS_Store
+Thumbs.db

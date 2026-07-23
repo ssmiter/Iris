@@ -1,0 +1,11 @@
+{
+  "name": "weave-webbridge-daemon",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Weave browser automation daemon (CDP/Playwright, 127.0.0.1 only)",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {}
+}
