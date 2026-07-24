@@ -1,5 +1,5 @@
 /**
- * Weave WebBridge daemon（骨架，docs/05）。
+ * Iris WebBridge daemon（骨架，docs/05）。
  *
  * 职责：驱动真实 Chrome（借窗模式），把页面状态与动作结果提供给后端。
  * 安全：只监听 127.0.0.1 + 本机令牌；敏感字段值不进状态摘要与日志。
@@ -10,7 +10,7 @@
 import http from 'node:http'
 
 const PORT = 9223
-const TOKEN = process.env.WEAVE_BRIDGE_TOKEN || 'dev-token'
+const TOKEN = process.env.IRIS_BRIDGE_TOKEN || 'dev-token'
 
 function json(res, code, data) {
   res.writeHead(code, { 'Content-Type': 'application/json' })

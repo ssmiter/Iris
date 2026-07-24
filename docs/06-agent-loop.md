@@ -80,7 +80,7 @@ Turn
 | 消息 + renderNodes | 后端 SQLite（或 IndexedDB） | 结构完整，含工具结果 |
 | 分支记录 | IndexedDB（`branches-<convId>`） | 600ms 写防抖 |
 | 压缩边界 | IndexedDB（`compacts-<convId>`） | 同上 |
-| 检查点 | `.weave/checkpoints/` | 文件系统，按锚点消息 id |
+| 检查点 | `.iris/checkpoints/` | 文件系统，按锚点消息 id |
 
 防抖写入 + 删会话时级联清理；旧 localStorage 数据首次加载自动迁移。
 

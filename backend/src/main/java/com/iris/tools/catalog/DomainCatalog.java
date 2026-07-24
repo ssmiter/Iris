@@ -1,6 +1,6 @@
-package com.weave.tools.catalog;
+package com.iris.tools.catalog;
 
-import com.weave.tools.core.Tool;
+import com.iris.tools.core.Tool;
 
 import java.util.Map;
 import java.util.Set;
@@ -26,12 +26,12 @@ public final class DomainCatalog {
             "guest", Set.of("/finance/pay", "/local/write")
     );
 
-    /** 包名 → 能力树路径。com.weave.tools.finance.express → /finance/express */
+    /** 包名 → 能力树路径。com.iris.tools.finance.express → /finance/express */
     public static String inferPath(Class<? extends Tool> toolClass) {
         String pkg = toolClass.getPackageName();
-        String prefix = "com.weave.tools.";
+        String prefix = "com.iris.tools.";
         if (!pkg.startsWith(prefix)) {
-            throw new IllegalStateException("工具必须放在 com.weave.tools.<域>.<目录> 包下: " + pkg);
+            throw new IllegalStateException("工具必须放在 com.iris.tools.<域>.<目录> 包下: " + pkg);
         }
         String rest = pkg.substring(prefix.length()).replace('.', '/');
         return "/" + rest;

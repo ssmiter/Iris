@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-Weave 是个人 AI 助手：瀑布流对话前端 + 大规模工具平台后端（Java/Spring Boot）+ 浏览器自动化 + 本地工作区与沙箱。最终形态为 Windows exe 个人产品。
+Iris 是个人 AI 助手：瀑布流对话前端 + 大规模工具平台后端（Java/Spring Boot）+ 浏览器自动化 + 本地工作区与沙箱。最终形态为 Windows exe 个人产品。
 
 ## 最重要的五条不变量
 
@@ -46,3 +46,5 @@ cd webbridge-daemon && npm install && npm start  # :9223
 ## 文档优先
 
 改架构先改 docs/ 对应文档；新工具域先在 docs/03 的域清单里登记。文档是 GitHub 作品的一部分，保持可独立阅读。
+
+命名、Logo 与视觉身份见 [docs/10-naming-and-identity.md](docs/10-naming-and-identity.md)；改品牌表达前先改该文档。

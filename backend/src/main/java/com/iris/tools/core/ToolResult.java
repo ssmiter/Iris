@@ -1,4 +1,4 @@
-package com.weave.tools.core;
+package com.iris.tools.core;
 
 /**
  * 工具执行结果。result 为任意 JSON；超大结果由执行器统一截断（docs/03 §8）。

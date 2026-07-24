@@ -1,12 +1,12 @@
-package com.weave.tools.life.notes;
+package com.iris.tools.life.notes;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.weave.tools.core.RiskLevel;
-import com.weave.tools.core.Tool;
-import com.weave.tools.core.ToolContext;
-import com.weave.tools.core.ToolResult;
+import com.iris.tools.core.RiskLevel;
+import com.iris.tools.core.Tool;
+import com.iris.tools.core.ToolContext;
+import com.iris.tools.core.ToolResult;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;

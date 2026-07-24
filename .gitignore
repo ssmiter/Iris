@@ -8,10 +8,10 @@ target/
 *.class
 
 # 运行时数据（个人数据绝不入库）
-workspace/
+/workspace/
 *.db
 *.db-journal
-.weave/
+.iris/
 
 # IDE
 .idea/

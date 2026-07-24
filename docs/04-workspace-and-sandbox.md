@@ -2,7 +2,7 @@
 
 ## 1. 工作区（Workspace）
 
-助手的手和脚落在文件系统上。工作区是一个真实目录（默认 `~/Weave/workspace`），所有文件工具的根。
+助手的手和脚落在文件系统上。工作区是一个真实目录（默认 `~/Iris/workspace`），所有文件工具的根。
 
 ### 路径围栏（Path Jail）——第一安全原则
 
@@ -22,7 +22,7 @@
 
 ### 检查点（Checkpoints）——后悔药
 
-- 每次写操作前，把原文件快照到 `.weave/checkpoints/<msgId>/<原始相对路径>`；
+- 每次写操作前，把原文件快照到 `.iris/checkpoints/<msgId>/<原始相对路径>`；
 - 对话分支切换/编辑重发时，世界状态回滚到锚点消息时刻：恢复该锚点检查点快照；
 - 检查点按消息 id 组织 = 文件状态与对话树的节点一一对应，"回到那次对话"= 文件也回到那时；
 - 容量控制：单文件 >10MB 不快照（只记录哈希），检查点总量 LRU 清理。
@@ -37,7 +37,7 @@
 POST /api/sandbox/python
   { code, timeoutSec?, files? } 
     → 沙箱服务起子进程：嵌入式 Python（随安装包分发，用户机器零依赖）
-    → 工作目录 = 工作区内 .weave/sandbox/<runId>/
+    → 工作目录 = 工作区内 .iris/sandbox/<runId>/
     → 捕获 stdout/stderr/生成文件清单 → 截断 → 返回
 ```
 

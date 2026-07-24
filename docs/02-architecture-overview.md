@@ -49,7 +49,7 @@
 
 - 会话/消息：后端 SQLite（也可纯前端 IndexedDB 起步）；
 - 视图状态（分支/压缩边界）：IndexedDB 对象存储（大结构、写防抖）；
-- 工作区：真实文件系统目录 + `.weave/checkpoints` 检查点。
+- 工作区：真实文件系统目录 + `.iris/checkpoints` 检查点。
 
 ### D5：运行时身份 ≠ 构建变体
 
@@ -58,7 +58,7 @@
 ## 3. 后端模块划分（Spring 包结构）
 
 ```
-com.weave
+com.iris
 ├── WeaveApplication.java
 ├── proxy/           模型代理（SSE 转发、鉴权、重试、熔断）
 ├── tools/

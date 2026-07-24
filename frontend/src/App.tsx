@@ -16,8 +16,8 @@ export default function App() {
       <main className="chat">
         {messages.length === 0 && (
           <div className="empty">
-            <h1>Weave · 织</h1>
-            <p>把日常琐事交给知根知底的助手。</p>
+            <h1>Iris · 虹使</h1>
+            <p>把日常琐事交给知根知底的虹使。</p>
           </div>
         )}
         {messages.map((m) => (

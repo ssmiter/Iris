@@ -1,4 +1,4 @@
-package com.weave.tools.core;
+package com.iris.tools.core;
 
 /**
  * 工具风险等级（docs/03 §2）。判定只升不降——会话权限模式可以让行为更严格，

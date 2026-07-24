@@ -11,11 +11,11 @@
     <relativePath/>
   </parent>
 
-  <groupId>com.weave</groupId>
-  <artifactId>weave-backend</artifactId>
+  <groupId>com.iris</groupId>
+  <artifactId>iris-backend</artifactId>
   <version>0.1.0</version>
-  <name>weave-backend</name>
-  <description>Weave personal assistant backend: tool platform, model proxy, workspace, sandbox</description>
+  <name>iris-backend</name>
+  <description>Iris personal assistant backend: tool platform, model proxy, workspace, sandbox</description>
 
   <properties>
     <java.version>21</java.version>

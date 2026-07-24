@@ -1,4 +1,4 @@
-package com.weave.proxy;
+package com.iris.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.MediaType;
@@ -36,7 +36,7 @@ public class ChatProxyController {
     public Flux<ServerSentEvent<String>> proxy(@RequestBody ChatRequest request) {
         // 骨架：返回一段占位流，证明 SSE 链路通；M0 替换为真实上游转发。
         return Flux.just(
-                ServerSentEvent.<String>builder().event("delta").data("{\"text\":\"Weave 后端已连通，").build(),
+                ServerSentEvent.<String>builder().event("delta").data("{\"text\":\"Iris 后端已连通，").build(),
                 ServerSentEvent.<String>builder().event("delta").data("{\"text\":\"等待接入真实模型上游。\"}").build(),
                 ServerSentEvent.<String>builder().event("done").data("{\"finishReason\":\"stop\"}").build()
         );

@@ -1,7 +1,7 @@
-package com.weave.tools.catalog;
+package com.iris.tools.catalog;
 
-import com.weave.tools.core.Tool;
-import com.weave.tools.core.ToolRegistry;
+import com.iris.tools.core.Tool;
+import com.iris.tools.core.ToolRegistry;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
