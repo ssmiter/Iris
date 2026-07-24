@@ -1,0 +1,68 @@
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    min-width: 320px;
+    min-height: 100%;
+    background: rgb(var(--color-canvas));
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background: rgb(var(--color-canvas));
+    color: rgb(var(--color-text));
+    font-family:
+      'Segoe UI Variable',
+      'Segoe UI',
+      'PingFang SC',
+      'Microsoft YaHei UI',
+      system-ui,
+      sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: rgb(var(--color-primary) / 0.18);
+    color: rgb(var(--color-text));
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

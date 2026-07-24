@@ -1,47 +1,128 @@
 import { create } from 'zustand'
-import type { BranchAnchor, ChatMessage, CompactBoundary } from '@/agent/types'
+import type {
+  ConversationProjection,
+  RenderNode,
+  RoundView,
+  RunView,
+  TurnView,
+} from '@/domain/chat/models'
+import type { PendingSupplement } from '@/domain/chat/input'
 
-/**
- * 对话状态（骨架）。完整职责见 docs/06：
- * 消息/分支/压缩线/审批/队列/补充，以及与 IndexedDB 视图状态的同步。
- *
- * 红线：
- * - 手动停止 = 完全停止：未注入的补充转排队 chip，不自动发送（防死循环）
- * - 历史不可丢：分支变体保存完整快照；压缩只画线不动历史
- */
+export type ConnectionState =
+  | 'idle'
+  | 'hydrating'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'invalidated'
+  | 'failed'
 
-interface ChatState {
-  messages: ChatMessage[]
-  isStreaming: boolean
-  branches: Record<string, BranchAnchor>
-  compactBoundaries: CompactBoundary[]
-  queuedMessages: { id: string; text: string }[]
+export interface ChatState {
+  turnOrder: string[]
+  turnsById: Record<string, TurnView>
+  runsById: Record<string, RunView>
+  roundsById: Record<string, RoundView>
+  renderNodesById: Record<string, RenderNode>
+  connectionState: ConnectionState
+  eventCursor: string | null
+  projectionVersion: number
+  pendingSupplements: PendingSupplement[]
 
-  sendMessage: (text: string) => Promise<void>
-  stopStreaming: () => void
+  hydrateProjection: (projection: ConversationProjection) => void
+  upsertTurn: (turn: TurnView) => void
+  upsertRun: (run: RunView) => void
+  upsertRound: (round: RoundView) => void
+  upsertRenderNode: (node: RenderNode) => void
+  setConnectionState: (state: ConnectionState) => void
+  addPendingSupplement: (text: string) => string
+  cancelPendingSupplement: (clientRequestId: string) => void
+  clearPendingSupplements: () => void
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
-  messages: [],
-  isStreaming: false,
-  branches: {},
-  compactBoundaries: [],
-  queuedMessages: [],
+function shouldReplace(currentVersion: number | undefined, nextVersion: number) {
+  return currentVersion === undefined || nextVersion >= currentVersion
+}
 
-  sendMessage: async (text) => {
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: text,
-      timestamp: Date.now(),
-    }
-    set((s) => ({ messages: [...s.messages, userMsg], isStreaming: true }))
-    // TODO(M0)：调 /api/chat/proxy（SSE），逐 delta 更新 renderNodes（docs/08 §1）
-    set({ isStreaming: false })
+export const useChatStore = create<ChatState>((set) => ({
+  turnOrder: [],
+  turnsById: {},
+  runsById: {},
+  roundsById: {},
+  renderNodesById: {},
+  connectionState: 'idle',
+  eventCursor: null,
+  projectionVersion: 1,
+  pendingSupplements: [],
+
+  hydrateProjection: (projection) =>
+    set({
+      turnOrder: projection.turns.map((turn) => turn.turnId),
+      turnsById: Object.fromEntries(
+        projection.turns.map((turn) => [turn.turnId, turn]),
+      ),
+      runsById: projection.runsById,
+      roundsById: projection.roundsById,
+      renderNodesById: projection.renderNodesById,
+      connectionState: 'connected',
+    }),
+
+  upsertTurn: (turn) =>
+    set((state) => {
+      const current = state.turnsById[turn.turnId]
+      if (!shouldReplace(current?.version, turn.version)) return state
+      return {
+        turnsById: { ...state.turnsById, [turn.turnId]: turn },
+        turnOrder: current
+          ? state.turnOrder
+          : [...state.turnOrder, turn.turnId],
+      }
+    }),
+
+  upsertRun: (run) =>
+    set((state) => {
+      const current = state.runsById[run.runId]
+      if (!shouldReplace(current?.version, run.version)) return state
+      return { runsById: { ...state.runsById, [run.runId]: run } }
+    }),
+
+  upsertRound: (round) =>
+    set((state) => {
+      const current = state.roundsById[round.roundId]
+      if (!shouldReplace(current?.version, round.version)) return state
+      return { roundsById: { ...state.roundsById, [round.roundId]: round } }
+    }),
+
+  upsertRenderNode: (node) =>
+    set((state) => {
+      const current = state.renderNodesById[node.nodeId]
+      if (!shouldReplace(current?.version, node.version)) return state
+      return {
+        renderNodesById: {
+          ...state.renderNodesById,
+          [node.nodeId]: node,
+        },
+      }
+    }),
+
+  setConnectionState: (connectionState) => set({ connectionState }),
+
+  addPendingSupplement: (text) => {
+    const clientRequestId = crypto.randomUUID()
+    set((state) => ({
+      pendingSupplements: [
+        ...state.pendingSupplements,
+        { clientRequestId, text, state: 'pending' },
+      ],
+    }))
+    return clientRequestId
   },
 
-  stopStreaming: () => {
-    // 手动停止 = 完全停止：不触发任何自动发送（docs/06 §8）
-    set({ isStreaming: false })
-  },
+  cancelPendingSupplement: (clientRequestId) =>
+    set((state) => ({
+      pendingSupplements: state.pendingSupplements.filter(
+        (item) => item.clientRequestId !== clientRequestId,
+      ),
+    })),
+
+  clearPendingSupplements: () => set({ pendingSupplements: [] }),
 }))

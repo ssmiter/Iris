@@ -1,0 +1,136 @@
+:root {
+  color-scheme: light;
+
+  /* Primitive palette: only this file and brand assets may use raw channels. */
+  --primitive-neutral-0: 255 255 255;
+  --primitive-neutral-25: 252 252 250;
+  --primitive-neutral-50: 247 247 244;
+  --primitive-neutral-100: 240 241 236;
+  --primitive-neutral-200: 226 228 222;
+  --primitive-neutral-300: 199 203 194;
+  --primitive-neutral-500: 133 139 130;
+  --primitive-neutral-600: 98 103 95;
+  --primitive-neutral-900: 31 33 30;
+
+  --primitive-iris-50: 238 240 255;
+  --primitive-iris-500: 87 95 199;
+  --primitive-iris-600: 71 79 175;
+  --primitive-iris-400: 106 115 227;
+  --primitive-coral-500: 233 129 120;
+  --primitive-gold-500: 216 165 66;
+  --primitive-mint-500: 98 184 145;
+  --primitive-sky-500: 111 167 216;
+  --primitive-violet-500: 120 126 219;
+
+  /* Semantic surfaces and text. */
+  --color-canvas: var(--primitive-neutral-50);
+  --color-surface: var(--primitive-neutral-25);
+  --color-surface-raised: var(--primitive-neutral-0);
+  --color-surface-muted: var(--primitive-neutral-100);
+  --color-text: var(--primitive-neutral-900);
+  --color-text-subtle: var(--primitive-neutral-600);
+  --color-text-muted: var(--primitive-neutral-500);
+  --color-border: var(--primitive-neutral-200);
+  --color-border-strong: var(--primitive-neutral-300);
+
+  /* Semantic actions and feedback. */
+  --color-primary: var(--primitive-iris-500);
+  --color-primary-hover: var(--primitive-iris-600);
+  --color-primary-soft: var(--primitive-iris-50);
+  --color-primary-foreground: 255 255 255;
+  --color-focus: var(--primitive-iris-400);
+
+  --color-success: 38 122 88;
+  --color-success-soft: 232 246 238;
+  --color-success-foreground: 28 91 65;
+  --color-warning: 149 96 23;
+  --color-warning-soft: 251 242 222;
+  --color-warning-foreground: 111 68 13;
+  --color-danger: 185 64 69;
+  --color-danger-soft: 253 236 236;
+  --color-danger-foreground: 143 43 48;
+  --color-danger-contrast: 255 255 255;
+  --color-info: 61 110 170;
+  --color-info-soft: 235 242 251;
+  --color-info-foreground: 43 82 130;
+
+  /* Component-level defaults. */
+  --control-height-sm: 2rem;
+  --control-height-md: 2.5rem;
+  --control-height-lg: 2.875rem;
+  --control-ring-width: 3px;
+
+  --radius-xs: 0.375rem;
+  --radius-sm: 0.625rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.125rem;
+  --radius-xl: 1.5rem;
+
+  --shadow-hairline: 0 1px 0 rgb(31 33 30 / 0.04);
+  --shadow-raised: 0 8px 24px rgb(24 27 23 / 0.08);
+  --shadow-floating: 0 16px 48px rgb(24 27 23 / 0.12);
+  --shadow-focus: 0 0 0 var(--control-ring-width) rgb(var(--color-focus) / 0.22);
+
+  --motion-instant: 90ms;
+  --motion-fast: 140ms;
+  --motion-normal: 200ms;
+  --motion-deliberate: 280ms;
+  --motion-attention-exit: 360ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --conversation-max: 780px;
+  --conversation-pad: 24px;
+  --page-gutter: clamp(16px, 3vw, 32px);
+  --composer-bottom: 16px;
+  --sidebar-width: 248px;
+  --topbar-height: 48px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-canvas: 17 19 16;
+  --color-surface: 23 26 22;
+  --color-surface-raised: 29 33 28;
+  --color-surface-muted: 37 42 35;
+  --color-text: 242 243 238;
+  --color-text-subtle: 183 187 178;
+  --color-text-muted: 139 145 135;
+  --color-border: 45 51 43;
+  --color-border-strong: 68 76 65;
+
+  --color-primary: 170 176 255;
+  --color-primary-hover: 187 192 255;
+  --color-primary-soft: 41 45 80;
+  --color-primary-foreground: 25 28 57;
+  --color-focus: 185 190 255;
+
+  --color-success: 114 200 157;
+  --color-success-soft: 31 65 49;
+  --color-success-foreground: 174 232 203;
+  --color-warning: 224 178 102;
+  --color-warning-soft: 72 55 28;
+  --color-warning-foreground: 246 211 151;
+  --color-danger: 240 139 143;
+  --color-danger-soft: 75 39 42;
+  --color-danger-foreground: 255 196 198;
+  --color-danger-contrast: 42 23 25;
+  --color-info: 141 184 234;
+  --color-info-soft: 39 57 79;
+  --color-info-foreground: 190 218 249;
+
+  --shadow-hairline: 0 1px 0 rgb(255 255 255 / 0.04);
+  --shadow-raised: 0 10px 28px rgb(0 0 0 / 0.24);
+  --shadow-floating: 0 20px 56px rgb(0 0 0 / 0.36);
+}
+
+@media (max-width: 767px) {
+  :root {
+    --conversation-pad: 14px;
+    --page-gutter: 12px;
+    --composer-bottom: 8px;
+    --topbar-height: 52px;
+  }
+}
