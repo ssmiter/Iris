@@ -1,16 +1,18 @@
 {
   "continent": "大陆 0",
-  "node": "0.3 学习 ragent-lab 和 MESCLI 的后端思路",
+  "node": "0.4 设计 Iris 的体系结构",
   "status": "awaiting_confirmation",
   "outputs": [
     "docs/07-frontend-architecture.md",
     "docs/12-agent-kernel-study.md",
-    "docs/13-backend-study.md"
+    "docs/13-backend-study.md",
+    "docs/02-architecture-overview.md",
+    "docs/08-api-contract.md"
   ],
-  "verification": "节点 0.1、0.2 已由用户确认。节点 0.3 已完成：docs/13-backend-study.md 覆盖 ragent-lab 实际模块与 Java Agent 落地点、MESCLI 通用执行链及 APS 生产提交边界、Tool 契约、Catalog/Registry 分工、持久化审批与执行状态机、Operation Snapshot/Commit Gate/postcondition/reconcile，以及路径围栏、Checkpoint、Sandbox MVP；已列出 8 个最小逻辑模块、模块端口与调用关系。Markdown 围栏、标题结构、关键验收主题、证据索引、无尾随空白和 UTF-8 JSON 状态均已校验。",
+  "verification": "节点 0.1、0.2、0.3 已由用户确认。节点 0.4 已完成架构与 API 草案：模块/进程边界、后端唯一 Loop、Agentic/Pipeline 统一 Run、两层能力网络、Tool Runtime、能力 Definition/Binding/Exposure/Execution 分轴生命周期、attempt 级 schema lease、无损分支压缩、REST/SSE 完整 upsert+严格 delta、类型化 Attention、统一 Failure/recovery 与 WebBridge/Sandbox 边界已闭合。全量 Markdown 围栏、JSON 示例、状态 JSON、本地链接、必需主题与 git diff whitespace 检查通过；未编写产品代码。",
   "next": [
-    "等待用户确认节点 0.3",
-    "0.4 设计 Iris 的体系结构"
+    "等待用户确认节点 0.4",
+    "确认后进入大陆 1，节点 1.1 设计令牌系统"
   ],
-  "notes": "节点 0.1 于 2026-07-24、节点 0.2 于 2026-07-24 获用户确认。发现 docs/02-architecture-overview.md 仍记录前端默认 Agent Loop，与 instructions.md 的后端核心 Loop 决策冲突；按节点边界留待 0.4 与 docs/08-api-contract.md 一并修正。WonWork 的前端 Loop 源于历史上的前端独立部署需求与效果优先验证策略，需求消失后未重构；Iris 将提前固定职责和性能数据形状，但不预造重型框架。大陆 0 的研究只建立第一版认知基线；后续实现每个具体模块时都要回到对应参考源码做问题驱动的纵向切片，允许新证据推翻旧设计，并先更新文档。WonWork 与 MESCLI 的版本基线以 SVN 为准，不使用 Git 判断；节点 0.3 的 MESCLI 证据基线为 SVN working copy revision 188。Claude Code 体量很大，0.2 采用分切面研究与主链路交叉验证，不把一次审计误当作最终理解；本次本地证据基线为 claude-code commit 4e4111be928719ad4728fd38aa160582f1597a71，且该仓库是逆向整理版本，结论已与官方公开文档区分。用户补充：Iris 的核心难题是把模糊、非规则、强情境的生活需求转成模型可理解、发现、组合、审批和演进的能力；能力目录只是从工业场景得到的起点，工具契约、生活能力抽象与轻量 DIY 接入都需要继续探索，Iris 不追求 IDE 替代级代码能力，但通用内核必须可靠。节点 0.2 形成的产品判断是“稳定通用内核 + 少数真实生活板块做深”，并把 OpenClaw 类产品的成本与深度问题保留为待验证假设，不当作事实。节点 0.3 的评价标尺：ragent-lab 主要用于观察 Java 实现 agent 的可行落点，参考权重低于其他项目；MESCLI 虽有企业级约束，但仍处应用初期。两者都不是模板，研究目标是取其工程精华、识别早期缺口，并为 Iris 重新设计理想边界。节点 0.3 的关键抽象是 Prepare/Draft → Operation Snapshot → Approval Grant → Durable Claim → Commit Gate → Postcondition Verify → Reconcile；高影响动作批准不可变精确快照，不批准会漂移的工具名。ragent-lab 当前配置文件存在疑似真实模型密钥和明文基础设施凭据；未记录任何值，建议来源仓库立即撤销轮换并清理历史，Iris 仅允许占位符和本机秘密注入。品牌待办：现有“Iris · 虹使”中文表达机械，后续 README 重写前先更新 docs/10-naming-and-identity.md，再统一调整中文称谓与叙事。"
+  "notes": "节点 0.1、0.2 于 2026-07-24，节点 0.3 于 2026-07-24 获用户确认。WonWork 的前端 Loop 源于历史上的前端独立部署需求与效果优先验证策略，需求消失后未重构；Iris 将提前固定职责和性能数据形状，但不预造重型框架。大陆 0 的研究只建立第一版认知基线；后续实现每个具体模块时都要回到对应参考源码做问题驱动的纵向切片，允许新证据推翻旧设计，并先更新文档。WonWork 与 MESCLI 的版本基线以 SVN 为准，不使用 Git 判断；节点 0.3 的 MESCLI 证据基线为 SVN working copy revision 188。Claude Code 体量很大，0.2 采用分切面研究与主链路交叉验证，不把一次审计误当作最终理解；本次本地证据基线为 claude-code commit 4e4111be928719ad4728fd38aa160582f1597a71，且该仓库是逆向整理版本，结论已与官方公开文档区分。用户补充：Iris 的核心难题是把模糊、非规则、强情境的生活需求转成模型可理解、发现、组合、审批和演进的能力；能力目录只是从工业场景得到的起点，工具契约、生活能力抽象与轻量 DIY 接入都需要继续探索，Iris 不追求 IDE 替代级代码能力，但通用内核必须可靠。节点 0.2 形成的产品判断是“稳定通用内核 + 少数真实生活板块做深”，并把 OpenClaw 类产品的成本与深度问题保留为待验证假设，不当作事实。节点 0.3 的评价标尺：ragent-lab 主要用于观察 Java 实现 agent 的可行落点，参考权重低于其他项目；MESCLI 虽有企业级约束，但仍处应用初期。两者都不是模板，研究目标是取其工程精华、识别早期缺口，并为 Iris 重新设计理想边界。节点 0.3 的关键抽象是 Prepare/Draft → Operation Snapshot → Approval Grant → Durable Claim → Commit Gate → Postcondition Verify → Reconcile；高影响动作批准不可变精确快照，不批准会漂移的工具名。节点 0.4 新增核心命题：Pipeline 与 Agentic 是可串行、并行、嵌套并相互转化的两种求解形态；Agentic 以完备原语、计算工具和客观环境探索未知成功路径，经验证的轨迹可沉淀为固定流程 Pipeline，Pipeline 遇到未知分支可受控回退到 Agentic。Iris 仍以 Agentic 能力为首要能力，不预先穷举生活 Pipeline。能力规模设计把 Definition status、注册校验、当前 Binding availability、不可变 Exposure 和 ToolExecution 拆开；每个 model attempt 使用精确 schema lease，ToolCall 链接 Exposure，CompactBoundary 不复制全部历史能力清单。Agentic 是前期建设的基础求解器和通向最终产品的路径；能力网络分为客观系统原语与生活领域能力，后期研发重点转向具体生活能力的抽象、组合、证据和维护。Iris 可中断并恢复，不依赖 24 小时常驻。ragent-lab 当前配置文件存在疑似真实模型密钥和明文基础设施凭据；未记录任何值，建议来源仓库立即撤销轮换并清理历史，Iris 仅允许占位符和本机秘密注入。品牌待办：现有“Iris · 虹使”中文表达机械，后续 README 重写前先更新 docs/10-naming-and-identity.md，再统一调整中文称谓与叙事。"
 }

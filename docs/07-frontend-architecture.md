@@ -11,8 +11,10 @@
 瀑布流对话不是“把聊天气泡换成时间线”，而是把一次用户委托显式建模为：
 
 ```text
-Turn = 用户请求 + N × Round + Turn 终态
-Round = 过程 Flow + 阶段答案 Answer
+Turn = 用户请求 + root Run / child Runs + Turn 终态
+Agentic Run = N × Round
+Pipeline Run = N × Pipeline Step
+Round = Agentic 过程 Flow + 阶段答案 Answer
 Flow = 思考 / 工具 / 注意力 / 产物 / 补充标记等 RenderNode 的有序投影
 ```
 
@@ -36,7 +38,7 @@ Flow = 思考 / 工具 / 注意力 / 产物 / 补充标记等 RenderNode 的有�
 
 本次审计是节点 0.1 的认知基线，不是对 WonWork 前端的穷尽性结论。后续实现 Turn、虚拟列表、流式投影、补充、分支或压缩时，必须带着当时的具体问题重新阅读对应参考源码；如果实现证据推翻本文假设，应先更新本文再改代码。研究与实现是螺旋关系，不是“研究一次、以后只照文档施工”的瀑布关系。
 
-当前 `docs/02-architecture-overview.md` 仍写着“前端默认 Agent Loop”，与项目启动指令中“核心 Loop 在后端”冲突。本文以启动指令为准；该文档债务将在节点 0.4 连同总体架构和 API 契约一起修正，避免本节点越界改动。
+节点 0.4 已在 `docs/02-architecture-overview.md` 与 `docs/08-api-contract.md` 收敛该文档债务：核心 Loop 在后端，Frontend 只提交人的命令并消费 Conversation SSE；0.1 的前端投影设计继续成立。
 
 ## 3. 从 WonWork 学到了什么
 
@@ -91,14 +93,16 @@ Iris 的对应策略是：
 
 ## 4. 领域模型：消息不是画面，节点也不是消息
 
-### 4.1 六个核心对象
+### 4.1 八个核心对象
 
 | 对象 | 含义 | 持久化 | 前端是否直接渲染 |
 |---|---|---:|---:|
 | `Conversation` | 一棵长期对话树及其当前视野 | 是 | 否 |
 | `Message` | 模型上下文与历史审计中的原始发言 | 是 | 用户主消息可通过 Turn 头部显示 |
 | `Turn` | 一次用户委托，从请求开始到完成/停止/失败 | 是 | 是，虚拟列表最小项 |
-| `Round` | 一次语义上的“观察→推理→行动/回答”周期 | 是 | 是，Turn 内的瀑布段 |
+| `Run` | 一次可恢复求解过程，类型为 Agentic 或 Pipeline，可形成父子树 | 是 | 只投影用户需要监督的边界 |
+| `Round` | Agentic Run 一次“观察→推理→行动/回答”周期 | 是 | 是，Agentic 瀑布段 |
+| `PipelineStepRun` | 固定 Pipeline Definition 某一步的运行事实 | 是 | 通常通过 Tool/Run Node 摘要展示 |
 | `ToolCall` | 工具请求、参数、审批、执行结果和审计信息 | 是 | 通过对应 `ToolNode` 展示 |
 | `RenderNode` | 为稳定呈现而保存的结构化投影 | 是 | 是，渲染唯一输入 |
 
@@ -117,8 +121,11 @@ flowchart TD
     C["Conversation<br/>完整对话树"] --> BP["BranchPath<br/>当前可见路径"]
     BP --> T["Turn<br/>一次用户委托"]
     T --> UM["User Message<br/>发起请求"]
-    T --> R["Round 1..N<br/>语义轮次"]
+    T --> RUN["Run 1..N<br/>Agentic / Pipeline"]
+    RUN --> R["Round 1..N<br/>Agentic 语义轮次"]
+    RUN --> PSR["PipelineStepRun 1..N"]
     R --> RN["RenderNode 1..N<br/>视觉投影"]
+    PSR --> RN
     R --> AM["Assistant Message<br/>阶段/最终文本事实"]
     RN --> TH["ThinkingNode"]
     RN --> TC["ToolNode"]
@@ -145,7 +152,8 @@ flowchart TD
 | `requestMessageId` | 发起请求的用户消息 |
 | `phase` | `queued / active / settled / stopped / failed` |
 | `startedAt / endedAt` | 计时事实；前端只用当前时间减 `startedAt` 显示活动耗时 |
-| `rounds[]` | 显式轮次顺序，不从消息推断 |
+| `rootRunId / runIds[]` | 显式 Run 树引用，不从节点推断 |
+| `rounds[]` | Agentic Run 的显式轮次顺序，不从消息推断 |
 | `renderNodesById` | 当前投影节点表 |
 | `stats` | 后端/投影器算出的事实统计，组件不重复计数 |
 | `pendingAttentionIds[]` | 当前需要用户处理的注意力节点 |
@@ -165,7 +173,7 @@ flowchart TD
 
 ### 4.4 RenderNode 联合类型
 
-Iris 的第一版只需要六类节点：
+Iris 的第一版只需要七类节点：
 
 | 类型 | 必要字段 | 视觉职责 |
 |---|---|---|
@@ -175,16 +183,18 @@ Iris 的第一版只需要六类节点：
 | `artifact` | `id, artifactId, kind, title, sourceToolCallId, previewRef` | 文档、表格、图片、浏览器舞台等产物入口 |
 | `answer` | `id, status, content, role=stage|final, sourceMessageId` | 阶段结论或最终答案 |
 | `supplement` | `id, status, text, sourceMessageId, injectedAfterRoundId?` | 在准确边界留下轻量补充标记，不生成普通气泡 |
+| `run` | `id, childRunId, kind, status, progressSummary` | 在需要监督时呈现 Pipeline/child Run 的整体进度 |
 
 所有节点共享：
 
 - 稳定 `id`，刷新、重连和分支切换后不变；
 - 显式 `status`，不从文案、CSS class 或相邻节点推断；
 - 可选 `groupId`，用于并行或重试组；
+- `runId`，并按需要带 `roundId` 或 `pipelineStepRunId`；
 - `source*Id`，允许从视觉追溯到消息、工具调用和产物；
 - 小而安全的展示数据；大结果只保存引用，不把 blob 塞进对话状态。
 
-## 5. Round 和 Turn 的准确语义
+## 5. Run、Round 和 Turn 的准确语义
 
 ### 5.1 什么算一个 Round
 
@@ -203,6 +213,8 @@ Iris 的第一版只需要六类节点：
 - UI 重新水合或切回当前分支。
 
 重试若作废了一次语义调用，后端应在持久化事实中标记 attempt；默认 UI 将失败 attempt 折叠在本 Round 的重试组中，而不是伪装成一个新 Round。
+
+Pipeline Step 不是 Round：它可以是确定性变换、Tool、人工 gate、Pipeline child Run 或受限 Agentic child Run。前端只根据持久化 RenderNode 展示用户需要监督的步骤，不为 Pipeline 自行运行编排器。
 
 ### 5.2 Turn 状态机
 
@@ -250,7 +262,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    LOOP["后端 Agent Loop"] --> DB["SQLite<br/>消息 / Turn / ToolCall / 投影"]
+    LOOP["后端 Orchestration"] --> DB["SQLite<br/>消息 / Turn / Run / ToolCall / 投影"]
     LOOP --> SSE["SSE 结构化事件<br/>eventId + turnId + payload"]
     SSE --> INGEST["Event Ingestor<br/>校验 / 去重 / 排序"]
     INGEST --> REDUCER["Turn Projector<br/>纯 reducer"]
@@ -291,7 +303,7 @@ sequenceDiagram
 
 ### 6.3 三个真相层级
 
-1. **持久化事实**：Message、Turn、Round、ToolCall、分支、压缩边界和事件；
+1. **持久化事实**：Message、Turn、Run、Round/PipelineStepRun、ToolCall、分支、压缩边界和事件；
 2. **持久化读模型**：`TurnView + renderNodes`，保证精确恢复和低成本首屏；
 3. **临时视图状态**：展开、滚动、选中、模态框和草稿。
 
@@ -313,7 +325,7 @@ DOM 从来不是真相。CSS class 不能反向决定节点状态，组件本地
 `WaterfallTurn` 只做编排：
 
 1. 渲染用户请求；
-2. 按 `roundIds` 顺序渲染 `RoundSection`；
+2. 按 `runIds` 渲染 `RunSection`；Agentic Run 内再按 `roundIds` 渲染 `RoundSection`；
 3. 渲染 Turn 级产物和总结；
 4. 渲染分支切换入口与终态信息。
 
@@ -463,9 +475,11 @@ flowchart TD
     VLIST --> DEC["TimelineDecoration<br/>CompactBoundary"]
     VLIST --> TURN["WaterfallTurn"]
     TURN --> USER["UserPrompt<br/>BranchSwitcher"]
-    TURN --> STACK["RoundStack"]
+    TURN --> STACK["RunStack"]
     TURN --> TS["TurnSummary"]
-    STACK --> ROUND["RoundSection"]
+    STACK --> RUNSEC["RunSection<br/>Agentic / Pipeline"]
+    RUNSEC --> ROUND["RoundSection"]
+    RUNSEC --> PRUN["Pipeline Progress<br/>必要边界"]
     ROUND --> PD["ProcessDetail"]
     ROUND --> PS["ProcessSummary"]
     ROUND --> AB["AnswerBlock"]
@@ -487,7 +501,8 @@ flowchart TD
 | 组件 | 只负责 | 明确不负责 |
 |---|---|---|
 | `VirtualTurnList` | 虚拟化、滚动跟随、回到最新 | 分组消息、计算 Turn 状态 |
-| `WaterfallTurn` | 组合用户请求、Round、产物、总结 | 解析消息、调用 API |
+| `WaterfallTurn` | 组合用户请求、Run、产物、总结 | 解析消息、调用 API |
+| `RunSection` | 按 Run kind 组合 Agentic Round 或 Pipeline 进度节点 | 执行 Pipeline 或决定 child Run |
 | `RoundSection` | 过程折叠、阶段/最终答案排布 | 计算 Round 事实 |
 | `FlowNodeFrame` | 通用外壳、状态和可访问性 | 业务工具结果识别 |
 | `NodeRendererRegistry` | 按类型/rendererKey 选择安全 renderer | 工具执行 |
@@ -504,6 +519,7 @@ flowchart TD
 保存当前对话读模型和实时投影：
 
 - `turnsById / turnOrder`;
+- `runsById`;
 - `renderNodesById`;
 - `roundsById`;
 - `pendingAttentionIds`;
@@ -641,7 +657,7 @@ Iris 的品牌约束仍是“像雨后彩虹，不是霓虹灯”。彩虹只用
 ```text
 frontend/src/
 ├── domain/chat/
-│   ├── models.ts              # TurnView / RoundView / RenderNode
+│   ├── models.ts              # TurnView / RunView / RoundView / RenderNode
 │   ├── events.ts              # 类型化前端事件
 │   ├── projector.ts           # 纯 reducer
 │   └── selectors.ts
@@ -655,6 +671,7 @@ frontend/src/
 ├── components/chat/
 │   ├── ConversationTimeline.tsx
 │   ├── WaterfallTurn.tsx
+│   ├── RunSection.tsx
 │   ├── RoundSection.tsx
 │   ├── ProcessSummary.tsx
 │   ├── FlowNodeFrame.tsx
@@ -682,14 +699,14 @@ frontend/src/
 后续大陆 1 可按以下顺序落地：
 
 1. 定义设计令牌和基础组件；
-2. 用静态 `TurnView[]` 实现 Turn / Round / RenderNode；
+2. 用静态 `TurnView[]` 实现 Turn / Run / Round / RenderNode；
 3. 加入手动折叠和 Turn 级虚拟列表；
 4. 实现滚动跟随与回到最新；
 5. 实现 ComposerDock、补充 tray 和审批浮动投影；
 6. 加入主题与响应式；
 7. 大陆 2 再接真实 SSE reducer，替换静态事件源。
 
-静态数据必须覆盖真实结构：多 Round、并行工具、失败、待审批、补充、分支和压缩线。不要只做“一问一答”的漂亮 demo。
+静态数据必须覆盖真实结构：Agentic root Run、Pipeline child Run、多 Round、并行工具、失败、待审批、补充、分支和压缩线。不要只做“一问一答”的漂亮 demo。
 
 ## 16. 节点 0.1 验收场景
 
@@ -697,7 +714,7 @@ frontend/src/
 
 1. 为什么 Message、ToolCall 和 RenderNode 是三个对象？
 2. 为什么 Turn 必须由后端显式给出，不能按 user message 分组？
-3. 为什么一个 Turn 可以有多个 Round 和多个阶段答案？
+3. 为什么 Turn 下需要 Run；为什么 Agentic 有 Round，而 Pipeline 有 Step？
 4. 为什么 renderNodes 是 UI 的唯一输入，但不是唯一持久化事实？
 5. 补充消息如何既不丢失，又不冒充新 Turn？
 6. 分支和压缩线为什么都是“改变当前视野，不删除历史”？
@@ -710,11 +727,14 @@ frontend/src/
 
 ```text
 turn.started
+run.started(agentic)
 round.started(1)
 thinking.started / completed
 tool.started(search_train) / completed
 answer.delta("已找到三个班次") / completed(stage)
 round.completed(1)
+run.started(pipeline,parent=agentic)
+run.settled(pipeline)
 round.started(2)
 supplement.queued("优先靠窗")
 supplement.injected(afterRound=1)
@@ -722,12 +742,14 @@ attention.requested(book_ticket)
 attention.resolved(approved)
 tool.completed(book_ticket)
 answer.completed(final)
+run.settled(agentic)
 turn.completed
 ```
 
 任何实现者都应画出：
 
 - 一个 Turn；
+- 一个 root Agentic Run 和一个 child Pipeline Run；
 - 两个 Round；
 - 第一轮一个阶段结论；
 - 第二轮一个轻量补充标记、一个审批节点、一个最终答案；

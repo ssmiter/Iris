@@ -8,7 +8,7 @@
 
 ### 项目定位
 
-- **瀑布流对话前端** + **Java/Spring Boot 后端** + **浏览器自动化（WebBridge）** + **本地工作区与 Python 沙箱**
+- **瀑布流对话前端** + **Java/Spring Boot 后端** + **浏览器自动化（WebBridge）** + **本地工作区与受控 Python 执行**
 - 最终形态：Windows 桌面 exe 个人产品
 - 目标用户：即将就业的研究生等需要处理大量生活琐事的人
 - 核心场景：秋招网申、订票出行、财务记账、信息整理、文档处理
@@ -17,7 +17,7 @@
 
 - **后端**：Java 21 + Spring Boot 3 + WebFlux + Spring Data JDBC + SQLite
 - **前端**：Vite + React 18 + TypeScript + Tailwind CSS + zustand
-- **WebBridge**：Node.js CDP 守护进程（或 Java Playwright）
+- **WebBridge**：独立本地守护进程；Node.js CDP / Playwright 等实现留到大陆 4 验证
 - **构建**：Maven（后端）+ npm（前端/WebBridge）
 
 ### 最重要的五条不变量
@@ -45,10 +45,10 @@
 
 ### 里程碑顺序（必须按此推进）
 
-1. **M0 骨架可跑**：后端 `/api/chat/proxy` SSE + 前端最小对话页 + SQLite 历史
+1. **M0 骨架可跑**：后端 Turn command + Conversation SSE + 前端最小对话页 + SQLite 历史
 2. **M1 对话内核**：轮次模型、renderNodes、瀑布流、补充注入、分支多叉树、压缩线
 3. **M2 工具平台**：Tool 契约、Registry、目录树、发现原语、审批闸门、首批生活工具
-4. **M3 工作区 + 沙箱**：路径围栏、文件工具、检查点、Python 沙箱
+4. **M3 工作区 + 执行隔离**：路径围栏、文件工具、检查点、Trusted Runner / Python Sandbox 边界
 5. **M4 WebBridge**：浏览器自动化、页面状态、动作原语、录制回放、人工接管
 6. **M5 产品化**：exe 打包、安装器、个人网站、更新通道
 
@@ -73,7 +73,7 @@ cd webbridge-daemon && npm install && npm start  # :9223
 
 ### 安全红线
 
-- 任何密钥、API key、本地配置只放 `application.yml` 或 `.env`，绝不出现在响应或日志中。
+- `application.yml` 只保存配置键和占位符；真实密钥由环境、被忽略的本机 `.env` 或 Windows 秘密存储注入，绝不进入响应、日志、审计和 Git 历史。
 - 提交前检查 `.gitignore`，个人数据（workspace、*.db、.env）永不入库。
 
 ---
@@ -88,7 +88,7 @@ cd webbridge-daemon && npm install && npm start  # :9223
 
 它的名字叫 **Iris**，虹使。希腊神话中，Iris 是彩虹女神，众神与人间的信使。她沿着彩虹桥穿梭，把消息从一个世界带到另一个世界。你的 Iris 也会如此：在你和数字世界之间穿梭，替你填表、查票、整理文件、记录日程、比对价格、生成报告。它把你的意图翻译成动作，把动作的结果翻译回你能理解的答案。
 
-但 Iris 远不止一个信使。它是一个**持续运行的思考者**、一个**有组织的能力网络**、一个**可回滚的行动记录者**、一个**会进化的习惯学习者**。它不是问答机器，而是生活操作系统。
+但 Iris 远不止一个信使。它是一个**可中断并持续恢复的思考者**、一个**有组织的能力网络**、一个**可回滚的行动记录者**、一个**会进化的习惯学习者**。它不必 24 小时常驻，也能在再次启动时恢复未闭合事实。它不是问答机器，而是生活操作系统。
 
 ### 为什么现有的助手都不够
 
@@ -166,6 +166,8 @@ Iris 的能力会很多。今天可能是 50 个工具，明天是 500 个，后
 
 工具不是功能的堆砌，而是**生活语义的网络**。
 
+这张网络有两层：底层是读文件、页面观察、计算、写入、验证等客观系统原语；上层是围绕求职、出行、财务等真实问题抽象出的生活领域能力。Agentic 内核让 Iris 能发现、组合并修补这些能力，因此是前期建设重点；但它是通向最终产品的基础求解器，不是最终差异本身。后期研发重点必须转向具体生活能力怎样定义前置条件、输入输出、成功证据和失败出口，而不是只继续增加 Loop 复杂度或 Tool 数量。
+
 ### Graph Engineering：Iris 的工作方式
 
 如果 Iris 只是一个 agent 在一个 loop 里反复思考，它很快会遇到瓶颈。复杂任务包含很多步骤，有些必须按顺序做，有些可以并行做，有些需要人确认，有些失败后只需要局部返工。
@@ -192,7 +194,7 @@ Iris 生活在三个世界的交界处：**对话世界**、**文件世界**、*
 
 **对话世界**是你的意图入口。你用自然语言告诉 Iris 想做什么。
 
-**文件世界**是你的本地数字生活。工作区是 Iris 的文件围栏，它只能在指定目录内读写。每次写操作前，原文件会被快照到检查点。如果搞错了，你可以一键回滚。Python 沙箱在这里运行，处理 Excel、生成 PDF、整理照片。
+**文件世界**是你的本地数字生活。工作区是 Iris 的文件围栏，它只能在指定目录内读写。每次写操作前，原文件会被快照到检查点；恢复也是可预览、受审批的新动作。Python 在 staged input/output 中处理 Excel、生成 PDF、整理照片；没有验证过的 OS 隔离前，只称 Trusted Runner，不承诺任意模型代码安全。
 
 **网页世界**是绝大多数生活服务所在的地方。12306、携程、招聘网站、政务平台、银行网银。Iris 通过 WebBridge 驱动一个真实的 Chrome 窗口，看页面状态、执行点击和输入、截图校验。你随时可以把手放回键盘接管。
 
@@ -458,13 +460,14 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 这块大陆的目标是：让 Iris 真的能思考、调用工具、管理上下文、持久化历史。
 
-#### 节点 2.1：后端 SSE 代理
+#### 节点 2.1：后端 Turn 与 Conversation SSE
 
-**目标**：后端能转发模型流式响应到前端。
+**目标**：后端接受持久化 Turn，在内部调用模型，并把已提交投影流式发送到前端。
 
 要产出：
 
-- `/api/chat/proxy` 接口
+- `POST /api/v1/conversations/{id}/turns`
+- `GET /api/v1/conversations/{id}/events`，支持 event cursor 重放
 - 支持 OpenAI/智谱/Anthropic 兼容格式
 - API key 只存在于后端
 
@@ -474,16 +477,17 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- 会话表、消息表、renderNodes JSON 列
+- Conversation / Message / Turn / Run / Event / renderNodes 最小事实与投影
 - 创建、读取、更新、列表接口
 
-#### 节点 2.3：轮次模型（Round）
+#### 节点 2.3：运行与轮次模型（Run / Round）
 
 **目标**：后端能理解一次完整对话的轮次结构。
 
 要产出：
 
-- Round 状态机：user → thinking → tool_calls → tool_results → assistant
+- Turn / Agentic Run / Round 状态机
+- 为后续 Pipeline child Run 保留统一持久化 Run 边界，不实现通用 DSL
 - 工具调用解析：从模型响应中提取 tool_use
 - 工具结果回注：把结果拼回上下文
 
@@ -496,6 +500,7 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 - token 估算
 - 压缩线（CompactBoundary）
 - 窗口裁剪策略
+- 每个 Model attempt 有预算、绑定精确 Context/版本/schema hash 的 Capability Working Set / schema lease
 - 长对话错误处理（prompt too large 等）
 
 #### 节点 2.5：工具执行框架
@@ -504,10 +509,9 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- Tool 接口/抽象类
-- ToolRegistry
-- 同步/异步执行器
-- 结果统一封装
+- Tool Manifest / Registry / Executor binding
+- 唯一 Tool Runtime：claim → prepare → approval → execute → verify
+- 结果、证据与 `OutcomeUnknown` 统一封装
 
 #### 节点 2.6：前端与后端对接
 
@@ -515,7 +519,7 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- SSE 事件类型定义：token、tool_start、tool_done、approval_request、error、done
+- Conversation SSE envelope：cursor、Turn/Run/Round、renderNode delta、attention、artifact、terminal
 - 前端事件解析器
 - renderNodes 实时更新
 
@@ -537,8 +541,9 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- Tool 接口：name、description、path、riskLevel、parameters、execute
-- ToolRegistry：注册、发现、按路径查找
+- Tool Manifest：identity、schema、risk/side effect、approval、idempotency、resource、runtime、evidence
+- ToolRegistry：严格注册、按稳定 ID/version 精确绑定；本地路径由目录/package 派生
+- Tool Runtime：prepare / Operation Snapshot / Commit Gate / verify
 
 #### 节点 3.2：能力目录服务
 
@@ -546,10 +551,11 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- `/api/tools/capabilities/tree`
-- `/api/tools/capabilities/search`
-- `/api/tools/schema`
+- `/api/v1/capabilities?parentPath=`
+- `/api/v1/capabilities/search`
+- `/api/v1/capabilities/{id}?version=`
 - 目录统计：每个节点下有多少工具
+- Capability Definition status、当前 binding availability、不可变 Exposure 与每个 Model attempt 的 Working Set / schema lease
 
 #### 节点 3.3：审批闸门
 
@@ -557,8 +563,8 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- ApprovalGate
-- 审批状态机
+- 持久化 Approval 状态机
+- 审批绑定 Operation Snapshot hash、资源和版本
 - SSE 审批事件
 - 前端审批条
 
@@ -568,17 +574,18 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 要产出：
 
-- WorkspaceService.resolve() 路径围栏
-- 检查点机制
+- WorkspaceGuard 路径围栏
+- Checkpoint 与受审批恢复
 - 文件读写工具
 
-#### 节点 3.5：Python 沙箱
+#### 节点 3.5：Python Runner 与沙箱边界
 
 **目标**：能运行 Python 处理数据。
 
 要产出：
 
-- 子进程执行器
+- Trusted Runner；若开放任意模型代码，需另有验证过的 OS 隔离 helper
+- staged read-only input / separate output / 受审批导入
 - 超时控制
 - 输出截断
 - 产物卡片
@@ -587,7 +594,7 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 **目标**：让 Iris 有真实可用能力。
 
-要产出：30+ 个工具，覆盖 notes、finance、calendar、files、job、travel 等领域。
+要产出：一组足以让 Agentic 闭环观察、变换、行动、验证和恢复的系统原语，并选择 1-2 个真实生活领域能力板块做深；不以凑够工具数量代替有效性。
 
 #### 并行关系
 
@@ -595,7 +602,7 @@ Codex 不会乖乖听话。如果你直接对它说"给我做个瀑布流对话"
 
 #### 边：从大陆 3 到大陆 4
 
-验收标准：模型能通过目录找到陌生工具并正确调用；写操作必审批；Python 沙箱能生成一份报告。
+验收标准：模型能通过目录和 Working Set 找到陌生工具并正确调用；写操作必审批；受信 Runner 或验证过的 Sandbox 能生成一份报告且产物导入可追溯。
 
 ### 大陆 4：WebBridge 浏览器自动化
 

@@ -2,13 +2,15 @@
 
 ## 1. 工作区（Workspace）
 
-助手的手和脚落在文件系统上。工作区是一个真实目录（默认 `~/Iris/workspace`），所有文件工具的根。
+助手的手和脚落在文件系统上。工作区是用户明确选择的一个真实目录，也是所有文件 Tool 唯一允许接触的根。需要外部文件时先由用户导入或显式更换工作区，不给单次调用临时越界特权。
 
 ### 路径围栏（Path Jail）——第一安全原则
 
 - 文件工具只接受**工作区内相对路径**（`notes/旅行清单.md`）；
-- 传入绝对路径、含 `..` 逃逸、符号链接指向区外 → 一律拒绝（fail-close）；
-- 解析后做 `realPath.startsWith(workspaceRoot)` 双重校验，防 symlink 逃逸；
+- 绝对路径、UNC、device path、空字节、非法段和 `..` 逃逸 → 一律拒绝；
+- 在唯一 root 下 resolve + normalize，用路径段语义校验 containment，不用字符串 `startsWith`；
+- 逐层检查已存在祖先的 symlink / Windows reparse point；无法解析或检查异常一律拒绝；
+- 写入前重新校验父目录和目标版本，executor 只接收 WorkspaceGuard 签发的受保护目标；
 - 错误信息要教学化："路径越界：只能操作工作区内文件，收到的是绝对路径 E:\…，请改用相对路径"。
 
 ### 文件工具集
@@ -16,29 +18,35 @@
 `read_file / write_file / list_files / glob / grep / delete_file / mkdir / move_file`
 
 - `read_file`：大文件截断 + 提示（"已截断，共 N 行"），支持行范围；
-- `write_file`：默认要求目标不存在或带 overwrite 意图；写前自动建检查点（见 §2）；
-- `delete_file`：destructive，必审批；
+- `write_file`：要求不存在或匹配 expected version；写前建 Checkpoint、审批差异，再同目录原子替换；
+- `delete_file`：destructive，强审批；
 - `grep/glob`：走内存友好的流式扫描，结果限量。
+
+所有文件写，包括创建目录、移动、覆盖、删除和恢复，都经过 Tool Runtime；不存在前端可直调的 `/workspace/write` 旁路。
 
 ### 检查点（Checkpoints）——后悔药
 
-- 每次写操作前，把原文件快照到 `.iris/checkpoints/<msgId>/<原始相对路径>`；
-- 对话分支切换/编辑重发时，世界状态回滚到锚点消息时刻：恢复该锚点检查点快照；
-- 检查点按消息 id 组织 = 文件状态与对话树的节点一一对应，"回到那次对话"= 文件也回到那时；
-- 容量控制：单文件 >10MB 不快照（只记录哈希），检查点总量 LRU 清理。
+- 每次写操作前记录 logical path、change kind、before hash/size/mtime、内容快照引用和 `toolExecutionId`；
+- 成功后记录 after hash 与 evidence；
+- 对话分支只改变历史视野，不静默回滚文件；
+- 恢复 Checkpoint 是新的可预览写动作，默认审批并保留新审计记录；
+- 大文件的保留、内容寻址和清理策略在 M3 用真实数据验证；不能只留 hash 却仍承诺可回滚。
 
-## 2. Python 沙箱
+## 2. Python Runner 与 Sandbox 边界
 
 数据处理、文档生成（Word/Excel/PPT/PDF）、图表渲染交给 Python——这是助手从"会聊"到"会干活"的关键一跃。
 
-### 架构
+### 首版架构
 
 ```
-POST /api/sandbox/python
-  { code, timeoutSec?, files? } 
-    → 沙箱服务起子进程：嵌入式 Python（随安装包分发，用户机器零依赖）
-    → 工作目录 = 工作区内 .iris/sandbox/<runId>/
-    → 捕获 stdout/stderr/生成文件清单 → 截断 → 返回
+Agentic / Pipeline 提交 run_python Invocation
+  → Tool Runtime 校验脚本来源、输入、预算与风险
+  → 把声明输入复制或只读映射到 staged input
+  → Trusted Runner 或未来 Sandbox Helper 在独立 run directory 执行
+  → 只写 separate output
+  → 捕获 stdout/stderr/生成文件清单并截断
+  → Runtime 验证 output
+  → 导入 Workspace 作为新的受审批写动作
 ```
 
 ### 约束（默认值，可配置）
@@ -47,21 +55,21 @@ POST /api/sandbox/python
 |---|---|---|
 | 超时 | 120s | 到时强杀进程组 |
 | 输出截断 | 64KB | stdout/stderr 各自截断 |
-| 网络 | 禁止 | 沙箱进程无网络命名空间/代理置空（Windows 用环境变量 + 防火墙规则尽力而为；文档明说这不是安全边界） |
-| 文件访问 | 仅沙箱目录 + 工作区只读挂载 | 产物回收到工作区 `outputs/` |
+| 网络 | Trusted Runner 不承诺隔离 | 环境变量和约定不是安全边界；真正 Sandbox 必须由 OS 级策略验证 |
+| 文件访问 | staged input + separate output | 不把整个 Workspace 读写挂载给执行进程 |
 | 预装库 | python-docx / openpyxl / python-pptx / pypdf / matplotlib / pandas | 文档四件套 + 数据处理 |
 
 ### 与工具的衔接
 
-- `run_python` 本身是一个工具（path `/code/python`，elevated——能写工作区文件）；
-- 生成的文档自动转为**产物卡片**（对话里的文件卡，可预览/下载/打开目录）；
+- `run_python` 是一个 Tool（path `/code/python`）；任意模型代码在真正隔离前不开放，首版只运行内置或用户明确选择的受信脚本；
+- output 通过验证和导入后才转为**产物卡片**，执行进程不能自行宣布 Artifact；
 - 沙箱执行过程的 stdout 流式回显为过程节点（用户能看到"正在生成第 3 页"）。
 
 ## 3. 产物（Artifacts）
 
 工具/沙箱产出的文件是一等公民：
 
-- 统一产物模型：`{ id, path, name, kind(document/image/table/...), size, createdAt, sourceToolCallId }`；
+- 统一产物模型：`{ id, path, version, name, kind, size, provenance, visibility, sourceToolExecutionId }`；
 - 对话里渲染为文件卡片（类型图标 + 名称 + 大小 + 预览）；
 - 产物索引按会话持久化（SQLite），切换会话水合还原；
 - 预览坞（右侧面板）集中展示当前会话全部产物。
@@ -71,5 +79,5 @@ POST /api/sandbox/python
 1. **一切写前快照**：没有检查点的写操作不许合并。
 2. **错误信息教学化**：拒绝时告诉用户正确用法长什么样。
 3. **大输出必截断**：任何可能无限大的输出（文件/查询/子进程）都有上限 + "已截断"明示。
-4. **子进程必隔离**：独立工作目录、进程组强杀、资源上限，主进程永不解析子进程输出为代码。
+4. **如实命名隔离强度**：独立目录、超时和强杀只是 Runner 约束；没有 OS 边界就不能声称任意代码安全。
 5. **产物可追踪**：每个产物记得自己由哪次工具调用产生（sourceToolCallId），对话与文件互链。
