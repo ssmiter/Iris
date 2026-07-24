@@ -1,0 +1,420 @@
+package com.iris.conversation.infrastructure;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.conversation.domain.ConversationEvent;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
+
+@Repository
+public class ConversationRepository {
+    private final JdbcClient jdbc;
+    private final ObjectMapper objectMapper;
+
+    public ConversationRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
+        this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
+    }
+
+    public void insertConversation(
+            String conversationId,
+            String rootBranchId,
+            String title,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO iris_conversation(
+                    conversation_id, root_branch_id, title, version, created_at, updated_at
+                ) VALUES (:conversationId, :rootBranchId, :title, 1, :now, :now)
+                """)
+                .param("conversationId", conversationId)
+                .param("rootBranchId", rootBranchId)
+                .param("title", title, Types.VARCHAR)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO conversation_branch(
+                    branch_id, conversation_id, parent_branch_id, status, version, created_at
+                ) VALUES (:branchId, :conversationId, NULL, 'active', 1, :now)
+                """)
+                .param("branchId", rootBranchId)
+                .param("conversationId", conversationId)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public boolean conversationExists(String conversationId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM iris_conversation
+                WHERE conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    public boolean branchBelongsToConversation(String branchId, String conversationId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM conversation_branch
+                WHERE branch_id = :branchId AND conversation_id = :conversationId
+                """)
+                .param("branchId", branchId)
+                .param("conversationId", conversationId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    public void insertMessage(
+            String messageId,
+            String conversationId,
+            String branchId,
+            String turnId,
+            String content,
+            String clientRequestId,
+            List<String> attachmentRefs,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO message(
+                    message_id, conversation_id, branch_id, turn_id, role,
+                    content, client_request_id, created_at
+                ) VALUES (
+                    :messageId, :conversationId, :branchId, :turnId, 'user',
+                    :content, :clientRequestId, :now
+                )
+                """)
+                .param("messageId", messageId)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("turnId", turnId)
+                .param("content", content)
+                .param("clientRequestId", clientRequestId)
+                .param("now", now.toString())
+                .update();
+        for (int index = 0; index < attachmentRefs.size(); index++) {
+            jdbc.sql("""
+                    INSERT INTO message_attachment(message_id, ordinal, artifact_ref)
+                    VALUES (:messageId, :ordinal, :artifactRef)
+                    """)
+                    .param("messageId", messageId)
+                    .param("ordinal", index)
+                    .param("artifactRef", attachmentRefs.get(index))
+                    .update();
+        }
+    }
+
+    public void insertTurn(
+            String turnId,
+            String conversationId,
+            String branchId,
+            String requestMessageId,
+            String rootRunId,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO conversation_turn(
+                    turn_id, conversation_id, branch_id, request_message_id,
+                    root_run_id, phase, version, started_at, ended_at
+                ) VALUES (
+                    :turnId, :conversationId, :branchId, :requestMessageId,
+                    :rootRunId, 'active', 1, :now, NULL
+                )
+                """)
+                .param("turnId", turnId)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("requestMessageId", requestMessageId)
+                .param("rootRunId", rootRunId)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public void insertRootRun(
+            String runId,
+            String conversationId,
+            String branchId,
+            String turnId,
+            String purpose,
+            String snapshotHash,
+            String normalizedInputHash,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO agent_run(
+                    run_id, conversation_id, branch_id, turn_id, parent_run_id,
+                    root_run_id, kind, purpose, phase, version, started_at, ended_at
+                ) VALUES (
+                    :runId, :conversationId, :branchId, :turnId, NULL,
+                    :runId, 'agentic', :purpose, 'running', 1, :now, NULL
+                )
+                """)
+                .param("runId", runId)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("turnId", turnId)
+                .param("purpose", purpose)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO run_definition_snapshot(
+                    run_id, definition_id, definition_version, snapshot_hash,
+                    normalized_input_hash, dependency_snapshot_ref,
+                    tool_calls_limit, time_limit_ms
+                ) VALUES (
+                    :runId, 'iris.agentic.default', '1', :snapshotHash,
+                    :normalizedInputHash, NULL, 30, 600000
+                )
+                """)
+                .param("runId", runId)
+                .param("snapshotHash", snapshotHash)
+                .param("normalizedInputHash", normalizedInputHash)
+                .update();
+    }
+
+    public long incrementConversationVersion(String conversationId, Instant now) {
+        jdbc.sql("""
+                UPDATE iris_conversation
+                SET version = version + 1, updated_at = :now
+                WHERE conversation_id = :conversationId
+                """)
+                .param("now", now.toString())
+                .param("conversationId", conversationId)
+                .update();
+        return jdbc.sql("""
+                SELECT version FROM iris_conversation
+                WHERE conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single();
+    }
+
+    public Optional<ConversationMetadata> findConversationMetadata(
+            String conversationId
+    ) {
+        return jdbc.sql("""
+                SELECT title, version FROM iris_conversation
+                WHERE conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query((rs, rowNum) -> new ConversationMetadata(
+                        rs.getString("title"),
+                        rs.getLong("version")
+                ))
+                .optional();
+    }
+
+    public long updateConversationTitle(
+            String conversationId,
+            long expectedVersion,
+            String title,
+            Instant now
+    ) {
+        int updated = jdbc.sql("""
+                UPDATE iris_conversation
+                SET title = :title, version = version + 1, updated_at = :now
+                WHERE conversation_id = :conversationId
+                  AND version = :expectedVersion
+                """)
+                .param("title", title)
+                .param("now", now.toString())
+                .param("conversationId", conversationId)
+                .param("expectedVersion", expectedVersion)
+                .update();
+        if (updated == 0) {
+            return -1;
+        }
+        return expectedVersion + 1;
+    }
+
+    public long nextEventSequence(String conversationId) {
+        return jdbc.sql("""
+                SELECT COALESCE(MAX(sequence), 0) + 1
+                FROM conversation_event
+                WHERE conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single();
+    }
+
+    public void insertEvent(ConversationEvent event) {
+        jdbc.sql("""
+                INSERT INTO conversation_event(
+                    conversation_id, sequence, event_id, event_type, branch_id,
+                    turn_id, run_id, parent_run_id, aggregate_kind, aggregate_id,
+                    aggregate_version, causation_id, correlation_id, occurred_at, payload_json
+                ) VALUES (
+                    :conversationId, :sequence, :eventId, :eventType, :branchId,
+                    :turnId, :runId, :parentRunId, :aggregateKind, :aggregateId,
+                    :aggregateVersion, :causationId, :correlationId, :occurredAt, :payloadJson
+                )
+                """)
+                .param("conversationId", event.conversationId())
+                .param("sequence", event.sequence())
+                .param("eventId", event.eventId())
+                .param("eventType", event.eventType())
+                .param("branchId", event.branchId(), Types.VARCHAR)
+                .param("turnId", event.turnId(), Types.VARCHAR)
+                .param("runId", event.runId(), Types.VARCHAR)
+                .param("parentRunId", event.parentRunId(), Types.VARCHAR)
+                .param("aggregateKind", event.aggregate().kind())
+                .param("aggregateId", event.aggregate().id())
+                .param("aggregateVersion", event.aggregate().version())
+                .param("causationId", event.causationId(), Types.VARCHAR)
+                .param("correlationId", event.correlationId(), Types.VARCHAR)
+                .param("occurredAt", event.occurredAt().toString())
+                .param("payloadJson", writeJson(event.payload()))
+                .update();
+    }
+
+    public long latestEventSequence(String conversationId) {
+        return jdbc.sql("""
+                SELECT COALESCE(MAX(sequence), 0)
+                FROM conversation_event
+                WHERE conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query(Long.class)
+                .single();
+    }
+
+    public OptionalLong resolveEventCursor(String conversationId, String eventId) {
+        Optional<Long> sequence = jdbc.sql("""
+                SELECT sequence FROM conversation_event
+                WHERE conversation_id = :conversationId AND event_id = :eventId
+                """)
+                .param("conversationId", conversationId)
+                .param("eventId", eventId)
+                .query(Long.class)
+                .optional();
+        return sequence.isPresent()
+                ? OptionalLong.of(sequence.get())
+                : OptionalLong.empty();
+    }
+
+    public List<ConversationEvent> findEvents(
+            String conversationId,
+            long afterSequence,
+            long throughSequence
+    ) {
+        return jdbc.sql("""
+                SELECT * FROM conversation_event
+                WHERE conversation_id = :conversationId
+                  AND sequence > :afterSequence
+                  AND sequence <= :throughSequence
+                ORDER BY sequence ASC
+                """)
+                .param("conversationId", conversationId)
+                .param("afterSequence", afterSequence)
+                .param("throughSequence", throughSequence)
+                .query(this::mapEvent)
+                .list();
+    }
+
+    public Optional<IdempotencyRecord> findIdempotency(
+            String subjectId,
+            String endpoint,
+            String idempotencyKey
+    ) {
+        return jdbc.sql("""
+                SELECT request_hash, http_status, response_json
+                FROM idempotency_record
+                WHERE subject_id = :subjectId
+                  AND endpoint = :endpoint
+                  AND idempotency_key = :idempotencyKey
+                """)
+                .param("subjectId", subjectId)
+                .param("endpoint", endpoint)
+                .param("idempotencyKey", idempotencyKey)
+                .query((rs, rowNum) -> new IdempotencyRecord(
+                        rs.getString("request_hash"),
+                        rs.getInt("http_status"),
+                        rs.getString("response_json")
+                ))
+                .optional();
+    }
+
+    public void insertIdempotency(
+            String subjectId,
+            String endpoint,
+            String idempotencyKey,
+            String requestHash,
+            int httpStatus,
+            String responseJson,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO idempotency_record(
+                    subject_id, endpoint, idempotency_key, request_hash,
+                    http_status, response_json, created_at
+                ) VALUES (
+                    :subjectId, :endpoint, :idempotencyKey, :requestHash,
+                    :httpStatus, :responseJson, :now
+                )
+                """)
+                .param("subjectId", subjectId)
+                .param("endpoint", endpoint)
+                .param("idempotencyKey", idempotencyKey)
+                .param("requestHash", requestHash)
+                .param("httpStatus", httpStatus)
+                .param("responseJson", responseJson)
+                .param("now", now.toString())
+                .update();
+    }
+
+    private ConversationEvent mapEvent(ResultSet rs, int rowNum) throws SQLException {
+        try {
+            JsonNode payload = objectMapper.readTree(rs.getString("payload_json"));
+            return new ConversationEvent(
+                    1,
+                    rs.getString("event_id"),
+                    rs.getString("event_type"),
+                    rs.getString("conversation_id"),
+                    rs.getString("branch_id"),
+                    rs.getString("turn_id"),
+                    rs.getString("run_id"),
+                    rs.getString("parent_run_id"),
+                    rs.getLong("sequence"),
+                    new ConversationEvent.AggregateRef(
+                            rs.getString("aggregate_kind"),
+                            rs.getString("aggregate_id"),
+                            rs.getLong("aggregate_version")
+                    ),
+                    rs.getString("causation_id"),
+                    rs.getString("correlation_id"),
+                    Instant.parse(rs.getString("occurred_at")),
+                    payload
+            );
+        } catch (JsonProcessingException exception) {
+            throw new SQLException("Stored event payload is not valid JSON", exception);
+        }
+    }
+
+    private String writeJson(JsonNode value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Unable to serialize persisted event", exception);
+        }
+    }
+
+    public record IdempotencyRecord(
+            String requestHash,
+            int httpStatus,
+            String responseJson
+    ) {
+    }
+
+    public record ConversationMetadata(String title, long version) {
+    }
+}

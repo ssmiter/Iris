@@ -7,7 +7,7 @@ package com.iris.tools.core;
 public enum RiskLevel {
     /** 不改变任何外部状态：直接执行 */
     READ_ONLY,
-    /** 常规操作（本地草稿等）：直接执行 + 审计 */
+    /** 低影响、可恢复写操作：默认审批 */
     STANDARD,
     /** 写操作（改文件/发请求/提交表单）：审批挂起 */
     ELEVATED,

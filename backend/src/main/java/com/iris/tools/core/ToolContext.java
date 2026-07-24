@@ -3,12 +3,18 @@ package com.iris.tools.core;
 import java.nio.file.Path;
 
 /**
- * 工具执行上下文：会话信息 + 取消信号 + 工作区根。
+ * 工具执行上下文。它只携带已确认的运行身份和工作区围栏，
+ * 不携带审批布尔值，也不能用于绕过 ToolRuntime。
  */
 public interface ToolContext {
 
-    /** 当前会话 id（审计/产物归属用） */
-    String sessionId();
+    String conversationId();
+
+    String turnId();
+
+    String runId();
+
+    String roundId();
 
     /** 工作区根目录（文件工具的路径围栏基准，docs/04 §1） */
     Path workspaceRoot();

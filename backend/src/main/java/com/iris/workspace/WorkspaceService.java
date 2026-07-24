@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -15,9 +16,16 @@ public class WorkspaceService {
 
     private final Path root;
 
-    public WorkspaceService(@Value("${iris.workspace:~/Iris/workspace}") String workspaceDir) throws IOException {
-        this.root = Path.of(workspaceDir.replace("~", System.getProperty("user.home")))
-                .toAbsolutePath().normalize().toRealPath();
+    public WorkspaceService(
+            @Value("${iris.workspace:~/Iris/workspace}") String workspaceDir
+    ) throws IOException {
+        String expanded = workspaceDir.startsWith("~/")
+                || workspaceDir.startsWith("~\\")
+                ? System.getProperty("user.home") + workspaceDir.substring(1)
+                : workspaceDir;
+        Path configured = Path.of(expanded).toAbsolutePath().normalize();
+        Files.createDirectories(configured);
+        this.root = configured.toRealPath();
     }
 
     public Path root() {

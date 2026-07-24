@@ -5,21 +5,31 @@ spring:
   application:
     name: iris-backend
   datasource:
-    url: jdbc:sqlite:${user.home}/Iris/iris.db
+    url: jdbc:sqlite:${IRIS_DB_PATH:${user.home}/.iris.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 4
+      connection-timeout: 5000
   sql:
     init:
       mode: always
+      schema-locations: classpath:schema.sql
 
 iris:
   workspace: ~/Iris/workspace
   sandbox:
     timeout-sec: 120
     output-limit-kb: 64
-  proxy:
-    # M0：填你的 OpenAI 兼容上游；密钥只放这里，绝不出现在响应中
-    base-url: https://open.bigmodel.cn/api/paas/v4
-    api-key: ${IRIS_API_KEY:}
-    model: glm-4-plus
+  model:
+    profile: ${IRIS_MODEL_PROFILE:unconfigured}
+    kind: ${IRIS_MODEL_KIND:unconfigured}
+    model-id: ${IRIS_MODEL_ID:}
+    base-url: ${IRIS_MODEL_BASE_URL:}
+    endpoint-path: ${IRIS_MODEL_ENDPOINT_PATH:/v1/chat/completions}
+    api-key: ${IRIS_MODEL_API_KEY:}
+    timeout-seconds: ${IRIS_MODEL_TIMEOUT_SECONDS:180}
+    max-output-tokens: ${IRIS_MODEL_MAX_OUTPUT_TOKENS:8192}
+    cumulative-tool-arguments: ${IRIS_MODEL_CUMULATIVE_TOOL_ARGUMENTS:false}
 
 logging:
   level:

@@ -1,0 +1,197 @@
+package com.iris.agent.model;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public class ModelContextRepository {
+    private final JdbcClient jdbc;
+    private final ObjectMapper objectMapper;
+
+    public ModelContextRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
+        this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
+    }
+
+    public List<ModelInputItem> branchFactsBeforeRound(
+            String conversationId,
+            String branchId,
+            String roundId
+    ) {
+        return jdbc.sql("""
+                WITH target AS (
+                    SELECT ar.created_at AS target_time,
+                           e.sequence AS target_sequence
+                    FROM agent_round ar
+                    JOIN conversation_event e
+                      ON e.turn_id = ar.turn_id
+                     AND e.event_type = 'turn.accepted'
+                    WHERE ar.round_id = :roundId
+                ),
+                boundary AS (
+                    SELECT cb.boundary_id, cs.summary_text,
+                           be.sequence AS cutoff_sequence,
+                           bt.started_at AS boundary_time
+                    FROM compact_boundary cb
+                    JOIN compact_summary cs
+                      ON cs.boundary_id = cb.boundary_id
+                    JOIN conversation_event be
+                      ON be.turn_id = cb.before_turn_id
+                     AND be.event_type = 'turn.accepted'
+                    JOIN conversation_turn bt
+                      ON bt.turn_id = cb.before_turn_id
+                    JOIN target t
+                    WHERE cb.conversation_id = :conversationId
+                      AND cb.branch_id = :branchId
+                      AND be.sequence <= t.target_sequence
+                    ORDER BY be.sequence DESC
+                    LIMIT 1
+                ),
+                facts AS (
+                    SELECT b.boundary_time AS fact_time,
+                           -100 AS fact_order,
+                           b.boundary_id AS fact_id,
+                           'history_summary' AS fact_kind,
+                           b.summary_text AS text_content,
+                           NULL AS tool_call_id,
+                           NULL AS provider_call_id,
+                           NULL AS tool_name,
+                           NULL AS json_content,
+                           NULL AS outcome_kind
+                    FROM boundary b
+
+                    UNION ALL
+
+                    SELECT m.created_at AS fact_time, 0 AS fact_order,
+                           m.message_id AS fact_id, 'user' AS fact_kind,
+                           m.content AS text_content, NULL AS tool_call_id,
+                           NULL AS provider_call_id, NULL AS tool_name,
+                           NULL AS json_content, NULL AS outcome_kind
+                    FROM message m
+                    JOIN conversation_event me
+                      ON me.turn_id = m.turn_id
+                     AND me.event_type = 'turn.accepted'
+                    JOIN target t
+                    WHERE m.conversation_id = :conversationId
+                      AND m.branch_id = :branchId
+                      AND m.role = 'user'
+                      AND m.created_at <= t.target_time
+                      AND (
+                          NOT EXISTS (SELECT 1 FROM boundary)
+                          OR me.sequence >= (
+                              SELECT cutoff_sequence FROM boundary
+                          )
+                      )
+
+                    UNION ALL
+
+                    SELECT ma.ended_at AS fact_time,
+                           10 + b.block_index AS fact_order,
+                           b.block_id AS fact_id, b.block_kind AS fact_kind,
+                           b.text_content, tc.tool_call_id,
+                           tc.provider_call_id, tc.tool_name,
+                           tc.arguments_json AS json_content,
+                           NULL AS outcome_kind
+                    FROM model_attempt ma
+                    JOIN agent_round ar ON ar.round_id = ma.round_id
+                    JOIN conversation_event ae
+                      ON ae.turn_id = ma.turn_id
+                     AND ae.event_type = 'turn.accepted'
+                    JOIN model_content_block b ON b.attempt_id = ma.attempt_id
+                    LEFT JOIN model_tool_call tc ON tc.block_id = b.block_id
+                    JOIN target t
+                    WHERE ma.conversation_id = :conversationId
+                      AND ar.branch_id = :branchId
+                      AND ma.phase = 'completed'
+                      AND ma.ended_at < t.target_time
+                      AND b.block_kind IN ('text', 'tool_call')
+                      AND (
+                          NOT EXISTS (SELECT 1 FROM boundary)
+                          OR ae.sequence >= (
+                              SELECT cutoff_sequence FROM boundary
+                          )
+                      )
+
+                    UNION ALL
+
+                    SELECT o.created_at AS fact_time, 1000 + tc.ordinal AS fact_order,
+                           o.observation_id AS fact_id, 'tool_result' AS fact_kind,
+                           NULL AS text_content, tc.tool_call_id,
+                           tc.provider_call_id, tc.tool_name,
+                           o.content_json AS json_content,
+                           o.outcome_kind
+                    FROM tool_observation o
+                    JOIN model_tool_call tc ON tc.tool_call_id = o.tool_call_id
+                    JOIN model_attempt ma ON ma.attempt_id = tc.attempt_id
+                    JOIN agent_round ar ON ar.round_id = ma.round_id
+                    JOIN conversation_event oe
+                      ON oe.turn_id = ma.turn_id
+                     AND oe.event_type = 'turn.accepted'
+                    JOIN target t
+                    WHERE ma.conversation_id = :conversationId
+                      AND ar.branch_id = :branchId
+                      AND o.created_at < t.target_time
+                      AND (
+                          NOT EXISTS (SELECT 1 FROM boundary)
+                          OR oe.sequence >= (
+                              SELECT cutoff_sequence FROM boundary
+                          )
+                      )
+                )
+                SELECT * FROM facts
+                ORDER BY fact_time, fact_order, fact_id
+                """)
+                .param("roundId", roundId)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .query((rs, rowNum) -> (ModelInputItem) switch (
+                        rs.getString("fact_kind")
+                ) {
+                    case "history_summary" ->
+                            new ModelInputItem.HistorySummary(
+                                    rs.getString("fact_id"),
+                                    rs.getString("text_content")
+                            );
+                    case "user" -> new ModelInputItem.UserText(
+                            rs.getString("fact_id"),
+                            rs.getString("text_content")
+                    );
+                    case "text" -> new ModelInputItem.AssistantText(
+                            rs.getString("fact_id"),
+                            rs.getString("text_content")
+                    );
+                    case "tool_call" -> new ModelInputItem.AssistantToolCall(
+                            rs.getString("tool_call_id"),
+                            rs.getString("provider_call_id"),
+                            rs.getString("tool_name"),
+                            read(rs.getString("json_content"))
+                    );
+                    case "tool_result" -> new ModelInputItem.ToolResult(
+                            rs.getString("tool_call_id"),
+                            rs.getString("provider_call_id"),
+                            rs.getString("outcome_kind"),
+                            read(rs.getString("json_content"))
+                    );
+                    default -> throw new IllegalStateException(
+                            "Unknown model context fact kind"
+                    );
+                })
+                .list();
+    }
+
+    private JsonNode read(String value) {
+        try {
+            return objectMapper.readTree(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Persisted model context contains invalid JSON",
+                    exception
+            );
+        }
+    }
+}

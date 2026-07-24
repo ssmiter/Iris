@@ -105,6 +105,11 @@ tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
 | `read_capability(path)` | 读取精确 Capability Definition | 返回判别联合 `ToolManifest | PipelineDefinition | GuidanceDefinition` |
 | `tool_search(query, limit?)` | 关键词搜索 | 覆盖 name/description/目录段/参数名；返回 total 让模型知道截断 |
 
+首个本地实现位于 `/system/capabilities`，三个发现原语本身始终处于基础 lease。
+`read_capability` 成功 observation 会成为下一 ModelAttempt 扩展 schema lease 的唯一
+依据；仅搜索或列目录不会激活目标 schema。激活集合按最近使用有界保留，避免长对话
+把曾经检查过的所有工具永久泄露进上下文。
+
 **搜索索引首版基线**：内存倒排（name、description、中英文 description、目录段、参数属性名）。先用召回率、误选率、schema token 成本和启动耗时观察真实数据，再决定是否引入 Lucene 或向量检索。
 
 ### 6.1 能力 Working Set 与生命周期
