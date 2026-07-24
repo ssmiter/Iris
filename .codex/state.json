@@ -1,0 +1,15 @@
+{
+  "continent": "大陆 0",
+  "node": "0.1 学习 WonWork 前端",
+  "status": "done",
+  "outputs": [
+    "docs/07-frontend-architecture.md"
+  ],
+  "verification": "基于 WonWork SVN r171 当前前端工作副本完成源码与设计文档交叉审计；文档覆盖数据模型、单向数据流、Turn/Round 状态、组件层次、补充/分支/压缩/审批/产物职责与功能/风格边界；未复制参考源码，未修改产品代码。",
+  "next": [
+    "等待用户确认节点 0.1 设计文档",
+    "0.2 学习 Claude Code 的 agentic 内核",
+    "0.3 学习 ragent-lab 和 MESCLI 的后端思路"
+  ],
+  "notes": "发现 docs/02-architecture-overview.md 仍记录前端默认 Agent Loop，与 instructions.md 的后端核心 Loop 决策冲突；按节点边界留待 0.4 与 docs/08-api-contract.md 一并修正。WonWork 的前端 Loop 源于历史上的前端独立部署需求与效果优先验证策略，需求消失后未重构；Iris 将提前固定职责和性能数据形状，但不预造重型框架。大陆 0 的研究只建立第一版认知基线；后续实现每个具体模块时都要回到对应参考源码做问题驱动的纵向切片，允许新证据推翻旧设计，并先更新文档。WonWork 版本基线以 SVN 为准，不使用 Git 判断。"
+}
