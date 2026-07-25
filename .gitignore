@@ -29,3 +29,6 @@ Thumbs.db
 
 # 项目级 Maven 依赖缓存
 backend/.m2/
+
+# MESCLI reference files are DLP-encrypted on this machine; local-only
+reference/MESCLI/
