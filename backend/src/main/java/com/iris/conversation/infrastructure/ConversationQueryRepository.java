@@ -39,6 +39,51 @@ public class ConversationQueryRepository {
         this.objectMapper = objectMapper;
     }
 
+    public ConversationSummary summary(String conversationId) {
+        return jdbc.sql("""
+                SELECT
+                    c.conversation_id,
+                    c.title,
+                    c.updated_at,
+                    c.version,
+                    (
+                        SELECT COUNT(*) FROM conversation_turn t
+                        WHERE t.conversation_id = c.conversation_id
+                          AND t.phase IN ('queued', 'active')
+                    ) AS active_turn_count,
+                    (
+                        SELECT COUNT(*) FROM attention_projection a
+                        WHERE a.conversation_id = c.conversation_id
+                          AND a.status = 'waiting'
+                    ) AS pending_attention_count,
+                    (
+                        SELECT m.content FROM message m
+                        WHERE m.conversation_id = c.conversation_id
+                        ORDER BY m.created_at DESC, m.message_id DESC
+                        LIMIT 1
+                    ) AS last_visible_text
+                FROM iris_conversation c
+                WHERE c.conversation_id = :conversationId
+                """)
+                .param("conversationId", conversationId)
+                .query((rs, rowNum) -> new ConversationSummary(
+                        rs.getString("conversation_id"),
+                        rs.getString("title"),
+                        Instant.parse(rs.getString("updated_at")),
+                        rs.getInt("active_turn_count"),
+                        rs.getInt("pending_attention_count"),
+                        rs.getString("last_visible_text"),
+                        rs.getLong("version")
+                ))
+                .optional()
+                .orElseThrow(() -> new ApiProblemException(
+                        HttpStatus.NOT_FOUND,
+                        "conversation_not_found",
+                        "not_found",
+                        "找不到这个对话。"
+                ));
+    }
+
     public ConversationPage list(String cursor, int limit) {
         CursorPosition position = cursor == null
                 ? null
@@ -132,7 +177,6 @@ public class ConversationQueryRepository {
 
         for (TurnRow row : rows) {
             turnOrder.add(row.turnId());
-            List<String> attachmentRefs = attachments(row.messageId());
             List<RunView> turnRuns = runs(row.turnId());
             turnRuns.forEach(run -> {
                 runs.put(run.runId(), run);
@@ -144,30 +188,7 @@ public class ConversationQueryRepository {
             turnNodes.forEach(node ->
                     renderNodes.put(node.path("nodeId").asText(), node)
             );
-            List<String> attentionIds = pendingAttentionIds(row.turnId());
-            turns.put(row.turnId(), new TurnView(
-                    row.turnId(),
-                    row.branchId(),
-                    row.messageId(),
-                    new RequestView(row.content(), attachmentRefs),
-                    row.phase(),
-                    turnRuns.stream().map(RunView::runId).toList(),
-                    row.rootRunId(),
-                    turnNodes.stream()
-                            .map(node -> node.path("nodeId").asText())
-                            .toList(),
-                    attentionIds,
-                    null,
-                    List.of(),
-                    new TurnStats(
-                            roundsForTurn(turnRuns, rounds),
-                            toolCallsForTurn(turnNodes),
-                            Math.max(0, turnRuns.size() - 1),
-                            row.startedAt(),
-                            row.endedAt()
-                    ),
-                    row.version()
-            ));
+            turns.put(row.turnId(), buildTurnView(row));
         }
 
         List<JsonNode> compactBoundaries =
@@ -352,6 +373,83 @@ public class ConversationQueryRepository {
                 .list();
     }
 
+    public TurnView turnView(String turnId) {
+        TurnRow row = jdbc.sql("""
+                SELECT
+                    t.turn_id, t.branch_id, t.request_message_id, t.root_run_id,
+                    t.phase, t.version, t.started_at, t.ended_at,
+                    m.content, CAST(0 AS BIGINT) AS sequence
+                FROM conversation_turn t
+                JOIN message m ON m.message_id = t.request_message_id
+                WHERE t.turn_id = :turnId
+                """)
+                .param("turnId", turnId)
+                .query((rs, rowNum) -> new TurnRow(
+                        rs.getString("turn_id"),
+                        rs.getString("branch_id"),
+                        rs.getString("request_message_id"),
+                        rs.getString("root_run_id"),
+                        rs.getString("phase"),
+                        rs.getLong("version"),
+                        Instant.parse(rs.getString("started_at")),
+                        rs.getString("ended_at") == null
+                                ? null
+                                : Instant.parse(rs.getString("ended_at")),
+                        rs.getString("content"),
+                        rs.getLong("sequence")
+                ))
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("找不到 Turn"));
+        return buildTurnView(row);
+    }
+
+    private TurnView buildTurnView(TurnRow row) {
+        List<String> attachmentRefs = attachments(row.messageId());
+        List<RunView> turnRuns = runs(row.turnId());
+        Map<String, RoundView> roundsById = new LinkedHashMap<>();
+        turnRuns.forEach(run -> rounds(run.runId()).forEach(round ->
+                roundsById.put(round.roundId(), round)
+        ));
+        List<JsonNode> turnNodes = renderNodes(row.turnId());
+        List<String> attentionIds = pendingAttentionIds(row.turnId());
+        return new TurnView(
+                row.turnId(),
+                row.branchId(),
+                row.messageId(),
+                new RequestView(row.content(), attachmentRefs),
+                row.phase(),
+                turnRuns.stream().map(RunView::runId).toList(),
+                row.rootRunId(),
+                turnNodes.stream()
+                        .map(node -> node.path("nodeId").asText())
+                        .toList(),
+                attentionIds,
+                null,
+                List.of(),
+                new TurnStats(
+                        roundsForTurn(turnRuns, roundsById),
+                        toolCallsForTurn(turnNodes),
+                        Math.max(0, turnRuns.size() - 1),
+                        row.startedAt(),
+                        row.endedAt()
+                ),
+                row.version()
+        );
+    }
+
+    public RunView runView(String runId) {
+        return jdbc.sql("""
+                SELECT r.*, d.*
+                FROM agent_run r
+                JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                WHERE r.run_id = :runId
+                """)
+                .param("runId", runId)
+                .query((rs, rowNum) -> mapRunView(rs))
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("找不到 Run"));
+    }
+
     private List<RunView> runs(String turnId) {
         return jdbc.sql("""
                 SELECT r.*, d.*
@@ -361,41 +459,46 @@ public class ConversationQueryRepository {
                 ORDER BY r.started_at, r.run_id
                 """)
                 .param("turnId", turnId)
-                .query((rs, rowNum) -> new RunView(
-                        rs.getString("run_id"),
-                        rs.getString("turn_id"),
-                        rs.getString("parent_run_id"),
-                        rs.getString("root_run_id"),
-                        null,
-                        rs.getString("kind"),
-                        new RunDefinition(
-                                rs.getString("definition_id"),
-                                rs.getString("definition_version"),
-                                rs.getString("snapshot_hash"),
-                                rs.getString("normalized_input_hash"),
-                                rs.getString("dependency_snapshot_ref")
-                        ),
-                        rs.getString("purpose"),
-                        rs.getString("phase"),
-                        List.of(),
-                        roundIds(rs.getString("run_id")),
-                        childRunIds(rs.getString("run_id")),
-                        new RunBudget(
-                                0,
-                                rs.getInt("tool_calls_limit"),
-                                0,
-                                rs.getLong("time_limit_ms")
-                        ),
-                        null,
-                        List.of(),
-                        null,
-                        rs.getLong("version"),
-                        Instant.parse(rs.getString("started_at")),
-                        rs.getString("ended_at") == null
-                                ? null
-                                : Instant.parse(rs.getString("ended_at"))
-                ))
+                .query((rs, rowNum) -> mapRunView(rs))
                 .list();
+    }
+
+    private RunView mapRunView(java.sql.ResultSet rs)
+            throws java.sql.SQLException {
+        return new RunView(
+                rs.getString("run_id"),
+                rs.getString("turn_id"),
+                rs.getString("parent_run_id"),
+                rs.getString("root_run_id"),
+                null,
+                rs.getString("kind"),
+                new RunDefinition(
+                        rs.getString("definition_id"),
+                        rs.getString("definition_version"),
+                        rs.getString("snapshot_hash"),
+                        rs.getString("normalized_input_hash"),
+                        rs.getString("dependency_snapshot_ref")
+                ),
+                rs.getString("purpose"),
+                rs.getString("phase"),
+                List.of(),
+                roundIds(rs.getString("run_id")),
+                childRunIds(rs.getString("run_id")),
+                new RunBudget(
+                        0,
+                        rs.getInt("tool_calls_limit"),
+                        0,
+                        rs.getLong("time_limit_ms")
+                ),
+                null,
+                List.of(),
+                null,
+                rs.getLong("version"),
+                Instant.parse(rs.getString("started_at")),
+                rs.getString("ended_at") == null
+                        ? null
+                        : Instant.parse(rs.getString("ended_at"))
+        );
     }
 
     private List<String> roundIds(String runId) {
@@ -420,6 +523,17 @@ public class ConversationQueryRepository {
                 .list();
     }
 
+    public RoundView roundView(String roundId) {
+        return jdbc.sql("""
+                SELECT * FROM agent_round
+                WHERE round_id = :roundId
+                """)
+                .param("roundId", roundId)
+                .query((rs, rowNum) -> mapRoundView(rs))
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("找不到 Round"));
+    }
+
     private List<RoundView> rounds(String runId) {
         return jdbc.sql("""
                 SELECT * FROM agent_round
@@ -427,20 +541,37 @@ public class ConversationQueryRepository {
                 ORDER BY round_index
                 """)
                 .param("runId", runId)
-                .query((rs, rowNum) -> new RoundView(
-                        rs.getString("round_id"),
-                        rs.getString("run_id"),
-                        rs.getInt("round_index"),
-                        rs.getString("phase"),
-                        processNodeIds(rs.getString("round_id")),
-                        rs.getString("answer_node_id"),
-                        new RoundStats(
-                                rs.getInt("tool_call_count"),
-                                rs.getLong("duration_ms")
-                        ),
-                        rs.getLong("version")
-                ))
+                .query((rs, rowNum) -> mapRoundView(rs))
                 .list();
+    }
+
+    private RoundView mapRoundView(java.sql.ResultSet rs)
+            throws java.sql.SQLException {
+        return new RoundView(
+                rs.getString("round_id"),
+                rs.getString("run_id"),
+                rs.getInt("round_index"),
+                visibleRoundPhase(rs.getString("phase")),
+                processNodeIds(rs.getString("round_id")),
+                rs.getString("answer_node_id"),
+                new RoundStats(
+                        rs.getInt("tool_call_count"),
+                        rs.getLong("duration_ms")
+                ),
+                rs.getLong("version")
+        );
+    }
+
+    /**
+     * Round 的内部相位比投影词汇丰富；对外统一折叠为
+     * active / settled / failed（docs/08 §10.3）。
+     */
+    public static String visibleRoundPhase(String phase) {
+        return switch (phase) {
+            case "completed" -> "settled";
+            case "failed" -> "failed";
+            default -> "active";
+        };
     }
 
     private List<String> processNodeIds(String roundId) {

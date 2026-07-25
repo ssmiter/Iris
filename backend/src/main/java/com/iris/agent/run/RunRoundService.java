@@ -2,6 +2,7 @@ package com.iris.agent.run;
 
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
+import com.iris.conversation.application.RunEventEmitter;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -15,22 +16,25 @@ public class RunRoundService {
 
     private final RunRoundRepository repository;
     private final TransactionTemplate transactions;
+    private final RunEventEmitter events;
     private final Clock clock = Clock.systemUTC();
     private final ReentrantLock[] locks = new ReentrantLock[LOCK_COUNT];
 
     public RunRoundService(
             RunRoundRepository repository,
-            TransactionTemplate transactions
+            TransactionTemplate transactions,
+            RunEventEmitter events
     ) {
         this.repository = repository;
         this.transactions = transactions;
+        this.events = events;
         for (int index = 0; index < LOCK_COUNT; index++) {
             locks[index] = new ReentrantLock();
         }
     }
 
     public RoundRow openRound(String runId) {
-        return withLock(runId, () -> transactions.execute(status -> {
+        RoundRow opened = withLock(runId, () -> transactions.execute(status -> {
             RunRow run = requireRun(runId);
             if (!"agentic".equals(run.kind())) {
                 throw new IllegalStateException(
@@ -52,6 +56,9 @@ public class RunRoundService {
             );
             return repository.findRound(roundId).orElseThrow();
         }));
+        events.roundStarted(opened.roundId());
+        events.runUpdated(runId);
+        return opened;
     }
 
     public RunRow transitionRun(
@@ -59,7 +66,7 @@ public class RunRoundService {
             long expectedVersion,
             RunPhase target
     ) {
-        return withLock(runId, () -> transactions.execute(status -> {
+        RunRow transitioned = withLock(runId, () -> transactions.execute(status -> {
             RunRow current = requireRun(runId);
             if (current.version() != expectedVersion) {
                 throw new IllegalStateException("Run version 已变化");
@@ -76,6 +83,12 @@ public class RunRoundService {
             }
             return requireRun(runId);
         }));
+        if (target.terminal()) {
+            events.runSettled(runId);
+        } else {
+            events.runUpdated(runId);
+        }
+        return transitioned;
     }
 
     public RoundRow transitionRound(
@@ -86,7 +99,7 @@ public class RunRoundService {
         RoundRow initial = repository.findRound(roundId).orElseThrow(
                 () -> new IllegalStateException("找不到 Round")
         );
-        return withLock(initial.runId(), () -> transactions.execute(status -> {
+        RoundRow transitioned = withLock(initial.runId(), () -> transactions.execute(status -> {
             RoundRow current = repository.findRound(roundId).orElseThrow();
             if (current.version() != expectedVersion) {
                 throw new IllegalStateException("Round version 已变化");
@@ -105,6 +118,8 @@ public class RunRoundService {
             }
             return repository.findRound(roundId).orElseThrow();
         }));
+        events.roundUpdated(roundId);
+        return transitioned;
     }
 
     private RunRow requireRun(String runId) {

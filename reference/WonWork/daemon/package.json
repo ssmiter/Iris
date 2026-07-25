@@ -1,0 +1,36 @@
+{
+  "name": "wonwork-webbridge-daemon",
+  "version": "1.0.0",
+  "description": "WonWork WebBridge local daemon for browser automation",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "package": "pkg dist/index.js --targets node18-win-x64 --output dist/webbridge-daemon.exe"
+  },
+  "dependencies": {
+    "chrome-launcher": "^0.15.2",
+    "chrome-remote-interface": "^0.33.2",
+    "csv-stringify": "^6.8.0",
+    "ws": "^8.18.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/ws": "^8.5.14",
+    "javascript-obfuscator": "^5.4.7",
+    "pkg": "^5.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/**/*.js"
+    ],
+    "assets": [
+      "node_modules/chrome-launcher/**/*"
+    ]
+  }
+}
