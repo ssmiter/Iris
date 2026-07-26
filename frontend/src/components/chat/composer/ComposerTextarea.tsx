@@ -65,7 +65,7 @@ export const ComposerTextarea = forwardRef<
       className={cn(
         'min-h-6 min-w-0 flex-1 resize-none bg-transparent text-body text-ink outline-none',
         'placeholder:text-ink-muted disabled:cursor-not-allowed disabled:opacity-50',
-        'subtle-scrollbar',
+        'scrollbar-subtle',
         className,
       )}
       onKeyDown={handleKeyDown}

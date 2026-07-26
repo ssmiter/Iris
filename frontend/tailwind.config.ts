@@ -123,6 +123,10 @@ export default {
           '0%, 100%': { opacity: '.45', transform: 'scale(.9)' },
           '50%': { opacity: '1', transform: 'scale(1)' },
         },
+        'reveal-cursor': {
+          '0%, 100%': { opacity: '.28' },
+          '50%': { opacity: '.72' },
+        },
         spin: {
           to: { transform: 'rotate(360deg)' },
         },
@@ -133,6 +137,7 @@ export default {
         'dialog-in': 'dialog-in var(--motion-deliberate) var(--ease-enter)',
         'dialog-out': 'dialog-out var(--motion-normal) var(--ease-exit)',
         'soft-pulse': 'soft-pulse 1.8s var(--ease-standard) infinite',
+        'reveal-cursor': 'reveal-cursor var(--motion-cursor-cycle) var(--ease-standard) infinite',
         spin: 'spin .8s linear infinite',
       },
     },

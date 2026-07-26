@@ -105,7 +105,7 @@ export function ConversationTimeline({
       if (
         touchStartY !== null
         && currentY !== undefined
-        && currentY > touchStartY + 4
+        && currentY > touchStartY + 8
       ) {
         reviewHistory()
       }
@@ -130,12 +130,12 @@ export function ConversationTimeline({
         scrollerRef={(element) => {
           scrollerRef.current = element
         }}
-        className="h-full subtle-scrollbar"
+        className="h-full scrollbar-subtle"
         data={projection.turns}
         computeItemKey={(_, turn) => turn.turnId}
         initialTopMostItemIndex={Math.max(0, projection.turns.length - 1)}
         increaseViewportBy={{ top: 320, bottom: 200 }}
-        atBottomThreshold={72}
+        atBottomThreshold={80}
         atBottomStateChange={handleAtBottomChange}
         followOutput={() => followMode === 'following' ? 'auto' : false}
         itemContent={(_, turn) => (

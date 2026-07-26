@@ -56,7 +56,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
         )}
       </div>
 
-      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2 subtle-scrollbar">
+      <nav className="scrollbar-subtle min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
         {conversationOrder.map((conversationId) => {
           const conversation = conversationsById[conversationId]
           if (!conversation) return null

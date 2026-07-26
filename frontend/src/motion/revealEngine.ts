@@ -2,6 +2,10 @@ import { revealMotion } from './transitions'
 
 type RevealListener = () => void
 
+const graphemeSegmenter = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null
+
 const activeControllers = new Set<RevealController>()
 let animationFrame: number | null = null
 let previousFrameAt = 0
@@ -85,20 +89,25 @@ export class RevealController {
 
     if (initial) {
       this.frontier = Math.max(0, target.length - revealMotion.firstFrameTail)
-      this.visible = target.slice(0, Math.floor(this.frontier))
+      this.revealThrough(Math.floor(this.frontier))
       this.lastArrivalLength = target.length
       this.lastArrivalAt = now
     } else if (target.length < previousLength) {
       this.frontier = Math.min(this.frontier, target.length)
-      this.visible = target.slice(0, Math.floor(this.frontier))
-      this.publish()
+      const previousVisible = this.visible
+      this.visible = ''
+      this.revealThrough(Math.floor(this.frontier))
+      if (this.visible !== previousVisible) {
+        this.publish()
+      }
     }
 
     const backlog = target.length - this.frontier
     if (backlog > revealMotion.backlogFastForwardThreshold) {
       this.frontier = Math.max(this.frontier, target.length - revealMotion.retainedBacklog)
-      this.visible = target.slice(0, Math.floor(this.frontier))
-      this.publish()
+      if (this.revealThrough(Math.floor(this.frontier))) {
+        this.publish()
+      }
     }
 
     if (this.frontier < target.length) {
@@ -145,15 +154,16 @@ export class RevealController {
       this.frontier + charactersPerSecond * elapsedMs / 1_000,
     )
 
-    const nextLength = Math.floor(this.frontier)
-    const completed = nextLength >= this.target.length
+    const requestedLength = Math.floor(this.frontier)
+    const completed = requestedLength >= this.target.length
     if (
-      nextLength !== this.visible.length
+      requestedLength !== this.visible.length
       && (completed || now - this.lastPublishedAt >= revealMotion.minimumPublishIntervalMs)
     ) {
-      this.visible = this.target.slice(0, nextLength)
-      this.lastPublishedAt = now
-      this.publish()
+      if (this.revealThrough(requestedLength)) {
+        this.lastPublishedAt = now
+        this.publish()
+      }
     }
 
     return !completed
@@ -175,6 +185,38 @@ export class RevealController {
 
     this.lastArrivalLength = length
     this.lastArrivalAt = now
+  }
+
+  private revealThrough(requestedLength: number) {
+    const clampedLength = clamp(
+      requestedLength,
+      this.visible.length,
+      this.target.length,
+    )
+    if (clampedLength <= this.visible.length) {
+      return false
+    }
+    if (clampedLength === this.target.length || graphemeSegmenter === null) {
+      this.visible = this.target.slice(0, clampedLength)
+      return true
+    }
+
+    const scanStart = this.visible.length
+    const lookaheadEnd = Math.min(this.target.length, clampedLength + 64)
+    const remainder = this.target.slice(scanStart, lookaheadEnd)
+    let safeBoundary = scanStart
+
+    for (const segment of graphemeSegmenter.segment(remainder)) {
+      const segmentEnd = scanStart + segment.index + segment.segment.length
+      if (segmentEnd > clampedLength) break
+      safeBoundary = segmentEnd
+    }
+
+    if (safeBoundary === this.visible.length) {
+      return false
+    }
+    this.visible = this.target.slice(0, safeBoundary)
+    return true
   }
 
   private publish() {

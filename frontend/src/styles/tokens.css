@@ -76,6 +76,7 @@
   --motion-normal: 200ms;
   --motion-deliberate: 280ms;
   --motion-attention-exit: 360ms;
+  --motion-cursor-cycle: 1400ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
