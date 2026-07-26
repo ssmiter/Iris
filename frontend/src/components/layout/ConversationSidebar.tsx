@@ -31,7 +31,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
 
   return (
     <div className="flex h-full flex-col bg-surface">
-      <div className="flex h-[var(--topbar-height)] items-center justify-between border-b border-border px-3">
+      <div className="flex h-[var(--topbar-height)] items-center justify-between px-3">
         <span className="text-small font-semibold text-ink">对话</span>
         {mobile ? (
           <Dialog.Close asChild>
@@ -69,7 +69,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
                 'flex w-full items-start gap-2.5 rounded-sm px-3 py-2.5 text-left',
                 'transition-colors duration-fast focus-visible:outline-none focus-visible:shadow-focus',
                 active
-                  ? 'bg-primary-soft text-ink'
+                  ? 'bg-surface-muted text-ink'
                   : 'text-ink-subtle hover:bg-surface-muted hover:text-ink',
                 'motion-reduce:transition-none',
               )}
@@ -101,7 +101,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
         })}
       </nav>
 
-      <div className="border-t border-border px-4 py-3 text-caption text-ink-muted">
+      <div className="px-4 py-3 text-caption text-ink-muted">
         本地工作集 · 历史不会因收起而删除
       </div>
     </div>
@@ -113,7 +113,7 @@ export function DesktopConversationSidebar() {
   if (!sidebarOpen) return null
 
   return (
-    <aside className="hidden h-full w-[var(--sidebar-width)] shrink-0 border-r border-border md:block">
+    <aside className="hidden h-full w-[var(--sidebar-width)] shrink-0 md:block">
       <SidebarContent />
     </aside>
   )
@@ -127,7 +127,7 @@ export function MobileConversationSidebar() {
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/20 backdrop-blur-[2px] data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none md:hidden" />
-        <Dialog.Content className="fixed inset-y-0 left-0 z-50 w-[min(86vw,20rem)] border-r border-border bg-surface shadow-floating transition-transform duration-deliberate ease-standard data-[state=closed]:-translate-x-full data-[state=open]:translate-x-0 motion-reduce:transition-none md:hidden">
+        <Dialog.Content className="fixed inset-y-0 left-0 z-50 w-[min(86vw,20rem)] bg-surface shadow-floating transition-transform duration-deliberate ease-standard data-[state=closed]:-translate-x-full data-[state=open]:translate-x-0 motion-reduce:transition-none md:hidden">
           <Dialog.Title className="sr-only">对话列表</Dialog.Title>
           <SidebarContent mobile />
         </Dialog.Content>

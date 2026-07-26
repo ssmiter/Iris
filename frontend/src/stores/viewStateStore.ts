@@ -21,6 +21,8 @@ export interface ViewState {
   toggleNode: (nodeId: string) => void
   seedExpandedNodes: (nodeIds: string[]) => void
   setScrollState: (atBottom: boolean) => void
+  reviewHistory: () => void
+  addUnseenTurns: (count: number) => void
   followLatest: () => void
   setTheme: (theme: Theme) => void
   setPermissionMode: (mode: PermissionMode) => void
@@ -69,8 +71,19 @@ export const useViewStateStore = create<ViewState>()(
       setScrollState: (atBottom) =>
         set((state) => ({
           atBottom,
-          followMode: atBottom ? 'following' : 'reviewing',
+          followMode: atBottom ? 'following' : state.followMode,
           unseenTurnCount: atBottom ? 0 : state.unseenTurnCount,
+        })),
+      reviewHistory: () =>
+        set({
+          followMode: 'reviewing',
+        }),
+      addUnseenTurns: (count) =>
+        set((state) => ({
+          unseenTurnCount:
+            state.followMode === 'reviewing'
+              ? state.unseenTurnCount + Math.max(0, count)
+              : state.unseenTurnCount,
         })),
       followLatest: () =>
         set({

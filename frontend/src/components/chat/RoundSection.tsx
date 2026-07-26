@@ -43,9 +43,17 @@ export function RoundSection({
       (node): node is Extract<RenderNode, { type: 'supplement' }> =>
         node?.type === 'supplement',
     )
-  const answerNode = round.answerNodeId
+  const linkedAnswerNode = round.answerNodeId
     ? nodesById[round.answerNodeId]
     : undefined
+  const projectedAnswerNode = linkedAnswerNode
+    ? undefined
+    : Object.values(nodesById).find(
+        (node) =>
+          node.type === 'answer'
+          && node.roundId === round.roundId,
+      )
+  const answerNode = linkedAnswerNode ?? projectedAnswerNode
   const pendingCount = processNodes.filter(
     (node) => node.type === 'attention' && node.status === 'waiting',
   ).length
@@ -55,13 +63,13 @@ export function RoundSection({
     <section
       className={cn(
         'py-3',
-        round.index > 0 && 'border-t border-border/70',
+        round.index > 0 && 'mt-2 pt-4',
       )}
       aria-label={`第 ${round.index + 1} 轮`}
     >
       {supplementNodes.map((node) => (
         <div key={node.nodeId} className="mb-3 flex justify-end">
-          <div className="max-w-[92%] rounded-lg rounded-br-xs bg-primary px-4 py-3 text-body text-primary-foreground shadow-hairline sm:max-w-[min(86%,42rem)]">
+          <div className="max-w-[92%] rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink sm:max-w-[min(86%,42rem)]">
             {node.text}
           </div>
         </div>

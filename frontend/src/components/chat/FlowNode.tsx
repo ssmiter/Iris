@@ -7,7 +7,6 @@ import {
   CircleEllipsis,
   FileText,
   GitBranch,
-  LoaderCircle,
   MessageSquareMore,
   Wrench,
   X,
@@ -214,7 +213,7 @@ export function FlowNode({
           )}
         >
           {active ? (
-            <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+            <span className="h-1.5 w-1.5 animate-soft-pulse rounded-full bg-current motion-reduce:animate-none" />
           ) : failed ? (
             <X className="h-3 w-3" />
           ) : (
@@ -240,7 +239,7 @@ export function FlowNode({
             aria-hidden="true"
             className={cn(
               'h-4 w-4 shrink-0 text-ink-muted',
-              active && 'text-primary',
+              active && 'text-ink-subtle',
               failed && 'text-danger',
             )}
           />
@@ -250,7 +249,7 @@ export function FlowNode({
           <span
             className={cn(
               'shrink-0 text-caption text-ink-muted',
-              active && 'text-primary',
+              active && 'text-ink-subtle',
               failed && 'text-danger',
             )}
           >

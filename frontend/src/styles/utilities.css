@@ -14,6 +14,16 @@
     text-wrap: pretty;
   }
 
+  .composer-dock-scrim {
+    background:
+      linear-gradient(
+        to bottom,
+        rgb(var(--color-canvas) / 0),
+        rgb(var(--color-canvas) / 0.94) 32%,
+        rgb(var(--color-canvas)) 68%
+      );
+  }
+
   .scrollbar-subtle {
     scrollbar-color: rgb(var(--color-border-strong)) transparent;
     scrollbar-width: thin;

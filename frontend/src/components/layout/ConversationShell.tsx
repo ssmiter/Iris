@@ -59,7 +59,7 @@ export function ConversationShell({
       <MobileConversationSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="z-20 shrink-0 border-b border-border bg-canvas/90 backdrop-blur-md">
+        <header className="z-20 shrink-0 bg-canvas/88 shadow-hairline backdrop-blur-md">
           <div className="flex h-[var(--topbar-height)] items-center justify-between gap-2 px-[var(--page-gutter)]">
             <div className="flex min-w-0 items-center gap-2">
               <Button

@@ -7,7 +7,7 @@ import type {
   RunView,
   TurnView,
 } from '@/domain/chat/models'
-import { Badge, Button } from '@/components/ui'
+import { Button } from '@/components/ui'
 import { RunSection } from './RunSection'
 import { cn } from '@/lib/cn'
 
@@ -60,10 +60,10 @@ export function WaterfallTurn({
   const hasPendingAttention = turn.pendingAttentionIds.length > 0
 
   return (
-    <article className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)] py-7">
+    <article className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)] py-6">
       <div className="flex justify-end">
         <div className="group max-w-[92%] sm:max-w-[min(86%,42rem)]">
-          <div className="rounded-lg rounded-br-xs bg-primary px-4 py-3 text-body text-primary-foreground shadow-hairline">
+          <div className="rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
             {turn.request.text}
           </div>
           {onReplaceRequest &&
@@ -104,14 +104,14 @@ export function WaterfallTurn({
             onAttentionAction={onAttentionAction}
           />
         ) : (
-          <div className="rounded-md border border-danger/30 bg-danger-soft p-3 text-small text-danger-foreground">
+          <div className="rounded-md bg-danger-soft p-3 text-small text-danger-foreground">
             当前 Turn 缺少 root Run 投影，无法安全重建过程。
           </div>
         )}
 
         {turn.failure && (
           <div
-            className="mt-3 flex gap-2 rounded-md border border-danger/30 bg-danger-soft px-3 py-2.5 text-small text-danger-foreground"
+            className="mt-3 flex gap-2 rounded-md bg-danger-soft px-3 py-2.5 text-small text-danger-foreground"
             role="alert"
           >
             <AlertTriangle
@@ -129,22 +129,28 @@ export function WaterfallTurn({
             turn.phase === 'stopped' && 'text-warning',
           )}
         >
-          <Badge
-            tone={
-              turn.phase === 'failed'
-                ? 'danger'
-                : turn.phase === 'active'
-                  ? 'info'
-                  : 'neutral'
-            }
-            appearance="outline"
+          <span
+            aria-hidden="true"
+            className={cn(
+              'h-1.5 w-1.5 rounded-full bg-border-strong',
+              turn.phase === 'active' && 'bg-primary',
+              turn.phase === 'failed' && 'bg-danger',
+              turn.phase === 'stopped' && 'bg-warning',
+            )}
+          />
+          <span
+            className={cn(
+              turn.phase === 'active' && 'text-primary',
+              turn.phase === 'failed' && 'text-danger',
+              turn.phase === 'stopped' && 'text-warning',
+            )}
           >
             {turn.phase === 'active' && turn.stop
               ? turn.stop.state === 'draining'
                 ? '正在核验后停止'
                 : '正在停止'
               : phaseLabel[turn.phase]}
-          </Badge>
+          </span>
           <span>{turn.stats.roundCount} 轮</span>
           <span>· {turn.stats.toolCallCount} 个工具</span>
           {turn.stats.childRunCount > 0 && (

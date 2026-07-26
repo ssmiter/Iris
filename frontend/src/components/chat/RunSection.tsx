@@ -39,7 +39,7 @@ export function RunSection({
 
   if (run.kind === 'pipeline' && rounds.length === 0) {
     return (
-      <div className="my-3 flex items-start gap-3 rounded-md border border-border bg-surface-muted p-3">
+      <div className="my-3 flex items-start gap-3 rounded-md bg-surface-muted p-3">
         <GitBranch aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

@@ -284,6 +284,8 @@ flowchart LR
 
 高频 answer delta 从第一版起就在一次 animation frame 内合并，停止、批准、拒绝、补充等人的动作直接走快路径。M0/M1 不引入复杂双车道 Scheduler；只有性能测量证明 reducer 批处理不足时才升级。这样性能约束已经进入结构，却没有把原型阶段变成渲染引擎研发。
 
+数据到达与视觉呈现之间还有一层速率自适应的视觉时钟（揭示引擎），流式正文的三段呈现、完成提升与失效退场见 [24 · 丝滑交互体验引擎](24-silky-interaction.md) §2–§3。
+
 ### 6.2 刷新与重连路径
 
 ```mermaid
@@ -442,6 +444,8 @@ Iris 不在前端保存整条深拷贝尾巴作为长期真相。服务端返回
 - 多条审批按出现顺序稳定排列，新项靠近 composer；
 - 任何批准/拒绝先产生本地 `submitting` 反馈，最终状态以后端事件为准。
 
+ghost 两阶段退场、稳定槽位、防重与 `Tab` 快速批准首项的完整机制见 [24](24-silky-interaction.md) §7。
+
 ### 8.5 文件与产物卡片
 
 `ArtifactNode` 只描述产物身份、来源和预览引用：
@@ -585,6 +589,8 @@ viewStateStore → import chatStore → import API → import viewStateStore
 - reviewing 期间只累计“新增 N 轮”，不按 token 跳数字；
 - 点击“回到最新”才平滑恢复；
 - 展开历史 Round 时保持点击锚点，不能把视口拉到底。
+
+意图识别只信原生输入事件（程序化滚动永不误判），完整状态机与容差参数见 [24](24-silky-interaction.md) §4。
 
 ### 11.2 渲染粒度
 

@@ -57,7 +57,153 @@ function shouldReplace(currentVersion: number | undefined, nextVersion: number) 
   return currentVersion === undefined || nextVersion >= currentVersion
 }
 
-export const useChatStore = create<ChatState>((set) => ({
+function reduceConversationEvent(
+  state: ChatState,
+  event: ConversationEvent,
+): Partial<ChatState> {
+  const payload = event.envelope.payload
+  const next: Partial<ChatState> = {
+    eventCursor: event.envelope.eventId,
+  }
+
+  if (event.type === 'turn.accepted' || event.type === 'turn.updated') {
+    const turn = payload.turn as TurnView | undefined
+    if (turn && shouldReplace(state.turnsById[turn.turnId]?.version, turn.version)) {
+      next.turnsById = { ...state.turnsById, [turn.turnId]: turn }
+      if (!state.turnsById[turn.turnId]) {
+        next.turnOrder = [...state.turnOrder, turn.turnId]
+      }
+    }
+  } else if (
+    event.type === 'run.started' ||
+    event.type === 'run.updated' ||
+    event.type === 'run.settled'
+  ) {
+    const run = payload.run as RunView | undefined
+    if (run && shouldReplace(state.runsById[run.runId]?.version, run.version)) {
+      next.runsById = { ...state.runsById, [run.runId]: run }
+    }
+  } else if (event.type === 'round.started' || event.type === 'round.updated') {
+    const round = payload.round as RoundView | undefined
+    if (round && shouldReplace(state.roundsById[round.roundId]?.version, round.version)) {
+      next.roundsById = { ...state.roundsById, [round.roundId]: round }
+    }
+  } else if (
+    event.type === 'render_node.added' ||
+    event.type === 'render_node.updated' ||
+    event.type === 'attention.requested' ||
+    event.type === 'attention.updated'
+  ) {
+    const node = payload.node as RenderNode | undefined
+    if (
+      node
+      && shouldReplace(state.renderNodesById[node.nodeId]?.version, node.version)
+    ) {
+      next.renderNodesById = { ...state.renderNodesById, [node.nodeId]: node }
+    }
+  } else if (event.type === 'render_node.delta') {
+    const nodeId = payload.nodeId as string | undefined
+    const baseVersion = payload.baseVersion as number | undefined
+    const targetVersion = payload.targetVersion as number | undefined
+    const append = payload.append as string | undefined
+    const current = nodeId ? state.renderNodesById[nodeId] : undefined
+
+    if (
+      current?.type === 'answer'
+      && current.version === baseVersion
+      && typeof targetVersion === 'number'
+      && typeof append === 'string'
+    ) {
+      next.renderNodesById = {
+        ...state.renderNodesById,
+        [current.nodeId]: {
+          ...current,
+          content: current.content + append,
+          version: targetVersion,
+          updatedAt: event.envelope.occurredAt,
+        },
+      }
+    } else {
+      next.connectionState = 'invalidated'
+    }
+  } else if (event.type === 'render_node.invalidated') {
+    const node = payload.node as RenderNode | undefined
+    if (node && state.renderNodesById[node.nodeId]) {
+      const nodes = { ...state.renderNodesById }
+      delete nodes[node.nodeId]
+      next.renderNodesById = nodes
+    }
+  } else if (event.type === 'supplement.updated') {
+    const supplement = payload.supplement as SupplementView | undefined
+    if (supplement) {
+      const remaining = state.pendingSupplements.filter(
+        (item) => item.supplementId !== supplement.supplementId,
+      )
+      next.pendingSupplements =
+        supplement.state === 'pending'
+          ? [
+              ...remaining,
+              {
+                clientRequestId: supplement.supplementId,
+                supplementId: supplement.supplementId,
+                turnId: supplement.turnId,
+                text: supplement.text,
+                state: 'pending',
+              },
+            ]
+          : remaining
+    }
+  } else if (event.type === 'projection.invalidated') {
+    next.connectionState = 'invalidated'
+  }
+
+  return next
+}
+
+export const useChatStore = create<ChatState>((set) => {
+  let queuedDeltas: ConversationEvent[] = []
+  let queuedFrame: number | null = null
+
+  const reduceEvents = (state: ChatState, events: ConversationEvent[]) =>
+    events.reduce<ChatState>(
+      (current, event) => ({
+        ...current,
+        ...reduceConversationEvent(current, event),
+      }),
+      state,
+    )
+
+  const flushQueuedDeltas = () => {
+    queuedFrame = null
+    if (queuedDeltas.length === 0) return
+    const events = queuedDeltas
+    queuedDeltas = []
+    set((state) => reduceEvents(state, events))
+  }
+
+  const clearQueuedDeltas = () => {
+    queuedDeltas = []
+    if (queuedFrame !== null) {
+      window.cancelAnimationFrame(queuedFrame)
+      queuedFrame = null
+    }
+  }
+
+  const applyEvent = (event: ConversationEvent) => {
+    if (event.type === 'render_node.delta') {
+      queuedDeltas.push(event)
+      if (queuedFrame === null) {
+        queuedFrame = window.requestAnimationFrame(flushQueuedDeltas)
+      }
+      return
+    }
+
+    const pending = queuedDeltas
+    clearQueuedDeltas()
+    set((state) => reduceEvents(state, [...pending, event]))
+  }
+
+  return {
   turnOrder: [],
   turnsById: {},
   runsById: {},
@@ -68,7 +214,8 @@ export const useChatStore = create<ChatState>((set) => ({
   projectionVersion: 1,
   pendingSupplements: [],
 
-  hydrateProjection: (projection) =>
+  hydrateProjection: (projection) => {
+    clearQueuedDeltas()
     set({
       turnOrder: projection.turns.map((turn) => turn.turnId),
       turnsById: Object.fromEntries(
@@ -78,9 +225,11 @@ export const useChatStore = create<ChatState>((set) => ({
       roundsById: projection.roundsById,
       renderNodesById: projection.renderNodesById,
       connectionState: 'connected',
-    }),
+    })
+  },
 
-  hydrateView: (view) =>
+  hydrateView: (view) => {
+    clearQueuedDeltas()
     set({
       turnOrder: view.turnOrder,
       turnsById: view.turnsById,
@@ -100,122 +249,10 @@ export const useChatStore = create<ChatState>((set) => ({
           state: 'pending' as const,
         })),
       connectionState: 'connecting',
-    }),
+    })
+  },
 
-  applyEvent: (event) =>
-    set((state) => {
-      const payload = event.envelope.payload
-      const next = {
-        eventCursor: event.envelope.eventId,
-      } as Partial<ChatState>
-
-      if (event.type === 'turn.accepted' || event.type === 'turn.updated') {
-        const turn = payload.turn as TurnView | undefined
-        if (turn && shouldReplace(state.turnsById[turn.turnId]?.version, turn.version)) {
-          next.turnsById = { ...state.turnsById, [turn.turnId]: turn }
-          if (!state.turnsById[turn.turnId]) {
-            next.turnOrder = [...state.turnOrder, turn.turnId]
-          }
-        }
-      } else if (
-        event.type === 'run.started' ||
-        event.type === 'run.updated' ||
-        event.type === 'run.settled'
-      ) {
-        const run = payload.run as RunView | undefined
-        if (run && shouldReplace(state.runsById[run.runId]?.version, run.version)) {
-          next.runsById = { ...state.runsById, [run.runId]: run }
-        }
-      } else if (
-        event.type === 'round.started' ||
-        event.type === 'round.updated'
-      ) {
-        const round = payload.round as RoundView | undefined
-        if (
-          round &&
-          shouldReplace(state.roundsById[round.roundId]?.version, round.version)
-        ) {
-          next.roundsById = {
-            ...state.roundsById,
-            [round.roundId]: round,
-          }
-        }
-      } else if (
-        event.type === 'render_node.added' ||
-        event.type === 'render_node.updated' ||
-        event.type === 'attention.requested' ||
-        event.type === 'attention.updated'
-      ) {
-        const node = payload.node as RenderNode | undefined
-        if (
-          node &&
-          shouldReplace(
-            state.renderNodesById[node.nodeId]?.version,
-            node.version,
-          )
-        ) {
-          next.renderNodesById = {
-            ...state.renderNodesById,
-            [node.nodeId]: node,
-          }
-        }
-      } else if (event.type === 'render_node.delta') {
-        const nodeId = payload.nodeId as string | undefined
-        const baseVersion = payload.baseVersion as number | undefined
-        const targetVersion = payload.targetVersion as number | undefined
-        const append = payload.append as string | undefined
-        const current = nodeId ? state.renderNodesById[nodeId] : undefined
-        if (
-          current?.type === 'answer' &&
-          current.version === baseVersion &&
-          typeof targetVersion === 'number' &&
-          typeof append === 'string'
-        ) {
-          next.renderNodesById = {
-            ...state.renderNodesById,
-            [current.nodeId]: {
-              ...current,
-              content: current.content + append,
-              version: targetVersion,
-              updatedAt: event.envelope.occurredAt,
-            },
-          }
-        } else {
-          next.connectionState = 'invalidated'
-        }
-      } else if (event.type === 'render_node.invalidated') {
-        const node = payload.node as RenderNode | undefined
-        if (node && state.renderNodesById[node.nodeId]) {
-          const nodes = { ...state.renderNodesById }
-          delete nodes[node.nodeId]
-          next.renderNodesById = nodes
-        }
-      } else if (event.type === 'supplement.updated') {
-        const supplement = payload.supplement as SupplementView | undefined
-        if (supplement) {
-          const remaining = state.pendingSupplements.filter(
-            (item) => item.supplementId !== supplement.supplementId,
-          )
-          next.pendingSupplements =
-            supplement.state === 'pending'
-              ? [
-                  ...remaining,
-                  {
-                    clientRequestId: supplement.supplementId,
-                    supplementId: supplement.supplementId,
-                    turnId: supplement.turnId,
-                    text: supplement.text,
-                    state: 'pending',
-                  },
-                ]
-              : remaining
-        }
-      } else if (event.type === 'projection.invalidated') {
-        next.connectionState = 'invalidated'
-      }
-
-      return next
-    }),
+  applyEvent,
 
   upsertTurn: (turn) =>
     set((state) => {
@@ -301,7 +338,8 @@ export const useChatStore = create<ChatState>((set) => ({
 
   clearPendingSupplements: () => set({ pendingSupplements: [] }),
 
-  resetConversation: () =>
+  resetConversation: () => {
+    clearQueuedDeltas()
     set({
       turnOrder: [],
       turnsById: {},
@@ -311,5 +349,7 @@ export const useChatStore = create<ChatState>((set) => ({
       connectionState: 'idle',
       eventCursor: null,
       pendingSupplements: [],
-    }),
-}))
+    })
+  },
+  }
+})

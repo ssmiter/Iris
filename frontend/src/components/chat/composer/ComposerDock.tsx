@@ -60,7 +60,7 @@ export function ComposerDock({
   }
 
   return (
-    <div className="shrink-0 border-t border-border bg-canvas/92 px-[var(--page-gutter)] pb-3 pt-2 backdrop-blur-md">
+    <div className="composer-dock-scrim shrink-0 px-[var(--page-gutter)] pb-3 pt-4">
       <div className="mx-auto w-full max-w-conversation">
         {replacementMode && (
           <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-small text-ink">
@@ -89,7 +89,7 @@ export function ComposerDock({
           onCancel={onCancelSupplement}
         />
 
-        <div className="rounded-xl border border-border bg-surface-raised p-2 shadow-raised focus-within:border-border-strong">
+        <div className="rounded-xl border border-border/80 bg-surface-raised/96 p-2 shadow-raised backdrop-blur-xl transition-[border-color,box-shadow] duration-fast focus-within:border-border-strong focus-within:shadow-floating motion-reduce:transition-none">
           <div className="flex items-end gap-2 px-2 pt-1">
             <ComposerTextarea
               value={value}

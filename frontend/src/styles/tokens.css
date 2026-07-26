@@ -67,8 +67,8 @@
   --radius-xl: 1.5rem;
 
   --shadow-hairline: 0 1px 0 rgb(31 33 30 / 0.04);
-  --shadow-raised: 0 8px 24px rgb(24 27 23 / 0.08);
-  --shadow-floating: 0 16px 48px rgb(24 27 23 / 0.12);
+  --shadow-raised: 0 5px 20px rgb(24 27 23 / 0.065);
+  --shadow-floating: 0 12px 38px rgb(24 27 23 / 0.1);
   --shadow-focus: 0 0 0 var(--control-ring-width) rgb(var(--color-focus) / 0.22);
 
   --motion-instant: 90ms;
@@ -80,7 +80,7 @@
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
-  --conversation-max: 780px;
+  --conversation-max: 820px;
   --conversation-pad: 24px;
   --page-gutter: clamp(16px, 3vw, 32px);
   --composer-bottom: 16px;
