@@ -59,6 +59,69 @@ public class RunRoundRepository {
                 .list();
     }
 
+    public List<RunRow> stopRequestedRuns() {
+        return jdbc.sql("""
+                SELECT r.run_id, r.conversation_id, r.branch_id, r.turn_id,
+                       r.kind, r.phase, r.version
+                FROM agent_run r
+                JOIN turn_stop_request s ON s.root_run_id = r.run_id
+                WHERE r.kind = 'agentic'
+                  AND r.phase IN ('accepted', 'running', 'suspended')
+                  AND s.phase IN ('requested', 'draining')
+                ORDER BY s.requested_at
+                """)
+                .query((rs, rowNum) -> new RunRow(
+                        rs.getString("run_id"),
+                        rs.getString("conversation_id"),
+                        rs.getString("branch_id"),
+                        rs.getString("turn_id"),
+                        rs.getString("kind"),
+                        RunPhase.valueOf(
+                                rs.getString("phase").toUpperCase()
+                        ),
+                        rs.getLong("version")
+                ))
+                .list();
+    }
+
+    /**
+     * 审批已经形成终态、但进程在 Run 被重新唤醒前退出时的恢复集合。
+     * 仍有 waiting/executing 等非终态工具事实的 Run 不能自动继续。
+     */
+    public List<RunRow> recoverableSuspendedRuns() {
+        return jdbc.sql("""
+                SELECT DISTINCT r.run_id, r.conversation_id, r.branch_id,
+                       r.turn_id, r.kind, r.phase, r.version
+                FROM agent_run r
+                JOIN agent_round ar ON ar.run_id = r.run_id
+                WHERE r.kind = 'agentic'
+                  AND r.phase = 'suspended'
+                  AND ar.phase = 'awaiting_tools'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM tool_execution e
+                      WHERE e.round_id = ar.round_id
+                        AND e.phase NOT IN (
+                            'succeeded', 'failed', 'outcome_unknown',
+                            'rejected', 'expired'
+                        )
+                  )
+                ORDER BY r.started_at
+                """)
+                .query((rs, rowNum) -> new RunRow(
+                        rs.getString("run_id"),
+                        rs.getString("conversation_id"),
+                        rs.getString("branch_id"),
+                        rs.getString("turn_id"),
+                        rs.getString("kind"),
+                        RunPhase.valueOf(
+                                rs.getString("phase").toUpperCase()
+                        ),
+                        rs.getLong("version")
+                ))
+                .list();
+    }
+
     public Optional<RoundRow> findRound(String roundId) {
         return jdbc.sql("""
                 SELECT round_id, run_id, round_index, phase,
@@ -102,6 +165,21 @@ public class RunRoundRepository {
                 ))
                 .list();
         return rows.stream().findFirst();
+    }
+
+    public Optional<String> latestAttemptFailure(String roundId) {
+        return jdbc.sql("""
+                SELECT error_category
+                FROM model_attempt
+                WHERE round_id = :roundId
+                  AND phase IN ('failed', 'interrupted')
+                  AND error_category IS NOT NULL
+                ORDER BY attempt_index DESC
+                LIMIT 1
+                """)
+                .param("roundId", roundId)
+                .query(String.class)
+                .optional();
     }
 
     public RunBudget runBudget(String runId) {

@@ -24,6 +24,22 @@ CREATE TABLE IF NOT EXISTS conversation_branch (
 CREATE INDEX IF NOT EXISTS idx_branch_conversation
     ON conversation_branch(conversation_id);
 
+CREATE TABLE IF NOT EXISTS branch_fork (
+    branch_id TEXT PRIMARY KEY,
+    source_branch_id TEXT NOT NULL,
+    anchor_message_id TEXT NOT NULL,
+    source_turn_id TEXT NOT NULL,
+    source_event_sequence INTEGER NOT NULL,
+    base_context_frame_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (source_branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (anchor_message_id) REFERENCES message(message_id),
+    FOREIGN KEY (source_turn_id) REFERENCES conversation_turn(turn_id),
+    FOREIGN KEY (base_context_frame_id) REFERENCES context_frame(frame_id)
+);
+
 CREATE TABLE IF NOT EXISTS message (
     message_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
@@ -66,6 +82,73 @@ CREATE TABLE IF NOT EXISTS conversation_turn (
 CREATE INDEX IF NOT EXISTS idx_turn_branch_started
     ON conversation_turn(conversation_id, branch_id, started_at);
 
+CREATE TABLE IF NOT EXISTS context_frame (
+    frame_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    owner_branch_id TEXT,
+    parent_frame_id TEXT,
+    frame_kind TEXT NOT NULL,
+    waterline_sequence INTEGER NOT NULL,
+    before_turn_id TEXT,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (owner_branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (parent_frame_id) REFERENCES context_frame(frame_id),
+    FOREIGN KEY (before_turn_id) REFERENCES conversation_turn(turn_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_frame_parent
+    ON context_frame(conversation_id, parent_frame_id);
+
+CREATE TABLE IF NOT EXISTS branch_context_head (
+    branch_id TEXT PRIMARY KEY,
+    frame_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (frame_id) REFERENCES context_frame(frame_id)
+);
+
+CREATE TABLE IF NOT EXISTS turn_supplement (
+    supplement_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    message_id TEXT,
+    text_content TEXT NOT NULL,
+    attachment_refs_json TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    injected_after_round_id TEXT,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (turn_id) REFERENCES conversation_turn(turn_id),
+    FOREIGN KEY (message_id) REFERENCES message(message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_supplement_turn_phase
+    ON turn_supplement(turn_id, phase, created_at);
+
+CREATE TABLE IF NOT EXISTS turn_stop_request (
+    stop_request_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL UNIQUE,
+    root_run_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    requested_at TEXT NOT NULL,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (turn_id) REFERENCES conversation_turn(turn_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_run (
     run_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
@@ -86,6 +169,21 @@ CREATE TABLE IF NOT EXISTS agent_run (
 
 CREATE INDEX IF NOT EXISTS idx_run_turn
     ON agent_run(conversation_id, turn_id);
+
+CREATE TABLE IF NOT EXISTS run_failure (
+    failure_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    code TEXT NOT NULL,
+    category TEXT NOT NULL,
+    user_message TEXT NOT NULL,
+    trace_id TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    recovery_action TEXT NOT NULL,
+    side_effect_outcome TEXT NOT NULL,
+    details_ref TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
 
 CREATE TABLE IF NOT EXISTS run_definition_snapshot (
     run_id TEXT PRIMARY KEY,
@@ -145,6 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_render_node_turn
 
 CREATE TABLE IF NOT EXISTS compact_boundary (
     boundary_id TEXT PRIMARY KEY,
+    frame_id TEXT NOT NULL UNIQUE,
     conversation_id TEXT NOT NULL,
     branch_id TEXT NOT NULL,
     before_turn_id TEXT NOT NULL,
@@ -153,7 +252,8 @@ CREATE TABLE IF NOT EXISTS compact_boundary (
     summary_artifact_ref TEXT NOT NULL,
     version INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id)
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (frame_id) REFERENCES context_frame(frame_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_compact_boundary_position
@@ -167,6 +267,45 @@ CREATE TABLE IF NOT EXISTS compact_summary (
     estimated_tokens INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (boundary_id) REFERENCES compact_boundary(boundary_id)
+);
+
+CREATE TABLE IF NOT EXISTS compaction_run (
+    run_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    parent_frame_id TEXT NOT NULL,
+    source_start_sequence INTEGER NOT NULL,
+    waterline_sequence INTEGER NOT NULL,
+    before_turn_id TEXT NOT NULL,
+    source_snapshot_id TEXT,
+    compact_boundary_id TEXT,
+    failure_json TEXT,
+    version INTEGER NOT NULL,
+    requested_at TEXT NOT NULL,
+    ended_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (parent_frame_id) REFERENCES context_frame(frame_id),
+    FOREIGN KEY (before_turn_id) REFERENCES conversation_turn(turn_id),
+    FOREIGN KEY (compact_boundary_id) REFERENCES compact_boundary(boundary_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_compaction_branch_active
+    ON compaction_run(conversation_id, branch_id)
+    WHERE phase IN ('accepted', 'running');
+
+CREATE TABLE IF NOT EXISTS compaction_source_snapshot (
+    snapshot_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    content_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    fact_count INTEGER NOT NULL,
+    estimated_tokens INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES compaction_run(run_id)
 );
 
 CREATE TABLE IF NOT EXISTS attention_projection (

@@ -123,10 +123,10 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 ## 本地运行
 
 ```bash
-# 后端 :5001（模型经 IRIS_MODEL_* 环境变量注入，密钥不入库）
+# 后端 :15001（模型经 IRIS_MODEL_* 环境变量注入，密钥不入库）
 cd backend && ./mvnw spring-boot:run
 
-# 前端 :5173（/api 代理到 :5001）
+# 前端 :15173（/api 代理到 :15001）
 cd frontend && npm install && npm run dev
 ```
 

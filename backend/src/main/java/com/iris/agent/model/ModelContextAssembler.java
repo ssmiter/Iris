@@ -26,6 +26,7 @@ public class ModelContextAssembler {
     private final ObjectMapper objectMapper;
     private final ModelContextWindowPlanner windows;
     private final ModelContextSnapshotRepository snapshots;
+    private final ModelTokenEstimator tokens;
     private final Clock clock = Clock.systemUTC();
 
     public ModelContextAssembler(
@@ -33,13 +34,15 @@ public class ModelContextAssembler {
             ToolRegistry tools,
             ObjectMapper objectMapper,
             ModelContextWindowPlanner windows,
-            ModelContextSnapshotRepository snapshots
+            ModelContextSnapshotRepository snapshots,
+            ModelTokenEstimator tokens
     ) {
         this.facts = facts;
         this.tools = tools;
         this.objectMapper = objectMapper;
         this.windows = windows;
         this.snapshots = snapshots;
+        this.tokens = tokens;
     }
 
     public ModelContext assemble(
@@ -73,6 +76,19 @@ public class ModelContextAssembler {
                     binding.manifestHash()
             ));
         }
+        int estimatedCapabilityTokens = tokens.estimate(definitions);
+        if (estimatedCapabilityTokens > seed.maxCapabilityTokens()) {
+            throw new PromptTooLargeException(
+                    "Capability lease exceeds its schema budget"
+            );
+        }
+        if (seed.estimatedCapabilityTokens() != 0
+                && seed.estimatedCapabilityTokens()
+                != estimatedCapabilityTokens) {
+            throw new IllegalStateException(
+                    "Capability lease changed after planning"
+            );
+        }
         List<ModelInputItem> allItems = facts.branchFactsBeforeRound(
                 run.conversationId(),
                 run.branchId(),
@@ -93,7 +109,10 @@ public class ModelContextAssembler {
                 window.estimatedInputTokens(),
                 window.budget().maxInputTokens(),
                 window.budget().reservedOutputTokens(),
-                window.droppedFactCount()
+                window.droppedFactCount(),
+                seed.maxCapabilityTokens(),
+                estimatedCapabilityTokens,
+                seed.omittedCapabilityCount()
         );
         String payloadJson = write(payload);
         String contextHash = hash(payloadJson);
@@ -149,7 +168,10 @@ public class ModelContextAssembler {
     public record ContextSeed(
             String systemInstruction,
             List<String> leasedToolNames,
-            ContextBudget budget
+            ContextBudget budget,
+            int maxCapabilityTokens,
+            int estimatedCapabilityTokens,
+            int omittedCapabilityCount
     ) {
         public ContextSeed(
                 String systemInstruction,
@@ -158,13 +180,39 @@ public class ModelContextAssembler {
             this(
                     systemInstruction,
                     leasedToolNames,
-                    ContextBudget.defaults()
+                    ContextBudget.defaults(),
+                    Integer.MAX_VALUE,
+                    0,
+                    0
+            );
+        }
+
+        public ContextSeed(
+                String systemInstruction,
+                List<String> leasedToolNames,
+                ContextBudget budget
+        ) {
+            this(
+                    systemInstruction,
+                    leasedToolNames,
+                    budget,
+                    Integer.MAX_VALUE,
+                    0,
+                    0
             );
         }
 
         public ContextSeed {
             leasedToolNames = List.copyOf(leasedToolNames);
             budget = budget == null ? ContextBudget.defaults() : budget;
+            if (maxCapabilityTokens < 1
+                    || estimatedCapabilityTokens < 0
+                    || estimatedCapabilityTokens > maxCapabilityTokens
+                    || omittedCapabilityCount < 0) {
+                throw new IllegalArgumentException(
+                        "Invalid capability lease budget metadata"
+                );
+            }
         }
     }
 
@@ -176,7 +224,10 @@ public class ModelContextAssembler {
             int estimatedInputTokens,
             int maxInputTokens,
             int reservedOutputTokens,
-            int droppedFactCount
+            int droppedFactCount,
+            int maxCapabilityTokens,
+            int estimatedCapabilityTokens,
+            int omittedCapabilityCount
     ) {
     }
 }

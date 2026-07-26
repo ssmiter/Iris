@@ -86,6 +86,8 @@ public class ModelAttemptRepository {
                         rs.getInt("attempt_index"),
                         rs.getString("provider_profile"),
                         rs.getString("model_id"),
+                        rs.getString("context_hash"),
+                        rs.getString("capability_lease_hash"),
                         rs.getString("phase"),
                         rs.getLong("version")
                 ))
@@ -238,21 +240,25 @@ public class ModelAttemptRepository {
         ));
     }
 
-    public void failAttempt(
+    public boolean failAttempt(
             String attemptId,
+            long expectedVersion,
             String category,
             Instant now
     ) {
-        jdbc.sql("""
+        return jdbc.sql("""
                 UPDATE model_attempt
                 SET phase = 'failed', error_category = :category,
                     version = version + 1, ended_at = :now
-                WHERE attempt_id = :attemptId AND phase = 'streaming'
+                WHERE attempt_id = :attemptId
+                  AND phase = 'streaming'
+                  AND version = :expectedVersion
                 """)
                 .param("category", category)
                 .param("now", now.toString())
                 .param("attemptId", attemptId)
-                .update();
+                .param("expectedVersion", expectedVersion)
+                .update() == 1;
     }
 
     public int reconcileInterrupted(Instant now) {
@@ -501,6 +507,8 @@ public class ModelAttemptRepository {
             int attemptIndex,
             String providerProfile,
             String modelId,
+            String contextHash,
+            String capabilityLeaseHash,
             String phase,
             long version
     ) {

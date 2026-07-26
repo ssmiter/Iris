@@ -26,8 +26,9 @@ export function SupplementQueueTray({
           <span className="truncate text-ink-subtle">{item.text}</span>
           <button
             type="button"
-            className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-primary/10 focus-visible:outline-none focus-visible:shadow-focus"
+            className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-primary/10 focus-visible:outline-none focus-visible:shadow-focus disabled:cursor-wait disabled:opacity-40"
             aria-label={`撤回补充：${item.text}`}
+            disabled={item.supplementId === null}
             onClick={() => onCancel(item.clientRequestId)}
           >
             <X aria-hidden="true" className="h-3 w-3" />

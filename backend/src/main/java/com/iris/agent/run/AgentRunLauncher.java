@@ -27,6 +27,7 @@ public class AgentRunLauncher implements ApplicationRunner {
     private final ModelProviderRegistry providers;
     private final IrisModelProperties model;
     private final WorkspaceService workspace;
+    private final RunCancellationRegistry cancellations;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
 
     public AgentRunLauncher(
@@ -34,26 +35,65 @@ public class AgentRunLauncher implements ApplicationRunner {
             RunRoundRepository facts,
             ModelProviderRegistry providers,
             IrisModelProperties model,
-            WorkspaceService workspace
+            WorkspaceService workspace,
+            RunCancellationRegistry cancellations
     ) {
         this.runs = runs;
         this.facts = facts;
         this.providers = providers;
         this.model = model;
         this.workspace = workspace;
+        this.cancellations = cancellations;
     }
 
     public boolean launch(String runId) {
-        if (!providers.configured(model.getProfile())
+        return start(runId, false, false);
+    }
+
+    public boolean resume(String runId) {
+        RunRoundRepository.RunRow run = facts.findRun(runId).orElse(null);
+        if (run == null || run.phase() != RunPhase.SUSPENDED) {
+            return false;
+        }
+        return start(runId, true, false);
+    }
+
+    public boolean requestStop(String runId) {
+        RunRoundRepository.RunRow run = facts.findRun(runId).orElse(null);
+        if (run == null || run.phase().terminal()) {
+            cancellations.clear(runId);
+            return false;
+        }
+        cancellations.signal(runId);
+        if (active.contains(runId)) {
+            return true;
+        }
+        return start(runId, false, true);
+    }
+
+    private boolean start(
+            String runId,
+            boolean resume,
+            boolean stopWakeup
+    ) {
+        if ((!stopWakeup && !providers.configured(model.getProfile()))
                 || !active.add(runId)) {
             return false;
         }
-        runs.advance(
+        var advance = resume
+                ? runs.resume(
                         runId,
                         model.getProfile(),
                         workspace.root(),
-                        false
+                        stopWakeup
                 )
+                : runs.advance(
+                        runId,
+                        model.getProfile(),
+                        workspace.root(),
+                        stopWakeup
+                );
+        advance
                 .doOnError(error -> log.error(
                         "Agentic Run {} stopped unexpectedly",
                         runId,
@@ -71,14 +111,21 @@ public class AgentRunLauncher implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        for (RunRoundRepository.RunRow run : facts.stopRequestedRuns()) {
+            requestStop(run.runId());
+        }
         if (!providers.configured(model.getProfile())) {
             log.info(
-                    "No model provider profile is configured; accepted Runs remain durable but idle"
+                    "No model provider profile is configured; ordinary accepted Runs remain durable but idle"
             );
             return;
         }
         for (RunRoundRepository.RunRow run : facts.resumableRuns()) {
             launch(run.runId());
+        }
+        for (RunRoundRepository.RunRow run
+                : facts.recoverableSuspendedRuns()) {
+            resume(run.runId());
         }
     }
 }

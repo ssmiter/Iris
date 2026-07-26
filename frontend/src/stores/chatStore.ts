@@ -6,7 +6,14 @@ import type {
   RunView,
   TurnView,
 } from '@/domain/chat/models'
-import type { PendingSupplement } from '@/domain/chat/input'
+import type {
+  PendingSupplement,
+  SupplementView,
+} from '@/domain/chat/input'
+import type {
+  ConversationEvent,
+  ConversationView,
+} from '@/api/irisApi'
 
 export type ConnectionState =
   | 'idle'
@@ -29,14 +36,21 @@ export interface ChatState {
   pendingSupplements: PendingSupplement[]
 
   hydrateProjection: (projection: ConversationProjection) => void
+  hydrateView: (view: ConversationView) => void
+  applyEvent: (event: ConversationEvent) => void
   upsertTurn: (turn: TurnView) => void
   upsertRun: (run: RunView) => void
   upsertRound: (round: RoundView) => void
   upsertRenderNode: (node: RenderNode) => void
   setConnectionState: (state: ConnectionState) => void
-  addPendingSupplement: (text: string) => string
+  addPendingSupplement: (turnId: string, text: string) => string
+  confirmPendingSupplement: (
+    clientRequestId: string,
+    supplement: SupplementView,
+  ) => void
   cancelPendingSupplement: (clientRequestId: string) => void
   clearPendingSupplements: () => void
+  resetConversation: () => void
 }
 
 function shouldReplace(currentVersion: number | undefined, nextVersion: number) {
@@ -64,6 +78,143 @@ export const useChatStore = create<ChatState>((set) => ({
       roundsById: projection.roundsById,
       renderNodesById: projection.renderNodesById,
       connectionState: 'connected',
+    }),
+
+  hydrateView: (view) =>
+    set({
+      turnOrder: view.turnOrder,
+      turnsById: view.turnsById,
+      runsById: view.runsById,
+      roundsById: view.roundsById,
+      renderNodesById: view.renderNodesById,
+      eventCursor: view.eventCursor,
+      projectionVersion: view.projectionVersion,
+      pendingSupplements: Object.values(view.turnsById)
+        .flatMap((turn) => turn.supplements ?? [])
+        .filter((supplement) => supplement.state === 'pending')
+        .map((supplement) => ({
+          clientRequestId: supplement.supplementId,
+          supplementId: supplement.supplementId,
+          turnId: supplement.turnId,
+          text: supplement.text,
+          state: 'pending' as const,
+        })),
+      connectionState: 'connecting',
+    }),
+
+  applyEvent: (event) =>
+    set((state) => {
+      const payload = event.envelope.payload
+      const next = {
+        eventCursor: event.envelope.eventId,
+      } as Partial<ChatState>
+
+      if (event.type === 'turn.accepted' || event.type === 'turn.updated') {
+        const turn = payload.turn as TurnView | undefined
+        if (turn && shouldReplace(state.turnsById[turn.turnId]?.version, turn.version)) {
+          next.turnsById = { ...state.turnsById, [turn.turnId]: turn }
+          if (!state.turnsById[turn.turnId]) {
+            next.turnOrder = [...state.turnOrder, turn.turnId]
+          }
+        }
+      } else if (
+        event.type === 'run.started' ||
+        event.type === 'run.updated' ||
+        event.type === 'run.settled'
+      ) {
+        const run = payload.run as RunView | undefined
+        if (run && shouldReplace(state.runsById[run.runId]?.version, run.version)) {
+          next.runsById = { ...state.runsById, [run.runId]: run }
+        }
+      } else if (
+        event.type === 'round.started' ||
+        event.type === 'round.updated'
+      ) {
+        const round = payload.round as RoundView | undefined
+        if (
+          round &&
+          shouldReplace(state.roundsById[round.roundId]?.version, round.version)
+        ) {
+          next.roundsById = {
+            ...state.roundsById,
+            [round.roundId]: round,
+          }
+        }
+      } else if (
+        event.type === 'render_node.added' ||
+        event.type === 'render_node.updated' ||
+        event.type === 'attention.requested' ||
+        event.type === 'attention.updated'
+      ) {
+        const node = payload.node as RenderNode | undefined
+        if (
+          node &&
+          shouldReplace(
+            state.renderNodesById[node.nodeId]?.version,
+            node.version,
+          )
+        ) {
+          next.renderNodesById = {
+            ...state.renderNodesById,
+            [node.nodeId]: node,
+          }
+        }
+      } else if (event.type === 'render_node.delta') {
+        const nodeId = payload.nodeId as string | undefined
+        const baseVersion = payload.baseVersion as number | undefined
+        const targetVersion = payload.targetVersion as number | undefined
+        const append = payload.append as string | undefined
+        const current = nodeId ? state.renderNodesById[nodeId] : undefined
+        if (
+          current?.type === 'answer' &&
+          current.version === baseVersion &&
+          typeof targetVersion === 'number' &&
+          typeof append === 'string'
+        ) {
+          next.renderNodesById = {
+            ...state.renderNodesById,
+            [current.nodeId]: {
+              ...current,
+              content: current.content + append,
+              version: targetVersion,
+              updatedAt: event.envelope.occurredAt,
+            },
+          }
+        } else {
+          next.connectionState = 'invalidated'
+        }
+      } else if (event.type === 'render_node.invalidated') {
+        const node = payload.node as RenderNode | undefined
+        if (node && state.renderNodesById[node.nodeId]) {
+          const nodes = { ...state.renderNodesById }
+          delete nodes[node.nodeId]
+          next.renderNodesById = nodes
+        }
+      } else if (event.type === 'supplement.updated') {
+        const supplement = payload.supplement as SupplementView | undefined
+        if (supplement) {
+          const remaining = state.pendingSupplements.filter(
+            (item) => item.supplementId !== supplement.supplementId,
+          )
+          next.pendingSupplements =
+            supplement.state === 'pending'
+              ? [
+                  ...remaining,
+                  {
+                    clientRequestId: supplement.supplementId,
+                    supplementId: supplement.supplementId,
+                    turnId: supplement.turnId,
+                    text: supplement.text,
+                    state: 'pending',
+                  },
+                ]
+              : remaining
+        }
+      } else if (event.type === 'projection.invalidated') {
+        next.connectionState = 'invalidated'
+      }
+
+      return next
     }),
 
   upsertTurn: (turn) =>
@@ -106,16 +257,40 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
-  addPendingSupplement: (text) => {
+  addPendingSupplement: (turnId, text) => {
     const clientRequestId = crypto.randomUUID()
     set((state) => ({
       pendingSupplements: [
         ...state.pendingSupplements,
-        { clientRequestId, text, state: 'pending' },
+        {
+          clientRequestId,
+          supplementId: null,
+          turnId,
+          text,
+          state: 'submitting',
+        },
       ],
     }))
     return clientRequestId
   },
+
+  confirmPendingSupplement: (clientRequestId, supplement) =>
+    set((state) => ({
+      pendingSupplements: [
+        ...state.pendingSupplements.filter(
+          (item) =>
+            item.clientRequestId !== clientRequestId &&
+            item.supplementId !== supplement.supplementId,
+        ),
+        {
+          clientRequestId,
+          supplementId: supplement.supplementId,
+          turnId: supplement.turnId,
+          text: supplement.text,
+          state: 'pending',
+        },
+      ],
+    })),
 
   cancelPendingSupplement: (clientRequestId) =>
     set((state) => ({
@@ -125,4 +300,16 @@ export const useChatStore = create<ChatState>((set) => ({
     })),
 
   clearPendingSupplements: () => set({ pendingSupplements: [] }),
+
+  resetConversation: () =>
+    set({
+      turnOrder: [],
+      turnsById: {},
+      runsById: {},
+      roundsById: {},
+      renderNodesById: {},
+      connectionState: 'idle',
+      eventCursor: null,
+      pendingSupplements: [],
+    }),
 }))

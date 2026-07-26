@@ -6,6 +6,8 @@ import com.iris.agent.model.ModelAttemptRepository.FinalAnswerSource;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
+import com.iris.conversation.application.ConversationEventAppender;
+import com.iris.conversation.application.ConversationEventAppender.EventDraft;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -26,6 +28,7 @@ public class AnswerProjectionService {
     private final RunRoundRepository runs;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
+    private final ConversationEventAppender events;
     private final Clock clock = Clock.systemUTC();
 
     public AnswerProjectionService(
@@ -33,13 +36,15 @@ public class AnswerProjectionService {
             ModelAttemptRepository attempts,
             RunRoundRepository runs,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ConversationEventAppender events
     ) {
         this.jdbc = jdbc;
         this.attempts = attempts;
         this.runs = runs;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.events = events;
     }
 
     public PublishedAnswer publishFinal(String roundId) {
@@ -65,6 +70,9 @@ public class AnswerProjectionService {
             throw new IllegalStateException(
                     "Answer projection transaction returned no result"
             );
+        }
+        if (!result.replayed()) {
+            emitAdded(roundId, result.nodeId());
         }
         return Optional.of(result);
     }
@@ -203,6 +211,43 @@ public class AnswerProjectionService {
                 ))
                 .optional()
                 .orElse(null);
+    }
+
+    private void emitAdded(String roundId, String nodeId) {
+        RoundRow round = runs.findRound(roundId).orElseThrow();
+        RunRow run = runs.findRun(round.runId()).orElseThrow();
+        String json = jdbc.sql("""
+                SELECT projection_json
+                FROM render_node_projection
+                WHERE node_id = :nodeId
+                """)
+                .param("nodeId", nodeId)
+                .query(String.class)
+                .single();
+        ObjectNode node;
+        try {
+            node = (ObjectNode) objectMapper.readTree(json);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Stored answer projection is invalid JSON",
+                    exception
+            );
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set("node", node);
+        events.append(new EventDraft(
+                "render_node.added",
+                run.conversationId(),
+                run.branchId(),
+                run.turnId(),
+                run.runId(),
+                "render_node",
+                nodeId,
+                node.path("version").asLong(),
+                roundId,
+                run.runId(),
+                payload
+        ));
     }
 
     private int nextOrdinal(String turnId) {

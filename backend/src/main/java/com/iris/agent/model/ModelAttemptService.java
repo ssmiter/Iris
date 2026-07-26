@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.HexFormat;
@@ -115,6 +116,12 @@ public class ModelAttemptService {
                     || attempt.version() != expectedAttemptVersion) {
                 throw new IllegalStateException(
                         "ModelAttempt phase 或 version 已变化"
+                );
+            }
+            if (!attempt.modelId().equals(result.modelId())) {
+                throw new ModelProtocolException(
+                        "model_identity_mismatch",
+                        "Provider response model does not match the active attempt"
                 );
             }
             RoundRow round = runs.findRound(attempt.roundId()).orElseThrow();
@@ -219,19 +226,159 @@ public class ModelAttemptService {
                         .orElseThrow();
                 RoundRow round = runs.findRound(attempt.roundId())
                         .orElseThrow();
-                attempts.failAttempt(attemptId, category, clock.instant());
+                Instant now = clock.instant();
+                if (!attempts.failAttempt(
+                        attemptId,
+                        attempt.version(),
+                        category,
+                        now
+                )) {
+                    throw new IllegalStateException(
+                            "ModelAttempt failure 发生并发冲突"
+                    );
+                }
                 if (round.phase() == RoundPhase.MODEL_STREAMING) {
-                    attempts.transitionRound(
+                    if (!attempts.transitionRound(
                             round.roundId(),
                             round.phase(),
                             RoundPhase.FAILED,
                             round.version(),
-                            clock.instant()
-                    );
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Round failure 发生并发冲突"
+                        );
+                    }
                 }
             });
             return null;
         });
+    }
+
+    /**
+     * Atomically closes a retryable attempt and opens its isolated successor
+     * in the same Round. Context and capability exposure remain exact.
+     */
+    public AttemptRow retry(
+            String attemptId,
+            long expectedAttemptVersion,
+            String category
+    ) {
+        requireText(category, "category");
+        AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
+        return withLock(initial.roundId(), () ->
+                transactions.execute(status -> {
+                    AttemptRow attempt = attempts.findAttempt(attemptId)
+                            .orElseThrow();
+                    if (!"streaming".equals(attempt.phase())
+                            || attempt.version() != expectedAttemptVersion) {
+                        throw new IllegalStateException(
+                                "ModelAttempt retry precondition changed"
+                        );
+                    }
+                    RoundRow round = runs.findRound(attempt.roundId())
+                            .orElseThrow();
+                    if (round.phase() != RoundPhase.MODEL_STREAMING) {
+                        throw new IllegalStateException(
+                                "Round is not retrying a model stream"
+                        );
+                    }
+                    Instant now = clock.instant();
+                    if (!attempts.failAttempt(
+                            attemptId,
+                            expectedAttemptVersion,
+                            category,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "ModelAttempt retry close 发生并发冲突"
+                        );
+                    }
+                    RunStateMachine.requireTransition(
+                            RoundPhase.MODEL_STREAMING,
+                            RoundPhase.ACCEPTED
+                    );
+                    if (!attempts.transitionRound(
+                            round.roundId(),
+                            RoundPhase.MODEL_STREAMING,
+                            RoundPhase.ACCEPTED,
+                            round.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Round retry reset 发生并发冲突"
+                        );
+                    }
+
+                    RoundRow accepted = runs.findRound(round.roundId())
+                            .orElseThrow();
+                    String successorId = id("attempt");
+                    attempts.insertAttempt(
+                            successorId,
+                            attempt.conversationId(),
+                            attempt.turnId(),
+                            attempt.runId(),
+                            attempt.roundId(),
+                            attempts.nextAttemptIndex(attempt.roundId()),
+                            attempt.providerProfile(),
+                            attempt.modelId(),
+                            attempt.contextHash(),
+                            attempt.capabilityLeaseHash(),
+                            now
+                    );
+                    RunStateMachine.requireTransition(
+                            RoundPhase.ACCEPTED,
+                            RoundPhase.MODEL_STREAMING
+                    );
+                    if (!attempts.transitionRound(
+                            round.roundId(),
+                            RoundPhase.ACCEPTED,
+                            RoundPhase.MODEL_STREAMING,
+                            accepted.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Round retry begin 发生并发冲突"
+                        );
+                    }
+                    return attempts.findAttempt(successorId).orElseThrow();
+                })
+        );
+    }
+
+    public RoundRow cancel(String attemptId) {
+        AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
+        return withLock(initial.roundId(), () ->
+                transactions.execute(status -> {
+                    AttemptRow attempt = attempts.findAttempt(attemptId)
+                            .orElseThrow();
+                    RoundRow round = runs.findRound(attempt.roundId())
+                            .orElseThrow();
+                    if (!attempts.failAttempt(
+                            attemptId,
+                            attempt.version(),
+                            "user_cancelled",
+                            clock.instant()
+                    )) {
+                        throw new IllegalStateException(
+                                "ModelAttempt cancellation 发生并发冲突"
+                        );
+                    }
+                    if (round.phase() == RoundPhase.MODEL_STREAMING
+                            && !attempts.transitionRound(
+                                    round.roundId(),
+                                    round.phase(),
+                                    RoundPhase.STOPPED,
+                                    round.version(),
+                                    clock.instant()
+                            )) {
+                        throw new IllegalStateException(
+                                "Round cancellation 发生并发冲突"
+                        );
+                    }
+                    return runs.findRound(round.roundId()).orElseThrow();
+                })
+        );
     }
 
     private void validateResult(ModelAttemptResult result) {
@@ -261,6 +408,33 @@ public class ModelAttemptService {
             throw new ModelProtocolException(
                     "tool_call_stop_reason_mismatch",
                     "模型返回工具调用，但 stop reason 不是 tool_use/tool_calls"
+            );
+        }
+        boolean toolStop = "tool_use".equals(result.stopReason())
+                || "tool_calls".equals(result.stopReason());
+        if (result.toolCalls().isEmpty() && toolStop) {
+            throw new ModelProtocolException(
+                    "tool_call_stop_reason_mismatch",
+                    "Provider reported a tool stop without a complete ToolCall"
+            );
+        }
+        long toolBlockCount = result.blocks().stream()
+                .filter(block -> block.kind()
+                        == ModelStreamEvent.BlockKind.TOOL_CALL)
+                .count();
+        if (toolBlockCount != result.toolCalls().size()) {
+            throw new ModelProtocolException(
+                    "tool_call_block_mismatch",
+                    "ToolCall facts do not match completed tool blocks"
+            );
+        }
+        if (result.toolCalls().stream()
+                .map(ModelAttemptResult.ToolCall::ordinal)
+                .distinct()
+                .count() != result.toolCalls().size()) {
+            throw new ModelProtocolException(
+                    "duplicate_tool_call_ordinal",
+                    "ModelAttempt result contains duplicate ToolCall ordinals"
             );
         }
     }

@@ -1,5 +1,5 @@
-import { WaterfallPreview } from '@/components/dev/WaterfallPreview'
+import { ConversationApp } from '@/components/chat/ConversationApp'
 
 export default function App() {
-  return <WaterfallPreview />
+  return <ConversationApp />
 }

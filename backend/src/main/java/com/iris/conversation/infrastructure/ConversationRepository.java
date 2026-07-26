@@ -50,6 +50,31 @@ public class ConversationRepository {
                 .param("conversationId", conversationId)
                 .param("now", now.toString())
                 .update();
+        String originFrameId = "frame_origin_" + conversationId;
+        jdbc.sql("""
+                INSERT INTO context_frame(
+                    frame_id, conversation_id, owner_branch_id,
+                    parent_frame_id, frame_kind, waterline_sequence,
+                    before_turn_id, version, created_at
+                ) VALUES (
+                    :frameId, :conversationId, NULL,
+                    NULL, 'origin', 0,
+                    NULL, 1, :now
+                )
+                """)
+                .param("frameId", originFrameId)
+                .param("conversationId", conversationId)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO branch_context_head(
+                    branch_id, frame_id, version, updated_at
+                ) VALUES (:branchId, :frameId, 1, :now)
+                """)
+                .param("branchId", rootBranchId)
+                .param("frameId", originFrameId)
+                .param("now", now.toString())
+                .update();
     }
 
     public boolean conversationExists(String conversationId) {
@@ -71,6 +96,147 @@ public class ConversationRepository {
                 .param("conversationId", conversationId)
                 .query(Integer.class)
                 .single() > 0;
+    }
+
+    public Optional<BranchAnchor> findBranchAnchor(
+            String conversationId,
+            String sourceBranchId,
+            String anchorMessageId
+    ) {
+        return jdbc.sql("""
+                SELECT t.turn_id, t.phase, e.sequence
+                FROM conversation_turn t
+                JOIN conversation_event e
+                  ON e.turn_id = t.turn_id
+                 AND e.event_type = 'turn.accepted'
+                WHERE t.conversation_id = :conversationId
+                  AND t.branch_id = :sourceBranchId
+                  AND t.request_message_id = :anchorMessageId
+                """)
+                .param("conversationId", conversationId)
+                .param("sourceBranchId", sourceBranchId)
+                .param("anchorMessageId", anchorMessageId)
+                .query((rs, rowNum) -> new BranchAnchor(
+                        rs.getString("turn_id"),
+                        rs.getString("phase"),
+                        rs.getLong("sequence")
+                ))
+                .optional();
+    }
+
+    public boolean hasActiveTurn(
+            String conversationId,
+            String branchId
+    ) {
+        return jdbc.sql("""
+                SELECT COUNT(*)
+                FROM conversation_turn
+                WHERE conversation_id = :conversationId
+                  AND branch_id = :branchId
+                  AND phase IN ('queued', 'active')
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    public void insertBranch(
+            String branchId,
+            String conversationId,
+            String sourceBranchId,
+            String anchorMessageId,
+            String sourceTurnId,
+            long sourceEventSequence,
+            String baseContextFrameId,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO conversation_branch(
+                    branch_id, conversation_id, parent_branch_id,
+                    status, version, created_at
+                ) VALUES (
+                    :branchId, :conversationId, :sourceBranchId,
+                    'active', 1, :now
+                )
+                """)
+                .param("branchId", branchId)
+                .param("conversationId", conversationId)
+                .param("sourceBranchId", sourceBranchId)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO branch_fork(
+                    branch_id, source_branch_id, anchor_message_id,
+                    source_turn_id, source_event_sequence,
+                    base_context_frame_id, mode, created_at
+                ) VALUES (
+                    :branchId, :sourceBranchId, :anchorMessageId,
+                    :sourceTurnId, :sourceEventSequence,
+                    :baseContextFrameId, 'replace_user_message', :now
+                )
+                """)
+                .param("branchId", branchId)
+                .param("sourceBranchId", sourceBranchId)
+                .param("anchorMessageId", anchorMessageId)
+                .param("sourceTurnId", sourceTurnId)
+                .param("sourceEventSequence", sourceEventSequence)
+                .param("baseContextFrameId", baseContextFrameId)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO branch_context_head(
+                    branch_id, frame_id, version, updated_at
+                ) VALUES (:branchId, :frameId, 1, :now)
+                """)
+                .param("branchId", branchId)
+                .param("frameId", baseContextFrameId)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public ContextFrame eligibleContextFrame(
+            String conversationId,
+            String branchId,
+            long beforeSequence
+    ) {
+        return jdbc.sql("""
+                WITH RECURSIVE frame_chain(
+                    frame_id, parent_frame_id, waterline_sequence
+                ) AS (
+                    SELECT frame.frame_id, frame.parent_frame_id,
+                           frame.waterline_sequence
+                    FROM branch_context_head head
+                    JOIN context_frame frame
+                      ON frame.frame_id = head.frame_id
+                    WHERE head.branch_id = :branchId
+                      AND frame.conversation_id = :conversationId
+
+                    UNION ALL
+
+                    SELECT parent.frame_id, parent.parent_frame_id,
+                           parent.waterline_sequence
+                    FROM frame_chain child
+                    JOIN context_frame parent
+                      ON parent.frame_id = child.parent_frame_id
+                )
+                SELECT frame_id, waterline_sequence
+                FROM frame_chain
+                WHERE waterline_sequence < :beforeSequence
+                ORDER BY waterline_sequence DESC
+                LIMIT 1
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("beforeSequence", beforeSequence)
+                .query((rs, rowNum) -> new ContextFrame(
+                        rs.getString("frame_id"),
+                        rs.getLong("waterline_sequence")
+                ))
+                .optional()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Branch context chain has no eligible origin frame"
+                ));
     }
 
     public void insertMessage(
@@ -416,5 +582,18 @@ public class ConversationRepository {
     }
 
     public record ConversationMetadata(String title, long version) {
+    }
+
+    public record BranchAnchor(
+            String sourceTurnId,
+            String sourceTurnPhase,
+            long sourceEventSequence
+    ) {
+    }
+
+    public record ContextFrame(
+            String frameId,
+            long waterlineSequence
+    ) {
     }
 }

@@ -34,23 +34,29 @@ public final class RunStateMachine {
             Map.of(
                     RoundPhase.ACCEPTED, Set.of(
                             RoundPhase.MODEL_STREAMING,
+                            RoundPhase.STOPPED,
                             RoundPhase.FAILED
                     ),
                     RoundPhase.MODEL_STREAMING, Set.of(
+                            RoundPhase.ACCEPTED,
                             RoundPhase.MODEL_COMPLETED,
+                            RoundPhase.STOPPED,
                             RoundPhase.FAILED
                     ),
                     RoundPhase.MODEL_COMPLETED, Set.of(
                             RoundPhase.AWAITING_TOOLS,
                             RoundPhase.COMPLETED,
+                            RoundPhase.STOPPED,
                             RoundPhase.FAILED
                     ),
                     RoundPhase.AWAITING_TOOLS, Set.of(
                             RoundPhase.OBSERVATIONS_READY,
+                            RoundPhase.STOPPED,
                             RoundPhase.FAILED
                     ),
                     RoundPhase.OBSERVATIONS_READY, Set.of(
                             RoundPhase.COMPLETED,
+                            RoundPhase.STOPPED,
                             RoundPhase.FAILED
                     )
             );

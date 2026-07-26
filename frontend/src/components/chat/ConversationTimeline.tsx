@@ -5,6 +5,7 @@ import type {
   AttentionAction,
   AttentionNode,
   ConversationProjection,
+  TurnView,
 } from '@/domain/chat/models'
 import { Button } from '@/components/ui'
 import { useViewStateStore } from '@/stores/viewStateStore'
@@ -16,11 +17,13 @@ interface ConversationTimelineProps {
     node: AttentionNode,
     action: AttentionAction,
   ) => void
+  onReplaceRequest?: (turn: TurnView) => void
 }
 
 export function ConversationTimeline({
   projection,
   onAttentionAction,
+  onReplaceRequest,
 }: ConversationTimelineProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const expandedRoundFlags = useViewStateStore(
@@ -111,6 +114,7 @@ export function ConversationTimeline({
               onToggleRound={toggleRound}
               onToggleNode={toggleNode}
               onAttentionAction={onAttentionAction}
+              onReplaceRequest={onReplaceRequest}
             />
           </div>
         )}

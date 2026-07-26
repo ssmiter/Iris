@@ -1,3 +1,5 @@
+import type { SupplementView } from './input'
+
 export type TurnPhase = 'queued' | 'active' | 'settled' | 'stopped' | 'failed'
 export type RunKind = 'agentic' | 'pipeline'
 export type RunPhase =
@@ -10,6 +12,28 @@ export type RunPhase =
   | 'failed'
   | 'cancelled'
 export type RoundPhase = 'active' | 'settled' | 'stopped' | 'failed'
+
+export interface FailureView {
+  code: string
+  category: string
+  userMessage: string
+  traceId: string
+  source: string
+  recoveryAction:
+    | 'retry_same'
+    | 'reprepare'
+    | 'rediscover'
+    | 'reconcile'
+    | 'user_input'
+    | 'none'
+  sideEffectOutcome:
+    | 'not_started'
+    | 'confirmed_not_applied'
+    | 'may_have_applied'
+    | 'confirmed_applied'
+    | 'n/a'
+  detailsRef: string | null
+}
 
 export interface TurnView {
   turnId: string
@@ -24,6 +48,18 @@ export interface TurnView {
   rootRunId: string
   renderNodeIds: string[]
   pendingAttentionIds: string[]
+  stop: {
+    stopRequestId: string
+    turnId: string
+    rootRunId: string
+    reason: string
+    state: 'requested' | 'draining' | 'completed'
+    version: number
+    requestedAt: string
+    completedAt: string | null
+  } | null
+  failure: FailureView | null
+  supplements: SupplementView[]
   stats: {
     roundCount: number
     toolCallCount: number
@@ -45,6 +81,7 @@ export interface RunView {
   roundIds: string[]
   childRunIds: string[]
   progressSummary?: string
+  failure: FailureView | null
   startedAt: string
   endedAt: string | null
   version: number
@@ -118,6 +155,18 @@ export interface AttentionNode extends RenderNodeBase {
   impact: string
   actions: AttentionAction[]
   expiresAt?: string
+  approval?: {
+    approvalId: string
+    toolExecutionId: string
+    toolCallId: string
+    toolName: string
+    operationSnapshotHash: string
+    riskLevel: 'read_only' | 'standard' | 'elevated' | 'destructive'
+    impactStatement: string
+    status: 'waiting' | 'approved' | 'rejected' | 'expired' | 'invalidated'
+    version: number
+    expiresAt: string
+  }
 }
 
 export interface ArtifactNode extends RenderNodeBase {
@@ -135,15 +184,18 @@ export interface AnswerNode extends RenderNodeBase {
   status: 'streaming' | 'completed' | 'stopped' | 'failed'
   content: string
   role: 'stage' | 'final'
-  sourceMessageId: string
+  sourceMessageId: string | null
 }
 
 export interface SupplementNode extends RenderNodeBase {
   type: 'supplement'
   status: 'queued' | 'injected' | 'promoted'
+  supplementId: string
   messageId: string
+  state: 'injected' | 'promoted'
   text: string
-  injectedAfterRoundId?: string
+  attachmentRefs: string[]
+  injectedAfterRoundId?: string | null
 }
 
 export interface ChildRunNode extends RenderNodeBase {
@@ -165,10 +217,56 @@ export type RenderNode =
 
 export interface CompactBoundaryView {
   boundaryId: string
+  contextFrameId: string
+  parentContextFrameId: string
+  branchId: string
   beforeTurnId: string
+  waterlineSequence: number
+  inherited: boolean
   trigger: 'manual' | 'auto'
   coveredCount: number
   summary: string
+}
+
+export interface ForkAnchor {
+  mode: 'replace_user_message'
+  anchorMessageId: string
+  sourceTurnId: string
+  sourceEventSequence: number
+  baseContextFrameId: string
+  baseWaterlineSequence: number
+}
+
+export interface BranchSummary {
+  branchId: string
+  parentBranchId: string | null
+  forkAnchor: ForkAnchor | null
+  headTurnId: string | null
+  status: 'active' | 'archived'
+  version: number
+}
+
+export interface CompactionView {
+  runId: string
+  conversationId: string
+  branchId: string
+  phase: 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled'
+  parentContextFrameId: string
+  sourceStartSequence: number
+  waterlineSequence: number
+  beforeTurnId: string
+  sourceSnapshotId: string
+  sourceFactCount: number
+  estimatedInputTokens: number
+  compactBoundaryId: string | null
+  failure: {
+    code: string
+    userMessage: string
+    source: string
+  } | null
+  version: number
+  requestedAt: string
+  endedAt: string | null
 }
 
 export interface ConversationProjection {

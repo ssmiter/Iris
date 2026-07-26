@@ -27,10 +27,10 @@ docs/              设计文档（先改文档再改代码，文档与代码同�
 
 ```bash
 # 前端
-cd frontend && npm install && npm run dev        # :5173，/api 代理 :5001
+cd frontend && npm install && npm run dev        # :15173，/api 代理 :15001
 
 # 后端
-cd backend && ./mvnw spring-boot:run             # :5001
+cd backend && ./mvnw spring-boot:run             # :15001
 
 # WebBridge daemon
 cd webbridge-daemon && npm install && npm start  # :9223

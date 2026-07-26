@@ -54,7 +54,8 @@ submitting → pending → injected | cancelled | promoted
 本节点静态 Preview 只模拟 `pending / cancel`。生产接入时：
 
 - POST 接受后用服务端 `supplementId` 替换 `clientRequestId`；
-- SSE 决定 injected/promoted，Frontend 不看 FlowNode 猜；
+- SSE 决定 injected/promoted；injected 后 chip 退场，并在后端指定的 Round 位置按普通用户
+  消息呈现，Frontend 不看相邻 FlowNode 猜；
 - stop 后未注入文本仍保留；
 - 撤回已经注入的补充必须显示 `409 supplement_already_injected`，不能假装成功。
 

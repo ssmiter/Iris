@@ -182,7 +182,7 @@ Iris 的第一版只需要七类节点：
 | `attention` | `id, subtype, status, impact, actions, toolCallId?` | 审批、澄清、授权或人工接管 |
 | `artifact` | `id, artifactId, kind, title, sourceToolCallId, previewRef` | 文档、表格、图片、浏览器舞台等产物入口 |
 | `answer` | `id, status, content, role=stage|final, sourceMessageId` | 阶段结论或最终答案 |
-| `supplement` | `id, status, text, sourceMessageId, injectedAfterRoundId?` | 在准确边界留下轻量补充标记，不生成普通气泡 |
+| `supplement` | `id, status, text, sourceMessageId, injectedAfterRoundId?` | 保留准确因果位置，但按普通用户追加消息呈现 |
 | `run` | `id, childRunId, kind, status, progressSummary` | 在需要监督时呈现 Pipeline/child Run 的整体进度 |
 
 所有节点共享：
@@ -382,7 +382,8 @@ FlowNodeFrame
 
 ### 8.1 过程中补充
 
-补充是持久化的用户消息，但不是新的普通聊天气泡。
+补充在等待期是独立持久化事实；注入时才成为普通 User Message。它不创建新 Turn，
+但在视觉和模型语义上都与用户最初提问同层。
 
 ```mermaid
 stateDiagram-v2
@@ -398,7 +399,7 @@ stateDiagram-v2
 视觉表达：
 
 - `pending`：composer 上方出现“待送入”chip，可撤回；
-- `injected`：chip 原位确认后淡出，同时在准确 Round 边界留下轻量 `SupplementNode`；
+- `injected`：chip 原位确认后淡出，同时在准确 Round 边界出现普通用户消息气泡；
 - `promoted`：chip 变成排队的新 Turn，不伪称已经注入；
 - 停止当前 Turn 时，尚未注入的文本必须保留给用户处理，绝不自动再次执行。
 
@@ -616,7 +617,7 @@ viewStateStore → import chatStore → import API → import viewStateStore
 | 稳定折叠状态 | 避免视线被流式更新拖走 |
 | composer 近端审批 | 减少寻找当前阻塞点 |
 | 审批两阶段退场 | 让用户看见决定已生效且布局不突跳 |
-| 补充 chip + 边界标记 | 确认消息被接住，又不制造假 Turn |
+| 补充 chip + 定位后的用户气泡 | 确认消息被接住，又不制造假 Turn |
 | 压缩线 | 让“当前上下文变了、历史没丢”可见 |
 | 分支计数器 | 明确当前位置和其他变体仍存在 |
 | 回到最新胶囊 | 尊重用户翻阅历史的意图 |

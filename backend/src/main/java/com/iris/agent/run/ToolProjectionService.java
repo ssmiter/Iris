@@ -65,9 +65,9 @@ public class ToolProjectionService {
                     "Tool projection transaction returned no result"
             );
         }
-        emitNode(emission.run(), emission.toolNode());
+        emitRenderNode(emission.run(), emission.toolNode());
         if (emission.attentionNode() != null) {
-            emitNode(emission.run(), emission.attentionNode());
+            emitAttention(emission.run(), emission.attentionNode());
         }
     }
 
@@ -109,17 +109,40 @@ public class ToolProjectionService {
         }
     }
 
-    private void emitNode(RunRow run, ObjectNode node) {
+    private void emitRenderNode(RunRow run, ObjectNode node) {
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.set("renderNode", node);
+        payload.set("node", node);
         events.append(new EventDraft(
-                "render_node.upserted",
+                node.path("version").asLong() == 1
+                        ? "render_node.added"
+                        : "render_node.updated",
                 run.conversationId(),
                 run.branchId(),
                 run.turnId(),
                 run.runId(),
                 "render_node",
                 node.path("nodeId").asText(),
+                node.path("version").asLong(),
+                null,
+                run.runId(),
+                payload
+        ));
+    }
+
+    private void emitAttention(RunRow run, ObjectNode node) {
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set("attention", node);
+        payload.set("node", node);
+        events.append(new EventDraft(
+                node.path("version").asLong() == 1
+                        ? "attention.requested"
+                        : "attention.updated",
+                run.conversationId(),
+                run.branchId(),
+                run.turnId(),
+                run.runId(),
+                "attention",
+                node.path("attentionId").asText(),
                 node.path("version").asLong(),
                 null,
                 run.runId(),
@@ -232,6 +255,19 @@ public class ToolProjectionService {
                 ? now.toString()
                 : existing.createdAt();
         String status = visibleAttentionStatus(result.phase());
+        ApprovalProjection approval = jdbc.sql("""
+                SELECT version, status, risk_level, expires_at
+                FROM tool_approval_request
+                WHERE approval_id = :approvalId
+                """)
+                .param("approvalId", result.approvalId())
+                .query((rs, rowNum) -> new ApprovalProjection(
+                        rs.getLong("version"),
+                        rs.getString("status"),
+                        rs.getString("risk_level"),
+                        rs.getString("expires_at")
+                ))
+                .single();
 
         ObjectNode projection = base(
                 nodeId,
@@ -252,9 +288,27 @@ public class ToolProjectionService {
                         ? "This action changes external state."
                         : result.impactStatement()
         );
+        ObjectNode approvalView = projection.putObject("approval");
+        approvalView.put("approvalId", result.approvalId());
+        approvalView.put("toolExecutionId", result.executionId());
+        approvalView.put("toolCallId", result.toolCallId());
+        approvalView.put("toolName", result.toolName());
+        approvalView.put("operationSnapshotHash", result.snapshotHash());
+        approvalView.put("riskLevel", approval.riskLevel());
+        approvalView.put(
+                "impactStatement",
+                result.impactStatement() == null
+                        ? "This action changes external state."
+                        : result.impactStatement()
+        );
+        approvalView.put("status", approval.status());
+        approvalView.put("version", approval.version());
+        approvalView.put("expiresAt", approval.expiresAt());
         ArrayNode actions = projection.putArray("actions");
-        action(actions, "approve", "批准", "primary");
-        action(actions, "reject", "拒绝", "secondary");
+        if ("waiting".equals(status)) {
+            action(actions, "approve", "批准", "primary");
+            action(actions, "reject", "拒绝", "secondary");
+        }
 
         if (existing == null) {
             insertNode(
@@ -493,6 +547,14 @@ public class ToolProjectionService {
     private record AttentionLink(
             String attentionId,
             String nodeId
+    ) {
+    }
+
+    private record ApprovalProjection(
+            long version,
+            String status,
+            String riskLevel,
+            String expiresAt
     ) {
     }
 

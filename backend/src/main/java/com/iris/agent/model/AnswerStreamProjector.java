@@ -12,10 +12,17 @@ import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -24,20 +31,25 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class AnswerStreamProjector {
+    private static final int FLUSH_CHARACTER_THRESHOLD = 64;
+    private static final long FLUSH_NANOS = 50_000_000L;
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
     private final ConversationEventAppender events;
+    private final TransactionTemplate transactions;
     private final Clock clock = Clock.systemUTC();
     private final Map<String, StreamState> streams = new ConcurrentHashMap<>();
 
     public AnswerStreamProjector(
             JdbcClient jdbc,
             ObjectMapper objectMapper,
-            ConversationEventAppender events
+            ConversationEventAppender events,
+            TransactionTemplate transactions
     ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.events = events;
+        this.transactions = transactions;
     }
 
     public static String nodeIdFor(String attemptId) {
@@ -63,12 +75,17 @@ public class AnswerStreamProjector {
             if (state == null || !state.isTextBlock(delta.index())) {
                 return;
             }
-            String append = state.append(delta.index(), delta);
-            if (append.isEmpty()) {
-                return;
-            }
             synchronized (state) {
-                applyDelta(state, append);
+                String append = state.append(delta.index(), delta);
+                if (append.isEmpty()) {
+                    return;
+                }
+                state.pending.append(append);
+                long now = System.nanoTime();
+                if (state.pending.length() >= FLUSH_CHARACTER_THRESHOLD
+                        || now - state.lastFlushNanos >= FLUSH_NANOS) {
+                    flush(state, now);
+                }
             }
         }
     }
@@ -117,19 +134,161 @@ public class AnswerStreamProjector {
     }
 
     /**
-     * 进程重启后残留的 streaming 节点没有活着的流：标记失败，
-     * 让水合视图不显示一条永远“正在输入”的回答。
+     * 把已经展示的流式节点原位冻结为持久化答案。没有产生过 delta 时返回 false，
+     * 由 AnswerProjectionService 从已提交的 ModelAttempt 补建节点。
+     */
+    public boolean complete(
+            RunRow run,
+            RoundRow round,
+            String attemptId,
+            String content,
+            String role
+    ) {
+        if (!"stage".equals(role) && !"final".equals(role)) {
+            throw new IllegalArgumentException("Answer role must be stage or final");
+        }
+        StreamState state = streams.get(attemptId);
+        if (state != null) {
+            synchronized (state) {
+                flush(state, System.nanoTime());
+            }
+            streams.remove(attemptId, state);
+        } else {
+            streams.remove(attemptId);
+        }
+        String nodeId = nodeIdFor(attemptId);
+        ObjectNode existing = readNode(nodeId);
+        if (existing == null) {
+            return false;
+        }
+        if ("completed".equals(text(existing, "status"))) {
+            return true;
+        }
+
+        Completion completion = transactions.execute(status -> {
+            ObjectNode current = readNode(nodeId);
+            if (current == null) {
+                throw new IllegalStateException(
+                        "Streaming answer disappeared before completion"
+                );
+            }
+            int baseVersion = current.path("version").asInt();
+            int targetVersion = baseVersion + 1;
+            Instant now = clock.instant();
+            String messageId = id("msg");
+
+            jdbc.sql("""
+                    INSERT INTO message(
+                        message_id, conversation_id, branch_id, turn_id,
+                        role, content, client_request_id, created_at
+                    ) VALUES (
+                        :messageId, :conversationId, :branchId, :turnId,
+                        'assistant', :content, NULL, :now
+                    )
+                    """)
+                    .param("messageId", messageId)
+                    .param("conversationId", run.conversationId())
+                    .param("branchId", run.branchId())
+                    .param("turnId", run.turnId())
+                    .param("content", content)
+                    .param("now", now.toString())
+                    .update();
+
+            current.put("status", "completed");
+            current.put("role", role);
+            current.put("content", content);
+            current.put("sourceMessageId", messageId);
+            current.put("version", targetVersion);
+            current.put("updatedAt", now.toString());
+            int updated = jdbc.sql("""
+                    UPDATE render_node_projection
+                    SET node_status = 'completed',
+                        version = :targetVersion,
+                        final_content_hash = :contentHash,
+                        projection_json = :projection,
+                        updated_at = :now
+                    WHERE node_id = :nodeId AND version = :baseVersion
+                    """)
+                    .param("targetVersion", targetVersion)
+                    .param("contentHash", hash(content))
+                    .param("projection", current.toString())
+                    .param("now", now.toString())
+                    .param("nodeId", nodeId)
+                    .param("baseVersion", baseVersion)
+                    .update();
+            if (updated != 1) {
+                throw new IllegalStateException(
+                        "Streaming answer changed during completion"
+                );
+            }
+            int linked = jdbc.sql("""
+                    UPDATE agent_round
+                    SET answer_node_id = :nodeId,
+                        version = version + 1,
+                        updated_at = :now
+                    WHERE round_id = :roundId AND answer_node_id IS NULL
+                    """)
+                    .param("nodeId", nodeId)
+                    .param("now", now.toString())
+                    .param("roundId", round.roundId())
+                    .update();
+            if (linked != 1) {
+                throw new IllegalStateException(
+                        "Round answer was already linked elsewhere"
+                );
+            }
+            return new Completion(current, targetVersion);
+        });
+        if (completion == null) {
+            throw new IllegalStateException(
+                    "Answer completion transaction returned no result"
+            );
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set("node", completion.node());
+        events.append(new EventDraft(
+                "render_node.updated",
+                run.conversationId(),
+                run.branchId(),
+                run.turnId(),
+                run.runId(),
+                "render_node",
+                nodeId,
+                completion.version(),
+                attemptId,
+                run.runId(),
+                payload
+        ));
+        return true;
+    }
+
+    /**
+     * 进程重启后，interrupted attempt 的半截 answer 与在线失败采用同一语义：
+     * 保留既有 delta/event 作为审计事实，删除当前投影并追加 invalidated 事件。
+     * 这样 SSE resume 和重新水合都不会把半截 provider 输出当成失败答案。
      */
     public int recoverInterrupted() {
-        return jdbc.sql("""
-                UPDATE render_node_projection
-                SET node_status = 'failed',
-                    projection_json = json_set(projection_json, '$.status', 'failed'),
-                    updated_at = :now
-                WHERE node_type = 'answer' AND node_status = 'streaming'
+        List<InterruptedAnswer> interrupted = jdbc.sql("""
+                SELECT ma.attempt_id, ma.conversation_id
+                FROM model_attempt ma
+                JOIN render_node_projection rp
+                  ON rp.node_id = :nodePrefix || ma.attempt_id
+                WHERE ma.phase = 'interrupted'
+                  AND rp.node_type = 'answer'
+                  AND rp.node_status = 'streaming'
+                ORDER BY ma.started_at
                 """)
-                .param("now", clock.instant().toString())
-                .update();
+                .param("nodePrefix", "node_answer_")
+                .query((rs, rowNum) -> new InterruptedAnswer(
+                        rs.getString("attempt_id"),
+                        rs.getString("conversation_id")
+                ))
+                .list();
+        interrupted.forEach(answer -> invalidate(
+                answer.conversationId(),
+                answer.attemptId()
+        ));
+        return interrupted.size();
     }
 
     private void applyDelta(StreamState state, String append) {
@@ -137,7 +296,7 @@ public class AnswerStreamProjector {
         if (!state.nodeCreated) {
             state.ordinal = nextOrdinal(state.run.turnId());
             state.createdAt = now;
-            ObjectNode projection = baseNode(state, 1, now);
+            ObjectNode projection = baseNode(state, 1, now, now);
             projection.put("content", state.content.toString());
             jdbc.sql("""
                     INSERT INTO render_node_projection(
@@ -158,7 +317,7 @@ public class AnswerStreamProjector {
                     .param("turnId", state.run.turnId())
                     .param("runId", state.run.runId())
                     .param("roundId", state.round.roundId())
-                    .param("ordinal", nextOrdinal(state.run.turnId()))
+                    .param("ordinal", state.ordinal)
                     .param("projection", projection.toString())
                     .param("now", now.toString())
                     .update();
@@ -237,7 +396,7 @@ public class AnswerStreamProjector {
     private ObjectNode baseNode(
             StreamState state,
             int version,
-            Object createdAt,
+            Instant createdAt,
             Instant now
     ) {
         ObjectNode node = objectMapper.createObjectNode();
@@ -299,6 +458,32 @@ public class AnswerStreamProjector {
                 : null;
     }
 
+    private void flush(StreamState state, long nowNanos) {
+        if (state.pending.isEmpty()) {
+            return;
+        }
+        String append = state.pending.toString();
+        state.pending.setLength(0);
+        applyDelta(state, append);
+        state.lastFlushNanos = nowNanos;
+    }
+
+    private String hash(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(
+                            value.getBytes(StandardCharsets.UTF_8)
+                    )
+            );
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
+    }
+
+    private String id(String prefix) {
+        return prefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
     private final class StreamState {
         private final RunRow run;
         private final RoundRow round;
@@ -306,10 +491,13 @@ public class AnswerStreamProjector {
         private final String nodeId;
         private final StringBuilder content = new StringBuilder();
         private final Map<Integer, StringBuilder> blocks = new ConcurrentHashMap<>();
+        private final StringBuilder pending = new StringBuilder();
         private boolean nodeCreated;
         private int version;
         private int chunkSequence;
-        private Object createdAt;
+        private int ordinal;
+        private Instant createdAt;
+        private long lastFlushNanos = System.nanoTime();
 
         private StreamState(RunRow run, RoundRow round, String attemptId) {
             this.run = run;
@@ -346,13 +534,16 @@ public class AnswerStreamProjector {
         }
 
         private int ordinal() {
-            return jdbc.sql("""
-                    SELECT ordinal FROM render_node_projection
-                    WHERE node_id = :nodeId
-                    """)
-                    .param("nodeId", nodeId)
-                    .query(Integer.class)
-                    .single();
+            return ordinal;
         }
+    }
+
+    private record Completion(ObjectNode node, int version) {
+    }
+
+    private record InterruptedAnswer(
+            String attemptId,
+            String conversationId
+    ) {
     }
 }

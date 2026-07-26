@@ -18,6 +18,66 @@ public class ToolRuntimeRepository {
         this.jdbc = jdbc;
     }
 
+    public boolean hasCommittedActivity(String runId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM tool_execution
+                WHERE run_id = :runId
+                  AND phase IN ('executing', 'verifying')
+                """)
+                .param("runId", runId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    public int cancelBeforeExecution(String runId, Instant now) {
+        jdbc.sql("""
+                UPDATE tool_approval_request
+                SET status = 'invalidated', decided_at = :now,
+                    version = version + 1
+                WHERE status = 'waiting'
+                  AND execution_id IN (
+                      SELECT execution_id FROM tool_execution
+                      WHERE run_id = :runId
+                        AND phase = 'awaiting_approval'
+                  )
+                """)
+                .param("runId", runId)
+                .param("now", now.toString())
+                .update();
+        return jdbc.sql("""
+                UPDATE tool_execution
+                SET phase = 'failed', outcome_kind = 'failed',
+                    error_code = 'cancelled_before_execution',
+                    error_message = '用户已停止当前任务，工具未进入副作用阶段。',
+                    version = version + 1, updated_at = :now
+                WHERE run_id = :runId
+                  AND phase IN ('claimed', 'prepared', 'awaiting_approval')
+                """)
+                .param("runId", runId)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public Optional<ModelExposure> modelExposure(String toolCallId) {
+        return jdbc.sql("""
+                SELECT e.exposure_id, e.context_hash,
+                       e.capability_lease_hash, e.tool_name, e.manifest_hash
+                FROM model_tool_call_exposure link
+                JOIN model_capability_exposure e
+                  ON e.exposure_id = link.exposure_id
+                WHERE link.tool_call_id = :toolCallId
+                """)
+                .param("toolCallId", toolCallId)
+                .query((rs, rowNum) -> new ModelExposure(
+                        rs.getString("exposure_id"),
+                        rs.getString("context_hash"),
+                        rs.getString("capability_lease_hash"),
+                        rs.getString("tool_name"),
+                        rs.getString("manifest_hash")
+                ))
+                .optional();
+    }
+
     public Optional<RuntimeResult> findByToolCall(
             String conversationId,
             String toolCallId
@@ -199,6 +259,27 @@ public class ToolRuntimeRepository {
                         rs.getString("decision_key"),
                         rs.getLong("version"),
                         Instant.parse(rs.getString("expires_at"))
+                ))
+                .optional();
+    }
+
+    public Optional<ExecutionContextRow> executionContextForApproval(
+            String approvalId
+    ) {
+        return jdbc.sql("""
+                SELECT e.conversation_id, e.turn_id, e.run_id, e.round_id,
+                       e.tool_call_id
+                FROM tool_approval_request a
+                JOIN tool_execution e ON e.execution_id = a.execution_id
+                WHERE a.approval_id = :approvalId
+                """)
+                .param("approvalId", approvalId)
+                .query((rs, rowNum) -> new ExecutionContextRow(
+                        rs.getString("conversation_id"),
+                        rs.getString("turn_id"),
+                        rs.getString("run_id"),
+                        rs.getString("round_id"),
+                        rs.getString("tool_call_id")
                 ))
                 .optional();
     }
@@ -419,6 +500,24 @@ public class ToolRuntimeRepository {
             String decisionKey,
             long version,
             Instant expiresAt
+    ) {
+    }
+
+    public record ExecutionContextRow(
+            String conversationId,
+            String turnId,
+            String runId,
+            String roundId,
+            String toolCallId
+    ) {
+    }
+
+    public record ModelExposure(
+            String exposureId,
+            String contextHash,
+            String capabilityLeaseHash,
+            String toolName,
+            String manifestHash
     ) {
     }
 

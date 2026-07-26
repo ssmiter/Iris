@@ -25,6 +25,12 @@ ToolObservation 或分支事实。每次实际发送的上下文保存为不可�
 Provider Profile 后续可以替换为精确 tokenizer，但替换不改变 Planner 契约。预算和
 估算结果写入 `model_context_snapshot`，便于定位 prompt-too-large 与调整误差系数。
 
+Capability lease 还有一个先于整个窗口规划的子预算。三个发现原语是 required
+Definition，必须完整放入；它们自身超限时 fail-close。其余 Definition 只能来自本
+Run 最近成功的 `read_capability`，按新近程度逐个准入，某个 Definition 过大时跳过
+它并继续检查后续候选。快照 payload 同时记录 schema 预算、估算使用量和遗漏数量；
+数量上限只约束候选查询成本，不能充当 schema 成本估算。
+
 ## 3. 裁剪单位
 
 Planner 从最新事实向前选择原子组：
@@ -46,9 +52,89 @@ Authorization header 或未清洗的 provider metadata。
 快照中的每个租用工具形成一条不可变 Capability Exposure。模型提交 ToolCall 时必须
 按 `context_hash + tool_name` 找到唯一 Exposure，并保存显式关联；未租用工具即使
 Registry 中存在也不能执行。Lease 是模型可见性，不替代 Runtime 的审批与策略检查。
+Tool Runtime 还必须把该 Exposure 的 `tool_name + manifest_hash` 与当前 binding 精确
+比对；Definition 已变化时旧 ToolCall fail-close，不能用新 schema 解释旧参数。
 
 ## 5. Prompt 过大
 
 本地 Planner 已判定超限时不请求 Provider。Provider 仍返回 prompt-too-large 时，
 旧 attempt 明确失败；调度器只能创建新的压缩/裁剪决策和新 attempt，不能修改旧
 attempt 的 context hash 后原地重试。
+
+## 6. 水位线与分支
+
+CompactBoundary 的 `beforeTurnId` 对应一条不可变的
+`turn.accepted.sequence`，该 sequence 就是分支当前的上下文水位线。水位线以下的
+canonical history 仍完整保留，只在后续 ModelContext 中由 summary artifact 代替。
+持久化时它不是孤立标记，而是一个 Context Frame：
+
+```text
+origin(frame, waterline=0)
+  -> compact(frame, source=(0, 42), waterline=42)
+  -> compact(frame, source=(42, 87), waterline=87)
+```
+
+每个新对话拥有一个空的 origin Frame。每次 Compact 都引用唯一 parent Frame，并把
+source range 固定为 `(parent.waterline, current.waterline)`；Branch 保存创建瞬间选中的
+base Frame。由此模型当前视野始终是：
+
+```text
+base Frame 的上下文 + base waterline 到目标位置的 canonical facts
+```
+
+- 同一条分支路径上的有效水位线只能向前推进，不能回退或重复。
+- 创建子分支时，从 source Branch 的 Frame 链向上选择严格位于分叉锚点之前的最近
+  Frame，并把它固定为子分支 head；不能选择覆盖了分叉点或其后事实的 Frame。
+- 祖先分支在分叉点之后的水位线、Turn 和 summary 都不可泄露给子分支。
+- 父分支在子分支创建后形成的新 Frame 不得追溯性改变子分支 head；历史重放必须稳定。
+- 子分支可以在继承水位线之上继续 Compact；新 summary 的 source range 从上一条
+  有效水位线开始，到新水位线结束，不能重复注入已覆盖事实。
+- Compact 的 cutoff 必须是所选分支可见路径上的 Turn，并且覆盖区间内所有
+  ModelAttempt、ToolCall 和 Run 都已闭合。
+- `ConversationView`、历史分页、Compact cutoff 选择和 `ModelContextRepository`
+  必须使用同一条递归 branch path 规则，不能各自推断“可见历史”。
+
+因此 Branch 与 Compact 的组合不是复制摘要：它是“固定 Frame 链 + 分支可见路径 +
+单调水位线”的确定性计算。创建分支、刷新页面或对话压缩都不能改变既有边界的
+适用范围。
+
+## 7. Compact Pipeline
+
+手动 Compact 不接受 Frontend 指定 cutoff 或 summary。Backend 在 Conversation lock
+内完成以下 Prepare：
+
+1. 从当前 head 之后的已闭合可见 Turn 中选择水位线，并保留最近四个 Turn；
+2. 冻结 `parent Frame summary + (parent waterline, new waterline)` 中的 canonical
+   user、assistant、ToolCall 和 ToolObservation；
+3. 保存带 content hash 的 `compaction_source_snapshot`；
+4. 创建 `kind=pipeline` 的 Run、单个模型步骤和 `compaction_run` 投影；
+5. 写入 `compaction.started` 后异步唤醒。
+
+模型只能读取冻结快照，不得在 retry 或进程恢复时重新查询当前 ConversationView。
+它不租用工具，只输出可持久化 Frame 正文。ModelAttempt、context hash、provider
+identity 和 token 预算仍遵循普通模型协议。
+
+成功提交 ModelAttempt 后，Run 进入 verifying；新 Context Frame、CompactBoundary、
+branch head 推进和 Compaction Run completed 在同一事务中闭合，然后发送
+`compaction.completed`。任何失败只产生 terminal failure，不写半截 Boundary，也不
+改变旧 branch head。进程在 Provider stream 中断时保留 interrupted attempt，并把本次
+Compact 标记失败；用户可用新的幂等命令重新开始。
+
+## 8. 完整对话验证场景
+
+实现阶段不以大量孤立测试替代真实体验。接入实际 Provider 后，按一条连续对话验证：
+
+1. 连续完成至少八个 Turn，期间包含普通回答、只读 Tool、需审批 Tool、Supplement
+   和一次 Stop，刷新后过程与最终状态仍一致；
+2. 手动整理上下文，观察 `accepted/running/completed`、SSE Boundary 和页面水位线，
+   并确认旧 Turn 仍可滚动查看；
+3. 在新 Frame 后继续提问，核对 ModelContext 只含 Frame summary 与水位线后的事实；
+4. 从水位线之后的旧提问创建分支，确认继承当前 Frame 加增量历史；
+5. 从水位线之前创建分支，确认沿 parent 链回退到更早 Frame（最早退化为 origin）；
+6. 父分支再次 Compact，确认既有子分支 head 不变；子分支 Compact 后形成自己的叶子；
+7. 在 Provider stream 中断一次，确认旧 attempt 为 interrupted、Compact 失败、旧 head
+   不动；重新发起后使用新的 Run/Attempt；
+8. 最后在主线和两个子分支之间切换、刷新并继续对话，比较 UI 历史、水位线、
+   source snapshot、context hash 和模型实际回答的一致性。
+
+验证时 API key 只通过本地环境变量注入，不进入配置文件、事件、日志、快照或 Git。

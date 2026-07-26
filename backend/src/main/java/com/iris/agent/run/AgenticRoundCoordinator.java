@@ -2,6 +2,8 @@ package com.iris.agent.run;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.agent.model.ModelAttemptRepository.AttemptRow;
+import com.iris.agent.model.AnswerStreamProjector;
+import com.iris.agent.model.ModelAttemptResult;
 import com.iris.agent.model.ModelAttemptService;
 import com.iris.agent.model.ModelContext;
 import com.iris.agent.model.ModelContextAssembler;
@@ -15,24 +17,35 @@ import com.iris.agent.model.provider.ModelProviderException;
 import com.iris.agent.run.RoundToolCoordinator.RoundToolProgress;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
+import com.iris.conversation.application.RunEventEmitter;
+import com.iris.conversation.infrastructure.TurnStopRepository;
 import org.springframework.stereotype.Service;
+import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Advances one durable Agentic Round without owning a long-lived Java loop.
  */
 @Service
 public class AgenticRoundCoordinator {
+    private static final int MAX_ATTEMPTS_PER_ROUND = 3;
+
     private final RunRoundRepository runFacts;
     private final ModelContextAssembler contexts;
     private final ModelProviderRegistry providers;
     private final ModelAttemptService attempts;
     private final RoundToolCoordinator tools;
     private final ObjectMapper objectMapper;
+    private final AnswerStreamProjector answerStreams;
+    private final RunEventEmitter lifecycleEvents;
+    private final SupplementInjectionService supplementInjections;
+    private final TurnStopRepository stopRequests;
+    private final RunCancellationRegistry cancellations;
 
     public AgenticRoundCoordinator(
             RunRoundRepository runFacts,
@@ -40,7 +53,12 @@ public class AgenticRoundCoordinator {
             ModelProviderRegistry providers,
             ModelAttemptService attempts,
             RoundToolCoordinator tools,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AnswerStreamProjector answerStreams,
+            RunEventEmitter lifecycleEvents,
+            SupplementInjectionService supplementInjections,
+            TurnStopRepository stopRequests,
+            RunCancellationRegistry cancellations
     ) {
         this.runFacts = runFacts;
         this.contexts = contexts;
@@ -48,6 +66,11 @@ public class AgenticRoundCoordinator {
         this.attempts = attempts;
         this.tools = tools;
         this.objectMapper = objectMapper;
+        this.answerStreams = answerStreams;
+        this.lifecycleEvents = lifecycleEvents;
+        this.supplementInjections = supplementInjections;
+        this.stopRequests = stopRequests;
+        this.cancellations = cancellations;
     }
 
     public Mono<RoundAdvance> advance(
@@ -72,7 +95,7 @@ public class AgenticRoundCoordinator {
                             workspaceRoot,
                             cancelled
                     );
-                    case COMPLETED, FAILED -> Mono.just(new RoundAdvance(
+                    case COMPLETED, STOPPED, FAILED -> Mono.just(new RoundAdvance(
                             loaded.round().roundId(),
                             loaded.round().phase(),
                             null,
@@ -94,6 +117,10 @@ public class AgenticRoundCoordinator {
     ) {
         ModelProvider provider = providers.require(providerProfile);
         return Mono.fromCallable(() -> {
+                    supplementInjections.injectPending(
+                            loaded.run(),
+                            loaded.round()
+                    );
                     ModelContext context = contexts.assemble(
                             loaded.run(),
                             loaded.round(),
@@ -106,6 +133,9 @@ public class AgenticRoundCoordinator {
                             provider.modelId(),
                             context.contextHash(),
                             context.capabilityLeaseHash()
+                    );
+                    lifecycleEvents.roundUpdated(
+                            loaded.round().roundId()
                     );
                     ModelRequest request = new ModelRequest(
                             attempt.attemptId(),
@@ -131,7 +161,12 @@ public class AgenticRoundCoordinator {
                                     )
                             )
                     );
-                    return new StartedAttempt(attempt, request);
+                    return new StartedAttempt(
+                            loaded.run(),
+                            loaded.round(),
+                            attempt,
+                            request
+                    );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(started -> consume(
@@ -152,33 +187,198 @@ public class AgenticRoundCoordinator {
                 started.attempt().attemptId(),
                 objectMapper
         );
+        AtomicBoolean attemptCommitted = new AtomicBoolean(false);
         Mono<RoundRow> committed = provider.stream(started.request())
                 .timeout(provider.timeout())
-                .doOnNext(assembler::accept)
-                .then(Mono.fromCallable(() -> attempts.commit(
-                        started.attempt().attemptId(),
-                        started.attempt().version(),
-                        assembler.finish()
-                )).subscribeOn(Schedulers.boundedElastic()))
-                .onErrorResume(error -> failAttempt(started.attempt(), error));
+                .takeUntilOther(
+                        cancellations.whenCancelled(started.run().runId())
+                                .then(Mono.error(
+                                        new RunCancellationException()
+                                ))
+                )
+                .publishOn(Schedulers.boundedElastic())
+                .doOnNext(event -> {
+                    assembler.accept(event);
+                    answerStreams.accept(
+                            started.run(),
+                            started.round(),
+                            started.attempt().attemptId(),
+                            event
+                    );
+                })
+                .then(Mono.fromCallable(() -> {
+                    ModelAttemptResult result = assembler.finish();
+                    RoundRow round = attempts.commit(
+                            started.attempt().attemptId(),
+                            started.attempt().version(),
+                            result
+                    );
+                    attemptCommitted.set(true);
+                    String visibleText = visibleText(result);
+                    if (visibleText.isBlank()) {
+                        answerStreams.discard(started.attempt().attemptId());
+                    } else {
+                        answerStreams.complete(
+                                started.run(),
+                                round,
+                                started.attempt().attemptId(),
+                                visibleText,
+                                result.toolCalls().isEmpty()
+                                        ? "final"
+                                        : "stage"
+                        );
+                    }
+                    lifecycleEvents.roundUpdated(round.roundId());
+                    return round;
+                }).subscribeOn(Schedulers.boundedElastic()));
 
-        return committed.flatMap(round -> {
-            if (round.phase() == RoundPhase.AWAITING_TOOLS) {
-                return advanceTools(round, workspaceRoot, cancelled);
-            }
-            return Mono.just(new RoundAdvance(
-                    round.roundId(),
-                    round.phase(),
-                    started.attempt().attemptId(),
-                    false
-            ));
-        });
+        return committed
+                .flatMap(round -> {
+                    if (round.phase() == RoundPhase.AWAITING_TOOLS) {
+                        return advanceTools(
+                                round,
+                                workspaceRoot,
+                                cancelled
+                        );
+                    }
+                    return Mono.just(new RoundAdvance(
+                            round.roundId(),
+                            round.phase(),
+                            started.attempt().attemptId(),
+                            false
+                    ));
+                })
+                .onErrorResume(error -> handleAttemptFailure(
+                        provider,
+                        started,
+                        workspaceRoot,
+                        cancelled,
+                        attemptCommitted.get(),
+                        error
+                ));
     }
 
-    private Mono<RoundRow> failAttempt(AttemptRow attempt, Throwable error) {
-        return Mono.<RoundRow>fromCallable(() -> {
+    private Mono<RoundAdvance> handleAttemptFailure(
+            ModelProvider provider,
+            StartedAttempt started,
+            Path workspaceRoot,
+            boolean cancelled,
+            boolean attemptCommitted,
+            Throwable error
+    ) {
+        Throwable cause = Exceptions.unwrap(error);
+        if (attemptCommitted) {
+            answerStreams.discard(started.attempt().attemptId());
+            return Mono.error(propagate(cause));
+        }
+        answerStreams.invalidate(
+                started.run().conversationId(),
+                started.attempt().attemptId()
+        );
+        boolean stopRequested = cancelled
+                || cause instanceof RunCancellationException
+                || cancellations.isCancelled(started.run().runId())
+                || stopRequests.requested(started.run().turnId());
+        if (stopRequested) {
+            return cancelAttempt(started.attempt())
+                    .map(round -> new RoundAdvance(
+                            round.roundId(),
+                            round.phase(),
+                            started.attempt().attemptId(),
+                            false
+                    ));
+        }
+        if (retryable(cause)
+                && started.attempt().attemptIndex() + 1
+                < MAX_ATTEMPTS_PER_ROUND) {
+            return retryAttempt(
+                    provider,
+                    started,
+                    workspaceRoot,
+                    cancelled,
+                    cause
+            );
+        }
+        return failAttempt(started.attempt(), cause);
+    }
+
+    private Mono<RoundAdvance> retryAttempt(
+            ModelProvider provider,
+            StartedAttempt failed,
+            Path workspaceRoot,
+            boolean cancelled,
+            Throwable error
+    ) {
+        return Mono.fromCallable(() -> {
+                    AttemptRow successor = attempts.retry(
+                            failed.attempt().attemptId(),
+                            failed.attempt().version(),
+                            category(error)
+                    );
+                    RoundRow round = runFacts.findRound(
+                            successor.roundId()
+                    ).orElseThrow();
+                    lifecycleEvents.roundUpdated(round.roundId());
+                    return new StartedAttempt(
+                            failed.run(),
+                            round,
+                            successor,
+                            withAttemptId(
+                                    failed.request(),
+                                    successor.attemptId()
+                            )
+                    );
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(successor -> consume(
+                        provider,
+                        successor,
+                        workspaceRoot,
+                        cancelled
+                ));
+    }
+
+    private Mono<RoundAdvance> failAttempt(
+            AttemptRow attempt,
+            Throwable error
+    ) {
+        return Mono.<RoundAdvance>fromCallable(() -> {
                     attempts.fail(attempt.attemptId(), category(error));
+                    lifecycleEvents.roundUpdated(attempt.roundId());
                     throw propagate(error);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private ModelRequest withAttemptId(
+            ModelRequest request,
+            String attemptId
+    ) {
+        return new ModelRequest(
+                attemptId,
+                request.conversationId(),
+                request.runId(),
+                request.roundId(),
+                request.modelId(),
+                request.systemInstruction(),
+                request.items(),
+                request.tools(),
+                request.metadata()
+        );
+    }
+
+    private boolean retryable(Throwable error) {
+        if (error instanceof ModelProviderException provider) {
+            return provider.retryable();
+        }
+        return error instanceof java.util.concurrent.TimeoutException;
+    }
+
+    private Mono<RoundRow> cancelAttempt(AttemptRow attempt) {
+        return Mono.fromCallable(() -> {
+                    RoundRow round = attempts.cancel(attempt.attemptId());
+                    lifecycleEvents.roundUpdated(round.roundId());
+                    return round;
                 })
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -189,10 +389,15 @@ public class AgenticRoundCoordinator {
             boolean cancelled
     ) {
         return Mono.fromCallable(() -> {
+                    boolean stopRequested = stopRequests.requested(
+                            runFacts.findRun(round.runId())
+                                    .orElseThrow()
+                                    .turnId()
+                    );
                     RoundToolProgress progress = tools.advance(
                             round.roundId(),
                             workspaceRoot,
-                            cancelled
+                            cancelled || stopRequested
                     );
                     return new RoundAdvance(
                             progress.roundId(),
@@ -215,6 +420,7 @@ public class AgenticRoundCoordinator {
     }
 
     private String category(Throwable error) {
+        error = Exceptions.unwrap(error);
         if (error instanceof ModelProtocolException protocol) {
             return "protocol:" + protocol.code();
         }
@@ -228,9 +434,22 @@ public class AgenticRoundCoordinator {
     }
 
     private RuntimeException propagate(Throwable error) {
+        error = Exceptions.unwrap(error);
         return error instanceof RuntimeException runtime
                 ? runtime
                 : new IllegalStateException("Model provider failed", error);
+    }
+
+    private String visibleText(ModelAttemptResult result) {
+        return result.blocks().stream()
+                .filter(block -> block.kind()
+                        == com.iris.agent.model.ModelStreamEvent.BlockKind.TEXT)
+                .sorted(java.util.Comparator.comparingInt(
+                        ModelAttemptResult.ContentBlock::index
+                ))
+                .map(ModelAttemptResult.ContentBlock::text)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.joining());
     }
 
     public record RoundAdvance(
@@ -245,6 +464,8 @@ public class AgenticRoundCoordinator {
     }
 
     private record StartedAttempt(
+            RunRow run,
+            RoundRow round,
             AttemptRow attempt,
             ModelRequest request
     ) {

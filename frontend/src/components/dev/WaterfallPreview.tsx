@@ -144,7 +144,7 @@ export function WaterfallPreview() {
           })
         }}
         onSendSupplement={(text) => {
-          addPendingSupplement(text)
+          addPendingSupplement(activeTurn?.turnId ?? 'preview-turn', text)
           notify.info('补充正在等待安全边界', {
             description: '只有后端 SSE 才能确认它已经注入。',
           })

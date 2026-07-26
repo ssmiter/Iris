@@ -487,7 +487,7 @@ Idempotency-Key: supplement-opaque
 {
   "supplementId": "supplement_opaque",
   "turnId": "turn_opaque",
-  "messageId": "msg_supplement",
+  "messageId": null,
   "state": "pending",
   "injectedAfterRoundId": null,
   "version": 1
@@ -501,6 +501,9 @@ pending | injected | cancelled | promoted
 ```
 
 注入边界由 Backend 决定并经 SSE 确认。Turn 已结束时可以原子升格为新 Turn；不得静默丢弃或自动无限续跑。
+`pending` 阶段尚未创建 canonical Message，避免上下文查询提前读到；真正注入时才写入
+普通 `role=user` Message，此时 `messageId` 才有值。模型只看到用户原文与附件，不接收
+“已注入”等界面状态说明。
 
 ### 5.4 撤回未注入补充
 
@@ -524,13 +527,32 @@ Idempotency-Key: stop-opaque
 }
 ```
 
-响应 `202`。停止是持久化意图：
+响应 `202`：
+
+```json
+{
+  "stopRequestId": "stop_opaque",
+  "turnId": "turn_opaque",
+  "rootRunId": "run_opaque",
+  "reason": "user_requested",
+  "state": "requested",
+  "version": 1,
+  "requestedAt": "2026-07-26T12:00:00Z",
+  "completedAt": null
+}
+```
+
+`state = requested | draining | completed`。停止是持久化意图：
 
 - Backend 停止创建新的 Model Step 和 child Run；
 - 取消向下传播到可取消活动；
 - 已进入副作用的 ToolExecution 仍需 verify；
 - 未注入 Supplement 保留为待处理，不自动发送；
 - 最终 `stopped` 由 SSE 确认。
+
+`draining` 表示至少一个 ToolExecution 已越过执行门，必须完成 verify 或闭合为
+`OutcomeUnknown`；它不表示还会继续规划新步骤。进程内取消句柄只负责加快合作取消，
+丢失后仍由 StopRequest、Run、Round 与 ToolExecution 事实恢复。
 
 ### 5.6 Run 详情
 
@@ -572,20 +594,25 @@ Pipeline 重启从 terminal Step 与 child facts 重建 ready-set。若冻结依
 
 ```json
 {
-  "compactBoundaryId": "boundary_opaque",
+  "boundaryId": "boundary_opaque",
+  "contextFrameId": "frame_opaque",
+  "parentContextFrameId": "frame_parent",
   "branchId": "branch_opaque",
-  "applicableBranchPath": ["branch_root", "branch_opaque"],
-  "cutoffEventSequence": 118,
-  "cutoffMessageId": "msg_cutoff",
-  "sourceContextFrameId": "ctx_source",
+  "beforeTurnId": "turn_cutoff",
+  "waterlineSequence": 118,
+  "inherited": false,
+  "trigger": "manual",
+  "coveredCount": 12,
   "summaryArtifactRef": "artifact_summary",
-  "factRefs": ["fact_1", "fact_2"],
-  "pipelineRunId": "run_compact",
-  "createdAt": "2026-07-24T18:40:00+08:00"
+  "summary": "经过验证的上下文 Frame",
+  "version": 1
 }
 ```
 
-Boundary 不复制该范围内全部 Tool/Capability ID。完整 provenance 通过 canonical ToolCall/Exposure 沿 source range 解引用；`factRefs` 只保留未来 Context 明确需要的结构化事实。
+Boundary 不复制该范围内全部 Tool/Capability ID。完整 provenance 通过 canonical
+ToolCall/Exposure 沿 source range 解引用。每个 Frame 只有一个 parent，但可以被多个
+Branch head 或后续 Frame 引用，因此整体是一棵从当前叶子向 origin 根节点收敛的
+多叉树。
 
 ### 6.2 创建分支
 

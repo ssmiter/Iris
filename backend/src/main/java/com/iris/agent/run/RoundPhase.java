@@ -7,9 +7,10 @@ public enum RoundPhase {
     AWAITING_TOOLS,
     OBSERVATIONS_READY,
     COMPLETED,
+    STOPPED,
     FAILED;
 
     public boolean terminal() {
-        return this == COMPLETED || this == FAILED;
+        return this == COMPLETED || this == STOPPED || this == FAILED;
     }
 }

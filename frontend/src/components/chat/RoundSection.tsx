@@ -33,7 +33,16 @@ export function RoundSection({
 }: RoundSectionProps) {
   const processNodes = round.processNodeIds
     .map((nodeId) => nodesById[nodeId])
-    .filter((node): node is RenderNode => Boolean(node))
+    .filter(
+      (node): node is RenderNode =>
+        Boolean(node) && node?.type !== 'supplement',
+    )
+  const supplementNodes = round.processNodeIds
+    .map((nodeId) => nodesById[nodeId])
+    .filter(
+      (node): node is Extract<RenderNode, { type: 'supplement' }> =>
+        node?.type === 'supplement',
+    )
   const answerNode = round.answerNodeId
     ? nodesById[round.answerNodeId]
     : undefined
@@ -50,6 +59,14 @@ export function RoundSection({
       )}
       aria-label={`第 ${round.index + 1} 轮`}
     >
+      {supplementNodes.map((node) => (
+        <div key={node.nodeId} className="mb-3 flex justify-end">
+          <div className="max-w-[92%] rounded-lg rounded-br-xs bg-primary px-4 py-3 text-body text-primary-foreground shadow-hairline sm:max-w-[min(86%,42rem)]">
+            {node.text}
+          </div>
+        </div>
+      ))}
+
       {processNodes.length > 0 && (
         <>
           <div

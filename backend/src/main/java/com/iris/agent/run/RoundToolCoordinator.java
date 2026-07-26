@@ -9,6 +9,8 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolRuntime;
+import com.iris.conversation.application.RunEventEmitter;
+import com.iris.conversation.infrastructure.TurnStopRepository;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
@@ -26,6 +28,8 @@ public class RoundToolCoordinator {
     private final RunRoundRepository runFacts;
     private final RunRoundService runRounds;
     private final ToolProjectionService projections;
+    private final RunEventEmitter lifecycleEvents;
+    private final TurnStopRepository stopRequests;
 
     public RoundToolCoordinator(
             ModelAttemptRepository modelFacts,
@@ -33,7 +37,9 @@ public class RoundToolCoordinator {
             ToolObservationService observations,
             RunRoundRepository runFacts,
             RunRoundService runRounds,
-            ToolProjectionService projections
+            ToolProjectionService projections,
+            RunEventEmitter lifecycleEvents,
+            TurnStopRepository stopRequests
     ) {
         this.modelFacts = modelFacts;
         this.toolRuntime = toolRuntime;
@@ -41,6 +47,8 @@ public class RoundToolCoordinator {
         this.runFacts = runFacts;
         this.runRounds = runRounds;
         this.projections = projections;
+        this.lifecycleEvents = lifecycleEvents;
+        this.stopRequests = stopRequests;
     }
 
     public RoundToolProgress advance(
@@ -57,15 +65,6 @@ public class RoundToolCoordinator {
             );
         }
         RunRow run = runFacts.findRun(round.runId()).orElseThrow();
-        ToolContext context = new RoundToolContext(
-                run.conversationId(),
-                run.turnId(),
-                run.runId(),
-                roundId,
-                workspaceRoot,
-                cancelled
-        );
-
         List<RoundToolCall> calls = modelFacts.roundToolCalls(roundId);
         if (calls.isEmpty()) {
             throw new IllegalStateException(
@@ -76,6 +75,14 @@ public class RoundToolCoordinator {
         int observationCount = 0;
         boolean waiting = false;
         for (RoundToolCall call : calls) {
+            ToolContext context = new RoundToolContext(
+                    run.conversationId(),
+                    run.turnId(),
+                    run.runId(),
+                    roundId,
+                    workspaceRoot,
+                    cancelled || stopRequests.requested(run.turnId())
+            );
             RuntimeResult execution = toolRuntime.invoke(
                     new Invocation(call.toolCallId(), call.toolName()),
                     call.arguments(),
@@ -107,6 +114,10 @@ public class RoundToolCoordinator {
                     RoundPhase.COMPLETED
             );
         }
+        if (waiting) {
+            lifecycleEvents.roundUpdated(roundId);
+        }
+        lifecycleEvents.turnUpdated(run.turnId());
         return new RoundToolProgress(
                 roundId,
                 current.phase(),

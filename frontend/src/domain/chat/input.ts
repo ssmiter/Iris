@@ -2,8 +2,23 @@ export type PermissionMode = 'bypass' | 'auto' | 'confirm' | 'sandbox'
 
 export interface PendingSupplement {
   clientRequestId: string
+  supplementId: string | null
+  turnId: string
   text: string
   state: 'submitting' | 'pending'
+}
+
+export interface SupplementView {
+  supplementId: string
+  turnId: string
+  messageId: string | null
+  state: 'pending' | 'injected' | 'cancelled' | 'promoted'
+  text: string
+  attachmentRefs: string[]
+  injectedAfterRoundId: string | null
+  acceptedAt: string
+  updatedAt: string
+  version: number
 }
 
 export const permissionModeOptions: ReadonlyArray<{

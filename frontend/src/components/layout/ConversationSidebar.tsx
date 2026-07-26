@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { MessageSquare, Plus, X } from 'lucide-react'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
+import { useChatStore } from '@/stores/chatStore'
 import { Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
 
@@ -14,6 +15,15 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
   )
   const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
+  )
+  const setCurrentConversation = useConversationStore(
+    (state) => state.setCurrentConversation,
+  )
+  const startNewConversation = useConversationStore(
+    (state) => state.startNewConversation,
+  )
+  const resetConversation = useChatStore(
+    (state) => state.resetConversation,
   )
   const setMobileSidebarOpen = useViewStateStore(
     (state) => state.setMobileSidebarOpen,
@@ -35,8 +45,11 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            disabled
-            aria-label="新建对话（尚未接入）"
+            aria-label="新建对话"
+            onClick={() => {
+              startNewConversation()
+              resetConversation()
+            }}
           >
             <Plus aria-hidden="true" className="h-4 w-4" />
           </Button>
@@ -62,6 +75,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
               )}
               aria-current={active ? 'page' : undefined}
               onClick={() => {
+                setCurrentConversation(conversationId, '')
                 if (mobile) setMobileSidebarOpen(false)
               }}
             >

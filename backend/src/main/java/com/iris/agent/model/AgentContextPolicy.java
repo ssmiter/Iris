@@ -1,6 +1,8 @@
 package com.iris.agent.model;
 
 import com.iris.agent.model.ModelContextAssembler.ContextSeed;
+import com.iris.agent.model.CapabilityLeasePlanner.LeasePlan;
+import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.tools.core.ToolRegistry;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -14,7 +16,8 @@ import java.util.List;
  */
 @Service
 public class AgentContextPolicy {
-    private static final int RECENT_ACTIVATION_LIMIT = 12;
+    private static final int RECENT_ACTIVATION_CANDIDATE_LIMIT = 64;
+    private static final int MAX_CAPABILITY_SCHEMA_TOKENS = 16_384;
     private static final List<String> DISCOVERY_PRIMITIVES = List.of(
             "list_capabilities",
             "tool_search",
@@ -38,26 +41,40 @@ public class AgentContextPolicy {
 
     private final JdbcClient jdbc;
     private final ToolRegistry tools;
+    private final CapabilityLeasePlanner leases;
 
-    public AgentContextPolicy(JdbcClient jdbc, ToolRegistry tools) {
+    public AgentContextPolicy(
+            JdbcClient jdbc,
+            ToolRegistry tools,
+            CapabilityLeasePlanner leases
+    ) {
         this.jdbc = jdbc;
         this.tools = tools;
+        this.leases = leases;
     }
 
     public ContextSeed seedFor(String runId) {
-        LinkedHashSet<String> leased =
-                new LinkedHashSet<>(DISCOVERY_PRIMITIVES);
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
         for (String path : recentInspectedPaths(runId)) {
             tools.all().stream()
                     .filter(binding ->
                             binding.capabilityPath().equals(path))
                     .findFirst()
                     .ifPresent(binding ->
-                            leased.add(binding.manifest().name()));
+                            candidates.add(binding.manifest().name()));
         }
+        LeasePlan lease = leases.plan(
+                DISCOVERY_PRIMITIVES,
+                new ArrayList<>(candidates),
+                MAX_CAPABILITY_SCHEMA_TOKENS
+        );
         return new ContextSeed(
                 SYSTEM_INSTRUCTION,
-                new ArrayList<>(leased)
+                lease.toolNames(),
+                ContextBudget.defaults(),
+                lease.maxSchemaTokens(),
+                lease.estimatedSchemaTokens(),
+                lease.omittedCandidateCount()
         );
     }
 
@@ -74,7 +91,7 @@ public class AgentContextPolicy {
                 LIMIT :limit
                 """)
                 .param("runId", runId)
-                .param("limit", RECENT_ACTIVATION_LIMIT)
+                .param("limit", RECENT_ACTIVATION_CANDIDATE_LIMIT)
                 .query(String.class)
                 .list();
     }

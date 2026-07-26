@@ -101,6 +101,13 @@ flowchart TB
 
 SQLite 是业务真相，不是缓存。文件内容留在 Workspace，数据库只保存逻辑路径、版本、hash、checkpoint 与 artifact 引用。秘密进入 Windows Credential Manager、DPAPI 包装存储或后续验证过的等价机制，不进入 SQLite 明文字段。
 
+“SQLite 是首版真相”是当前实现基线，不是对最终存储形态的永久承诺。Iris 后续必须用真实
+负载评估整条数据路径：token/event 写放大、单写者等待、ConversationView 水合 P95、
+长历史索引体积、崩溃恢复时间和投影重建成本。只有测量证明结构化事实表成为瓶颈时，
+才比较批量事件、追加日志（如 JSONL）、冷热分层或更适合 Agent 工作负载的存储；任何
+替换仍须保留事务 claim、幂等、审批竞争、条件状态迁移和可重建投影这些语义。不能只因
+“追加文件更原生”就把数据库能力搬进应用代码重造。
+
 首版缓存全部在进程内且可丢失：
 
 - Capability 文本索引；

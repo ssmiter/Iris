@@ -3,10 +3,14 @@ package com.iris.conversation.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.conversation.application.ConversationCommandService;
+import com.iris.conversation.application.CompactionCommandService;
 import com.iris.conversation.application.ConversationEventStreamService;
 import com.iris.conversation.application.ConversationQueryService;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationRequest;
+import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationResponse;
+import com.iris.conversation.domain.ConversationCommands.CreateBranchRequest;
+import com.iris.conversation.domain.ConversationCommands.CreateBranchResponse;
 import com.iris.conversation.domain.ConversationCommands.CreateTurnRequest;
 import com.iris.conversation.domain.ConversationCommands.TurnAcceptance;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
@@ -14,6 +18,11 @@ import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
 import com.iris.conversation.domain.ConversationViews.RenameConversationResponse;
 import com.iris.agent.run.AgentRunLauncher;
+import com.iris.agent.model.CompactionLauncher;
+import com.iris.agent.model.CompactionRepository;
+import com.iris.conversation.domain.CompactionViews.CompactionView;
+import com.iris.conversation.domain.CompactionViews.CreateCompactionRequest;
+import com.iris.conversation.domain.CompactionViews.CreateCompactionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -44,19 +53,28 @@ public class ConversationController {
     private final ConversationQueryService queries;
     private final ObjectMapper objectMapper;
     private final AgentRunLauncher agentRuns;
+    private final CompactionCommandService compactionCommands;
+    private final CompactionRepository compactions;
+    private final CompactionLauncher compactionLauncher;
 
     public ConversationController(
             ConversationCommandService commands,
             ConversationEventStreamService eventStream,
             ConversationQueryService queries,
             ObjectMapper objectMapper,
-            AgentRunLauncher agentRuns
+            AgentRunLauncher agentRuns,
+            CompactionCommandService compactionCommands,
+            CompactionRepository compactions,
+            CompactionLauncher compactionLauncher
     ) {
         this.commands = commands;
         this.eventStream = eventStream;
         this.queries = queries;
         this.objectMapper = objectMapper;
         this.agentRuns = agentRuns;
+        this.compactionCommands = compactionCommands;
+        this.compactions = compactions;
+        this.compactionLauncher = compactionLauncher;
     }
 
     @GetMapping("/conversations")
@@ -123,6 +141,56 @@ public class ConversationController {
                 .map(response -> ResponseEntity
                         .status(HttpStatus.ACCEPTED)
                         .body(response));
+    }
+
+    @PostMapping("/conversations/{conversationId}/branches")
+    public Mono<ResponseEntity<CreateBranchResponse>> createBranch(
+            @PathVariable String conversationId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Valid @RequestBody CreateBranchRequest request
+    ) {
+        return Mono.fromCallable(() -> commands.createBranch(
+                        conversationId,
+                        idempotencyKey,
+                        request
+                ))
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnNext(response ->
+                        agentRuns.launch(response.rootRunId()))
+                .map(response -> ResponseEntity
+                        .status(HttpStatus.CREATED)
+                        .body(response));
+    }
+
+    @PostMapping("/conversations/{conversationId}/compactions")
+    public Mono<ResponseEntity<CreateCompactionResponse>> createCompaction(
+            @PathVariable String conversationId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Valid @RequestBody CreateCompactionRequest request
+    ) {
+        return Mono.fromCallable(() -> compactionCommands.create(
+                        conversationId,
+                        idempotencyKey,
+                        request
+                ))
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnNext(response ->
+                        compactionLauncher.launch(response.runId()))
+                .map(response -> ResponseEntity
+                        .status(HttpStatus.ACCEPTED)
+                        .body(response));
+    }
+
+    @GetMapping("/compactions/{runId}")
+    public Mono<CompactionView> compaction(@PathVariable String runId) {
+        return Mono.fromCallable(() -> compactions.view(runId)
+                        .orElseThrow(() -> new ApiProblemException(
+                                HttpStatus.NOT_FOUND,
+                                "compaction_not_found",
+                                "not_found",
+                                "找不到这次上下文整理运行。"
+                        )))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping(

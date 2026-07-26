@@ -73,6 +73,7 @@ public class ToolRuntime {
                             "找不到工具 " + invocation.toolName()
                                     + "；请先通过能力目录发现精确定义"
                     ));
+            requireExactModelExposure(invocation, binding);
             String inputHash = hash(write(input));
             RuntimeResult existing = repository.findByToolCall(
                     context.conversationId(),
@@ -93,6 +94,16 @@ public class ToolRuntime {
                     inputHash,
                     now
             ));
+            if (context.cancelled()) {
+                completeFailure(
+                        executionId,
+                        ToolOutcome.Kind.FAILED,
+                        "cancelled_before_prepare",
+                        "用户已停止当前任务，工具没有进入准备或执行阶段。",
+                        List.of()
+                );
+                return result(executionId);
+            }
 
             PreparedOperation prepared;
             try {
@@ -245,6 +256,17 @@ public class ToolRuntime {
                         "tool_execution_not_found",
                         "找不到这次工具执行"
                 ));
+    }
+
+    public boolean hasCommittedActivity(String runId) {
+        return repository.hasCommittedActivity(runId);
+    }
+
+    public int cancelBeforeExecution(String runId) {
+        Integer cancelled = transactions.execute(status ->
+                repository.cancelBeforeExecution(runId, clock.instant())
+        );
+        return cancelled == null ? 0 : cancelled;
     }
 
     private RuntimeResult resumeResolvedApproval(
@@ -429,6 +451,31 @@ public class ToolRuntime {
             );
         }
         return existing;
+    }
+
+    private void requireExactModelExposure(
+            Invocation invocation,
+            ToolBinding binding
+    ) {
+        repository.modelExposure(invocation.toolCallId())
+                .ifPresent(exposure -> {
+                    if (!exposure.toolName().equals(
+                            binding.manifest().name()
+                    )) {
+                        throw new ToolRuntimeException(
+                                "tool_exposure_name_mismatch",
+                                "ToolCall 绑定的能力名称与当前调用不一致"
+                        );
+                    }
+                    if (!exposure.manifestHash().equals(
+                            binding.manifestHash()
+                    )) {
+                        throw new ToolRuntimeException(
+                                "tool_binding_changed",
+                                "模型看到的工具定义已经变化，不能用新版本执行旧 ToolCall"
+                        );
+                    }
+                });
     }
 
     private void validatePrepared(

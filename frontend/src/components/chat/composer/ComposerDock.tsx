@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Paperclip, Send, Square } from 'lucide-react'
+import { GitBranch, Paperclip, Send, Square, X } from 'lucide-react'
 import type {
   PendingSupplement,
   PermissionMode,
@@ -13,6 +13,7 @@ interface ComposerDockProps {
   value: string
   onValueChange: (value: string) => void
   activeTurn: boolean
+  stopRequested?: boolean
   permissionMode: PermissionMode
   onPermissionModeChange: (value: PermissionMode) => void
   pendingSupplements: PendingSupplement[]
@@ -21,12 +22,16 @@ interface ComposerDockProps {
   onSendSupplement: (text: string) => void | Promise<void>
   onStop: () => void | Promise<void>
   onAttachmentRequest: () => void
+  replacementMode?: {
+    onCancel: () => void
+  }
 }
 
 export function ComposerDock({
   value,
   onValueChange,
   activeTurn,
+  stopRequested = false,
   permissionMode,
   onPermissionModeChange,
   pendingSupplements,
@@ -35,6 +40,7 @@ export function ComposerDock({
   onSendSupplement,
   onStop,
   onAttachmentRequest,
+  replacementMode,
 }: ComposerDockProps) {
   const [submitting, setSubmitting] = useState(false)
   const canSubmit = value.trim().length > 0 && !submitting
@@ -56,6 +62,28 @@ export function ComposerDock({
   return (
     <div className="shrink-0 border-t border-border bg-canvas/92 px-[var(--page-gutter)] pb-3 pt-2 backdrop-blur-md">
       <div className="mx-auto w-full max-w-conversation">
+        {replacementMode && (
+          <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-small text-ink">
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <GitBranch
+                aria-hidden="true"
+                className="h-4 w-4 shrink-0 text-primary"
+              />
+              <span className="truncate">
+                修改这条提问会保留原对话，并从这里创建新分支
+              </span>
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label="取消从这里改问"
+              onClick={replacementMode.onCancel}
+            >
+              <X aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
         <SupplementQueueTray
           items={pendingSupplements}
           onCancel={onCancelSupplement}
@@ -69,7 +97,9 @@ export function ComposerDock({
               placeholder={
                 activeTurn
                   ? '补充当前任务，将在下一个安全边界送入…'
-                  : '告诉 Iris 你想处理什么…'
+                  : replacementMode
+                    ? '修改提问并从这里继续…'
+                    : '告诉 Iris 你想处理什么…'
               }
               aria-label={activeTurn ? '补充当前任务' : '发送消息给 Iris'}
               onChange={(event) => onValueChange(event.target.value)}
@@ -105,6 +135,7 @@ export function ComposerDock({
                 size="icon"
                 className="h-9 w-9 rounded-full"
                 aria-label="停止当前任务"
+                disabled={stopRequested}
                 onClick={onStop}
               >
                 <Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />

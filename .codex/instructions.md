@@ -62,10 +62,10 @@
 
 ```bash
 # 后端
-cd backend && mvn spring-boot:run        # :5001
+cd backend && mvn spring-boot:run        # :15001
 
 # 前端
-cd frontend && npm install && npm run dev  # :5173，/api 代理 :5001
+cd frontend && npm install && npm run dev  # :15173，/api 代理 :15001
 
 # WebBridge daemon
 cd webbridge-daemon && npm install && npm start  # :9223

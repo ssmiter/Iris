@@ -84,6 +84,36 @@ RenderNode 的公共索引字段独立保存，安全联合类型 body 保存 JS
 
 但表与 View 容器先存在，2.3–2.6 只需写事实和 projection，不推翻 API 数据形状。
 
+## 8. Branch 位置语义
+
+`replace_user_message` 分支不复制祖先 Message/Turn，也不把旧尾部搬到新 Branch。
+Backend 保存一条不可变 fork anchor：
+
+```text
+branch_id
+parent_branch_id
+source_branch_id
+anchor_message_id
+source_turn_id
+source_event_sequence
+base_context_frame_id
+mode=replace_user_message
+```
+
+选中 Branch 的可见历史由 branch path 动态求得：当前 Branch 的全部 Turn，加上每层
+祖先 Branch 中严格早于下一层 `source_event_sequence` 的 Turn。锚点用户消息本身不
+继承，由新 Branch 的 replacement Turn 替代；旧锚点及其尾部仍完整留在 source
+Branch。
+
+`base_context_frame_id` 从 source Branch 的 Context Frame parent 链中选择：
+`waterline_sequence < source_event_sequence` 的最近节点。它在 Branch 创建时固定；
+父分支之后产生的新 Compact Frame 不得追溯性改变已经存在的子分支。
+
+ConversationView、分页锚点、ModelContext 和 Compact cutoff 必须复用这一位置规则，
+不能各自按 `branch_id = selectedBranch` 实现一套近似逻辑。创建分支时要求 source
+Branch 当前没有活动 Turn，并用 Conversation version 做乐观并发；命令幂等重放不
+创建第二个 Branch 或 Run。
+
 ## 8. 验证
 
 2026-07-24 与节点 2.1 统一验证：

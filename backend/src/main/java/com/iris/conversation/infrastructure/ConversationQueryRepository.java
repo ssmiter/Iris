@@ -9,6 +9,8 @@ import com.iris.conversation.domain.ConversationViews.BranchSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
+import com.iris.conversation.domain.ConversationViews.FailureView;
+import com.iris.conversation.domain.ConversationViews.ForkAnchor;
 import com.iris.conversation.domain.ConversationViews.RequestView;
 import com.iris.conversation.domain.ConversationViews.RoundStats;
 import com.iris.conversation.domain.ConversationViews.RoundView;
@@ -33,10 +35,19 @@ import java.util.Optional;
 public class ConversationQueryRepository {
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
+    private final SupplementRepository supplements;
+    private final TurnStopRepository stops;
 
-    public ConversationQueryRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
+    public ConversationQueryRepository(
+            JdbcClient jdbc,
+            ObjectMapper objectMapper,
+            SupplementRepository supplements,
+            TurnStopRepository stops
+    ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.supplements = supplements;
+        this.stops = stops;
     }
 
     public ConversationSummary summary(String conversationId) {
@@ -217,7 +228,7 @@ public class ConversationQueryRepository {
                 renderNodes,
                 branches(conversationId),
                 compactBoundaries,
-                Map.of(),
+                compactions(conversationId, branchId),
                 attentions,
                 pendingAttentionIds,
                 header.version(),
@@ -294,12 +305,29 @@ public class ConversationQueryRepository {
             String turnId
     ) {
         return jdbc.sql("""
+                WITH RECURSIVE branch_path(
+                    branch_id, cutoff_sequence
+                ) AS (
+                    SELECT :branchId, NULL
+                    UNION ALL
+                    SELECT cb.parent_branch_id, bf.source_event_sequence
+                    FROM branch_path path
+                    JOIN conversation_branch cb
+                      ON cb.branch_id = path.branch_id
+                    JOIN branch_fork bf
+                      ON bf.branch_id = path.branch_id
+                    WHERE cb.parent_branch_id IS NOT NULL
+                )
                 SELECT e.sequence
                 FROM conversation_event e
+                JOIN branch_path path ON path.branch_id = e.branch_id
                 WHERE e.conversation_id = :conversationId
-                  AND e.branch_id = :branchId
                   AND e.event_type = 'turn.accepted'
                   AND e.turn_id = :turnId
+                  AND (
+                    path.cutoff_sequence IS NULL
+                    OR e.sequence < path.cutoff_sequence
+                  )
                 """)
                 .param("conversationId", conversationId)
                 .param("branchId", branchId)
@@ -324,6 +352,19 @@ public class ConversationQueryRepository {
                 ? ""
                 : " AND e.sequence < :beforeSequence ";
         JdbcClient.StatementSpec statement = jdbc.sql("""
+                WITH RECURSIVE branch_path(
+                    branch_id, cutoff_sequence
+                ) AS (
+                    SELECT :branchId, NULL
+                    UNION ALL
+                    SELECT cb.parent_branch_id, bf.source_event_sequence
+                    FROM branch_path path
+                    JOIN conversation_branch cb
+                      ON cb.branch_id = path.branch_id
+                    JOIN branch_fork bf
+                      ON bf.branch_id = path.branch_id
+                    WHERE cb.parent_branch_id IS NOT NULL
+                )
                 SELECT
                     t.turn_id, t.branch_id, t.request_message_id, t.root_run_id,
                     t.phase, t.version, t.started_at, t.ended_at,
@@ -334,8 +375,12 @@ public class ConversationQueryRepository {
                   ON e.conversation_id = t.conversation_id
                  AND e.turn_id = t.turn_id
                  AND e.event_type = 'turn.accepted'
+                JOIN branch_path path ON path.branch_id = t.branch_id
                 WHERE t.conversation_id = :conversationId
-                  AND t.branch_id = :branchId
+                  AND (
+                    path.cutoff_sequence IS NULL
+                    OR e.sequence < path.cutoff_sequence
+                  )
                 """ + beforeClause + """
                 ORDER BY e.sequence DESC
                 LIMIT :limit
@@ -412,6 +457,11 @@ public class ConversationQueryRepository {
         ));
         List<JsonNode> turnNodes = renderNodes(row.turnId());
         List<String> attentionIds = pendingAttentionIds(row.turnId());
+        FailureView failure = turnRuns.stream()
+                .filter(run -> run.runId().equals(row.rootRunId()))
+                .findFirst()
+                .map(RunView::failure)
+                .orElse(null);
         return new TurnView(
                 row.turnId(),
                 row.branchId(),
@@ -424,8 +474,11 @@ public class ConversationQueryRepository {
                         .map(node -> node.path("nodeId").asText())
                         .toList(),
                 attentionIds,
-                null,
-                List.of(),
+                stops.findByTurn(row.turnId()).orElse(null),
+                failure,
+                supplements.viewsForTurn(row.turnId()).stream()
+                        .map(view -> (Object) view)
+                        .toList(),
                 new TurnStats(
                         roundsForTurn(turnRuns, roundsById),
                         toolCallsForTurn(turnNodes),
@@ -439,9 +492,18 @@ public class ConversationQueryRepository {
 
     public RunView runView(String runId) {
         return jdbc.sql("""
-                SELECT r.*, d.*
+                SELECT r.*, d.*,
+                       f.code AS failure_code,
+                       f.category AS failure_category,
+                       f.user_message AS failure_user_message,
+                       f.trace_id AS failure_trace_id,
+                       f.source AS failure_source,
+                       f.recovery_action AS failure_recovery_action,
+                       f.side_effect_outcome AS failure_side_effect_outcome,
+                       f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.run_id = :runId
                 """)
                 .param("runId", runId)
@@ -452,9 +514,18 @@ public class ConversationQueryRepository {
 
     private List<RunView> runs(String turnId) {
         return jdbc.sql("""
-                SELECT r.*, d.*
+                SELECT r.*, d.*,
+                       f.code AS failure_code,
+                       f.category AS failure_category,
+                       f.user_message AS failure_user_message,
+                       f.trace_id AS failure_trace_id,
+                       f.source AS failure_source,
+                       f.recovery_action AS failure_recovery_action,
+                       f.side_effect_outcome AS failure_side_effect_outcome,
+                       f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.turn_id = :turnId
                 ORDER BY r.started_at, r.run_id
                 """)
@@ -492,12 +563,30 @@ public class ConversationQueryRepository {
                 ),
                 null,
                 List.of(),
-                null,
+                mapFailure(rs),
                 rs.getLong("version"),
                 Instant.parse(rs.getString("started_at")),
                 rs.getString("ended_at") == null
                         ? null
                         : Instant.parse(rs.getString("ended_at"))
+        );
+    }
+
+    private FailureView mapFailure(java.sql.ResultSet rs)
+            throws java.sql.SQLException {
+        String code = rs.getString("failure_code");
+        if (code == null) {
+            return null;
+        }
+        return new FailureView(
+                code,
+                rs.getString("failure_category"),
+                rs.getString("failure_user_message"),
+                rs.getString("failure_trace_id"),
+                rs.getString("failure_source"),
+                rs.getString("failure_recovery_action"),
+                rs.getString("failure_side_effect_outcome"),
+                rs.getString("failure_details_ref")
         );
     }
 
@@ -569,6 +658,7 @@ public class ConversationQueryRepository {
     public static String visibleRoundPhase(String phase) {
         return switch (phase) {
             case "completed" -> "settled";
+            case "stopped" -> "stopped";
             case "failed" -> "failed";
             default -> "active";
         };
@@ -612,7 +702,10 @@ public class ConversationQueryRepository {
 
     private List<BranchSummary> branches(String conversationId) {
         return jdbc.sql("""
-                SELECT b.*,
+                SELECT b.*, bf.mode, bf.anchor_message_id,
+                       bf.source_turn_id, bf.source_event_sequence,
+                       bf.base_context_frame_id,
+                       base_frame.waterline_sequence AS base_waterline_sequence,
                     (
                         SELECT t.turn_id FROM conversation_turn t
                         JOIN conversation_event e
@@ -622,6 +715,9 @@ public class ConversationQueryRepository {
                         ORDER BY e.sequence DESC LIMIT 1
                     ) AS head_turn_id
                 FROM conversation_branch b
+                LEFT JOIN branch_fork bf ON bf.branch_id = b.branch_id
+                LEFT JOIN context_frame base_frame
+                  ON base_frame.frame_id = bf.base_context_frame_id
                 WHERE b.conversation_id = :conversationId
                 ORDER BY b.created_at, b.branch_id
                 """)
@@ -629,7 +725,16 @@ public class ConversationQueryRepository {
                 .query((rs, rowNum) -> new BranchSummary(
                         rs.getString("branch_id"),
                         rs.getString("parent_branch_id"),
-                        null,
+                        rs.getString("mode") == null
+                                ? null
+                                : new ForkAnchor(
+                                        rs.getString("mode"),
+                                        rs.getString("anchor_message_id"),
+                                        rs.getString("source_turn_id"),
+                                        rs.getLong("source_event_sequence"),
+                                        rs.getString("base_context_frame_id"),
+                                        rs.getLong("base_waterline_sequence")
+                                ),
                         rs.getString("head_turn_id"),
                         rs.getString("status"),
                         rs.getLong("version")
@@ -642,22 +747,57 @@ public class ConversationQueryRepository {
             String branchId
     ) {
         return jdbc.sql("""
-                SELECT * FROM compact_boundary
-                WHERE conversation_id = :conversationId AND branch_id = :branchId
-                ORDER BY created_at, boundary_id
+                WITH RECURSIVE frame_chain(
+                    frame_id, parent_frame_id, waterline_sequence
+                ) AS (
+                    SELECT frame.frame_id, frame.parent_frame_id,
+                           frame.waterline_sequence
+                    FROM branch_context_head head
+                    JOIN context_frame frame
+                      ON frame.frame_id = head.frame_id
+                    WHERE head.branch_id = :branchId
+
+                    UNION ALL
+
+                    SELECT parent.frame_id, parent.parent_frame_id,
+                           parent.waterline_sequence
+                    FROM frame_chain child
+                    JOIN context_frame parent
+                      ON parent.frame_id = child.parent_frame_id
+                )
+                SELECT cb.*, cs.summary_text,
+                       chain.waterline_sequence AS sequence,
+                       chain.parent_frame_id
+                FROM compact_boundary cb
+                JOIN compact_summary cs ON cs.boundary_id = cb.boundary_id
+                JOIN frame_chain chain ON chain.frame_id = cb.frame_id
+                WHERE cb.conversation_id = :conversationId
+                ORDER BY chain.waterline_sequence, cb.boundary_id
                 """)
                 .param("conversationId", conversationId)
                 .param("branchId", branchId)
                 .query((rs, rowNum) -> {
                     ObjectNode node = objectMapper.createObjectNode();
                     node.put("boundaryId", rs.getString("boundary_id"));
+                    node.put("contextFrameId", rs.getString("frame_id"));
+                    node.put(
+                            "parentContextFrameId",
+                            rs.getString("parent_frame_id")
+                    );
+                    node.put("branchId", rs.getString("branch_id"));
                     node.put("beforeTurnId", rs.getString("before_turn_id"));
+                    node.put("waterlineSequence", rs.getLong("sequence"));
+                    node.put(
+                            "inherited",
+                            !branchId.equals(rs.getString("branch_id"))
+                    );
                     node.put("trigger", rs.getString("trigger"));
                     node.put("coveredCount", rs.getInt("covered_count"));
                     node.put(
                             "summaryArtifactRef",
                             rs.getString("summary_artifact_ref")
                     );
+                    node.put("summary", rs.getString("summary_text"));
                     node.put("version", rs.getLong("version"));
                     return (JsonNode) node;
                 })
@@ -686,6 +826,96 @@ public class ConversationQueryRepository {
         return result;
     }
 
+    private Map<String, JsonNode> compactions(
+            String conversationId,
+            String branchId
+    ) {
+        Map<String, JsonNode> result = new LinkedHashMap<>();
+        jdbc.sql("""
+                SELECT run.*, source.fact_count,
+                       source.estimated_tokens
+                FROM compaction_run run
+                JOIN compaction_source_snapshot source
+                  ON source.snapshot_id = run.source_snapshot_id
+                WHERE run.conversation_id = :conversationId
+                  AND run.branch_id = :branchId
+                ORDER BY run.requested_at, run.run_id
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .query((rs, rowNum) -> {
+                    ObjectNode node = objectMapper.createObjectNode();
+                    node.put("runId", rs.getString("run_id"));
+                    node.put(
+                            "conversationId",
+                            rs.getString("conversation_id")
+                    );
+                    node.put("branchId", rs.getString("branch_id"));
+                    node.put("phase", rs.getString("phase"));
+                    node.put(
+                            "parentContextFrameId",
+                            rs.getString("parent_frame_id")
+                    );
+                    node.put(
+                            "sourceStartSequence",
+                            rs.getLong("source_start_sequence")
+                    );
+                    node.put(
+                            "waterlineSequence",
+                            rs.getLong("waterline_sequence")
+                    );
+                    node.put(
+                            "beforeTurnId",
+                            rs.getString("before_turn_id")
+                    );
+                    node.put(
+                            "sourceSnapshotId",
+                            rs.getString("source_snapshot_id")
+                    );
+                    node.put("sourceFactCount", rs.getInt("fact_count"));
+                    node.put(
+                            "estimatedInputTokens",
+                            rs.getInt("estimated_tokens")
+                    );
+                    putNullable(
+                            node,
+                            "compactBoundaryId",
+                            rs.getString("compact_boundary_id")
+                    );
+                    String failure = rs.getString("failure_json");
+                    if (failure == null) {
+                        node.putNull("failure");
+                    } else {
+                        node.set("failure", readJson(failure));
+                    }
+                    node.put("version", rs.getLong("version"));
+                    node.put(
+                            "requestedAt",
+                            rs.getString("requested_at")
+                    );
+                    putNullable(node, "endedAt", rs.getString("ended_at"));
+                    return Map.entry(
+                            rs.getString("run_id"),
+                            (JsonNode) node
+                    );
+                })
+                .list()
+                .forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        return result;
+    }
+
+    private void putNullable(
+            ObjectNode node,
+            String field,
+            String value
+    ) {
+        if (value == null) {
+            node.putNull(field);
+        } else {
+            node.put(field, value);
+        }
+    }
+
     private String latestEventId(String conversationId) {
         return jdbc.sql("""
                 SELECT event_id FROM conversation_event
@@ -707,11 +937,29 @@ public class ConversationQueryRepository {
             return false;
         }
         return jdbc.sql("""
-                SELECT COUNT(*) FROM conversation_event
-                WHERE conversation_id = :conversationId
-                  AND branch_id = :branchId
-                  AND event_type = 'turn.accepted'
-                  AND sequence < :oldestSequence
+                WITH RECURSIVE branch_path(
+                    branch_id, cutoff_sequence
+                ) AS (
+                    SELECT :branchId, NULL
+                    UNION ALL
+                    SELECT cb.parent_branch_id, bf.source_event_sequence
+                    FROM branch_path path
+                    JOIN conversation_branch cb
+                      ON cb.branch_id = path.branch_id
+                    JOIN branch_fork bf
+                      ON bf.branch_id = path.branch_id
+                    WHERE cb.parent_branch_id IS NOT NULL
+                )
+                SELECT COUNT(*)
+                FROM conversation_event e
+                JOIN branch_path path ON path.branch_id = e.branch_id
+                WHERE e.conversation_id = :conversationId
+                  AND e.event_type = 'turn.accepted'
+                  AND e.sequence < :oldestSequence
+                  AND (
+                    path.cutoff_sequence IS NULL
+                    OR e.sequence < path.cutoff_sequence
+                  )
                 """)
                 .param("conversationId", conversationId)
                 .param("branchId", branchId)

@@ -108,6 +108,23 @@ arguments 规则：
 网络断开时已展示的 delta 可以作为 transient projection，但不是已提交事实。
 恢复时重新发起新的 attempt；旧 attempt 标记 interrupted，不把两次流拼成一条。
 
+### 5.1 有界重试
+
+Provider 重试发生在 ModelAttempt 边界，不发生在字节流内部：
+
+- 只有 Provider 明确标记 `retryable` 的临时错误与本地 provider timeout 可重试；
+- protocol、认证、请求拒绝、prompt-too-large 与用户 Stop 不重试；
+- 同一 Round 首版最多创建 3 个 Attempt，每次都有独立 `attempt_id / index / phase /
+  error_category`；
+- 旧 Attempt 先持久化失败；已展示的半截 Answer 追加
+  `render_node.invalidated`，新 Attempt 使用新的节点，绝不拼接；
+- 重试复用旧 Attempt 已冻结的 `context_hash + capability_lease_hash + ModelRequest`
+  内容，只替换 attempt identity，避免重试期间重新发现能力或改变用户视野；
+- ToolCall 只有 Attempt 完整提交后才成为 canonical fact，因此流阶段失败不会启动工具；
+  一旦 Attempt 已提交，任何后续投影或工具错误都不得走 Provider 重试；
+- 多 Provider fallback 以后也必须遵循同一 Attempt 隔离，但只有显式配置的 route
+  才能切换 profile；首版不把任意可用模型当作隐式 fallback。
+
 ## 6. Tool 配对
 
 每个 ToolCall 恰好关联一个 ToolExecution，并最终形成一个 ToolObservation：
@@ -159,6 +176,17 @@ tool_observation
 原始 provider 流和 thinking 原文默认不持久化到安全 projection。需要审计的
 provider metadata 先清洗再存；秘密与 header 永不入库。
 
+### 8.1 Stop 的双层取消
+
+StopRequest 是持久事实，进程内 `RunCancellationRegistry` 只是低延迟加速器：
+
+- 活跃 provider Flux 订阅取消信号，迟到 delta 不得越过 attempt commit；
+- 被取消的 streaming attempt 闭合为 `user_cancelled`，对应 Round 进入 `stopped`；
+- registry 丢失时，启动恢复仍从 StopRequest 重建，不把内存 signal 当成真相；
+- 尚未执行的 ToolCall 形成可审计失败 observation；已进入 execute/verify 的动作继续
+  核验，StopRequest 暂处 `draining`；
+- 正常完成、失败或停止后清理进程内 registry，不在 Reactor 终结回调中执行 JDBC。
+
 ## 9. 首轮实现边界
 
 本轮先实现：
@@ -168,6 +196,8 @@ provider metadata 先清洗再存；秘密与 header 永不入库。
 - OpenAI-compatible 与 Anthropic 事件映射所需的稳定内部类型；
 - attempt/block/tool call/observation schema；
 - Tool arguments 完整性校验与配对规则；
+- response model identity、stop reason、tool block 与 ToolCall ordinal 必须与
+  当前 attempt 精确一致，任何漂移都在写入 block/tool fact 前 fail-close；
 - Tool Runtime terminal outcome → observation 格式。
 
 随后再接真实 provider HTTP stream 与 Round scheduler。这样先固定可测试的协议和
@@ -208,7 +238,10 @@ awaiting_tools -> ToolRuntime -> terminal observations -> completed
 
 等待审批不是错误，也不伪造 observation；再次推进同一 Round 时复用同一个
 toolCall/execution。处于不明确中间态的 Round 不猜测继续，而由恢复器显式终止旧
-attempt，保留事实后再决定是否创建新 Round。
+attempt，保留事实后再决定是否创建新 Round。进程丢失时，`streaming` attempt 先
+持久化为 `interrupted`；对应半截 Answer projection 与在线流失败采用同一失效
+语义：历史 delta/event 仍保留，但当前投影被删除并追加 `render_node.invalidated`，
+不能在水合后伪装成一条失败但可阅读的模型答案。
 
 完成 Round 会把已提交的可见 text block 投影成 AnswerNode：含工具调用的是可选
 stage answer，无工具调用的是必需的 final answer。答案同时保存对应 assistant

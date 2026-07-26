@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -114,8 +115,28 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                             ))
                     )
                     .bodyToFlux(SSE_TYPE)
-                    .flatMapIterable(event -> mapEvent(mapper, event.data()));
+                    .flatMapIterable(event -> mapEvent(mapper, event.data()))
+                    .onErrorMap(this::normalizeStreamError);
         });
+    }
+
+    private Throwable normalizeStreamError(Throwable error) {
+        if (error instanceof ModelProviderException
+                || error instanceof ModelProtocolException) {
+            return error;
+        }
+        if (error instanceof WebClientRequestException) {
+            return new ModelProviderException(
+                    "provider_unavailable",
+                    true,
+                    "Model provider connection failed"
+            );
+        }
+        return new ModelProviderException(
+                "provider_stream_failed",
+                false,
+                "Model provider stream could not be decoded"
+        );
     }
 
     private List<ModelStreamEvent> mapEvent(
@@ -147,7 +168,7 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", modelId());
         body.put("stream", true);
-        body.put("max_completion_tokens", properties.getMaxOutputTokens());
+        body.put("max_tokens", properties.getMaxOutputTokens());
         body.putObject("stream_options").put("include_usage", true);
         ArrayNode messages = body.putArray("messages");
         for (ProviderMessage message : conversation.messages()) {
@@ -211,7 +232,8 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         int code = status.value();
         String category = switch (code) {
             case 401, 403 -> "provider_auth_failed";
-            case 408, 429 -> "provider_throttled";
+            case 408 -> "provider_timeout";
+            case 429 -> "provider_rate_limited";
             case 413 -> "prompt_too_large";
             default -> code >= 500
                     ? "provider_unavailable"

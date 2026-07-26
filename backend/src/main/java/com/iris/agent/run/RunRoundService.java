@@ -3,6 +3,7 @@ package com.iris.agent.run;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.RunEventEmitter;
+import com.iris.conversation.domain.ConversationViews.FailureView;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -17,17 +18,20 @@ public class RunRoundService {
     private final RunRoundRepository repository;
     private final TransactionTemplate transactions;
     private final RunEventEmitter events;
+    private final RunFailureRepository failures;
     private final Clock clock = Clock.systemUTC();
     private final ReentrantLock[] locks = new ReentrantLock[LOCK_COUNT];
 
     public RunRoundService(
             RunRoundRepository repository,
             TransactionTemplate transactions,
-            RunEventEmitter events
+            RunEventEmitter events,
+            RunFailureRepository failures
     ) {
         this.repository = repository;
         this.transactions = transactions;
         this.events = events;
+        this.failures = failures;
         for (int index = 0; index < LOCK_COUNT; index++) {
             locks[index] = new ReentrantLock();
         }
@@ -88,6 +92,46 @@ public class RunRoundService {
         } else {
             events.runUpdated(runId);
         }
+        return transitioned;
+    }
+
+    public RunRow failRun(
+            String runId,
+            long expectedVersion,
+            FailureView failure
+    ) {
+        if (failure == null) {
+            throw new IllegalArgumentException("FailureView is required");
+        }
+        RunRow transitioned = withLock(runId, () ->
+                transactions.execute(status -> {
+                    RunRow current = requireRun(runId);
+                    if (current.version() != expectedVersion) {
+                        throw new IllegalStateException(
+                                "Run version 已变化"
+                        );
+                    }
+                    RunStateMachine.requireTransition(
+                            current.phase(),
+                            RunPhase.FAILED
+                    );
+                    var now = clock.instant();
+                    if (!repository.transitionRun(
+                            runId,
+                            current.phase(),
+                            RunPhase.FAILED,
+                            expectedVersion,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Run failure transition 发生并发冲突"
+                        );
+                    }
+                    failures.insert(runId, failure, now);
+                    return requireRun(runId);
+                })
+        );
+        events.runSettled(runId);
         return transitioned;
     }
 

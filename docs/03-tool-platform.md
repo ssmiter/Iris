@@ -107,8 +107,12 @@ tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
 
 首个本地实现位于 `/system/capabilities`，三个发现原语本身始终处于基础 lease。
 `read_capability` 成功 observation 会成为下一 ModelAttempt 扩展 schema lease 的唯一
-依据；仅搜索或列目录不会激活目标 schema。激活集合按最近使用有界保留，避免长对话
-把曾经检查过的所有工具永久泄露进上下文。
+依据；仅搜索或列目录不会激活目标 schema。三个发现原语是不可逐出的 required
+集合；其余候选按最近成功 inspect 的顺序，在独立的 schema token budget 内逐个准入。
+超出预算的 Definition 不进入本轮 Exposure，但不会从目录或历史中删除；后续 Round
+仍可重新 inspect。候选数量上限只用于约束查询成本，不能替代 token budget。这样既
+避免长对话把曾经检查过的所有工具永久泄露进上下文，也避免少数巨型 schema 挤掉
+用户请求和工具观察。
 
 **搜索索引首版基线**：内存倒排（name、description、中英文 description、目录段、参数属性名）。先用召回率、误选率、schema token 成本和启动耗时观察真实数据，再决定是否引入 Lucene 或向量检索。
 
@@ -122,7 +126,8 @@ Capability Card → inspected Manifest → active schema lease
 
 - Card 只给 ID、path、kind、description、version、risk 与 availability；
 - inspect 一次只读取少量精确 Definition，数量由 schema token budget 和任务歧义决定，不写成协议硬上限；
-- active schema 受 Context token budget 和 Model Step lease 限制；
+- active schema 先受独立 schema token budget 限制，再与历史事实共同接受整个
+  Context Window 预算；预算决策和遗漏数量进入不可变 Context snapshot；
 - 下一 Model Step 重新计算相关性，未继续使用的 schema 逐出；
 - canonical ToolCall/Exposure 永久保存 provenance；CompactBoundary 只带 source range、summary/fact refs 和明确需要的少量 capability hints，不复制全部历史 ID 或 schema；
 - Pipeline pin 精确 Definition snapshot/hash 和依赖 Manifest version，不依赖模型工作集里“碰巧还留着”；

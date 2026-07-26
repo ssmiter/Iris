@@ -19,7 +19,8 @@ public final class ConversationViews {
             String rootRunId,
             List<String> renderNodeIds,
             List<String> pendingAttentionIds,
-            Object failure,
+            Object stop,
+            FailureView failure,
             List<Object> supplements,
             TurnStats stats,
             long version
@@ -54,7 +55,7 @@ public final class ConversationViews {
             RunBudget budget,
             String outputRef,
             List<String> evidenceRefs,
-            Object failure,
+            FailureView failure,
             long version,
             Instant startedAt,
             Instant endedAt
@@ -75,6 +76,18 @@ public final class ConversationViews {
             int toolCallsLimit,
             long elapsedMs,
             long timeLimitMs
+    ) {
+    }
+
+    public record FailureView(
+            String code,
+            String category,
+            String userMessage,
+            String traceId,
+            String source,
+            String recoveryAction,
+            String sideEffectOutcome,
+            String detailsRef
     ) {
     }
 
@@ -113,10 +126,20 @@ public final class ConversationViews {
     public record BranchSummary(
             String branchId,
             String parentBranchId,
-            Object forkAnchor,
+            ForkAnchor forkAnchor,
             String headTurnId,
             String status,
             long version
+    ) {
+    }
+
+    public record ForkAnchor(
+            String mode,
+            String anchorMessageId,
+            String sourceTurnId,
+            long sourceEventSequence,
+            String baseContextFrameId,
+            long baseWaterlineSequence
     ) {
     }
 

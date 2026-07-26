@@ -7,10 +7,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationRequest;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationResponse;
+import com.iris.conversation.domain.ConversationCommands.CreateBranchRequest;
+import com.iris.conversation.domain.ConversationCommands.CreateBranchResponse;
 import com.iris.conversation.domain.ConversationCommands.CreateTurnRequest;
 import com.iris.conversation.domain.ConversationCommands.TurnAcceptance;
 import com.iris.conversation.domain.ConversationEvent;
 import com.iris.conversation.domain.ConversationViews.RequestView;
+import com.iris.conversation.domain.ConversationViews.BranchSummary;
+import com.iris.conversation.domain.ConversationViews.ForkAnchor;
 import com.iris.conversation.domain.ConversationViews.RunBudget;
 import com.iris.conversation.domain.ConversationViews.RunDefinition;
 import com.iris.conversation.domain.ConversationViews.RunView;
@@ -37,6 +41,8 @@ import java.util.UUID;
 public final class ConversationCommandService {
     private static final String CREATE_ENDPOINT = "POST:/api/v1/conversations";
     private static final String TURN_ENDPOINT = "POST:/api/v1/conversations/{id}/turns";
+    private static final String BRANCH_ENDPOINT =
+            "POST:/api/v1/conversations/{id}/branches";
     private static final String RENAME_ENDPOINT = "PATCH:/api/v1/conversations/{id}";
 
     private final ConversationRepository repository;
@@ -120,6 +126,52 @@ public final class ConversationCommandService {
         }
         eventHub.publish(result.events());
         return result.acceptance();
+    }
+
+    public CreateBranchResponse createBranch(
+            String conversationId,
+            String idempotencyKey,
+            CreateBranchRequest request
+    ) {
+        requireIdempotencyKey(idempotencyKey);
+        if (request.expectedConversationVersion() < 1) {
+            throw new ApiProblemException(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_request",
+                    "validation",
+                    "expectedConversationVersion 必须为正数。"
+            );
+        }
+        String requestHash = hash(request);
+        BranchResult result = locks.withLock(conversationId, () ->
+                transactions.execute(status -> repository
+                        .findIdempotency(
+                                conversationId,
+                                BRANCH_ENDPOINT,
+                                idempotencyKey
+                        )
+                        .map(record -> new BranchResult(
+                                replay(
+                                        record,
+                                        requestHash,
+                                        CreateBranchResponse.class
+                                ),
+                                List.of()
+                        ))
+                        .orElseGet(() -> createBranchOnce(
+                                conversationId,
+                                idempotencyKey,
+                                requestHash,
+                                request
+                        )))
+        );
+        if (result == null) {
+            throw new IllegalStateException(
+                    "Branch transaction returned no result"
+            );
+        }
+        eventHub.publish(result.events());
+        return result.response();
     }
 
     public RenameConversationResponse renameConversation(
@@ -263,6 +315,7 @@ public final class ConversationCommandService {
                 runId,
                 List.of(),
                 List.of(),
+                null,
                 null,
                 List.of(),
                 new TurnStats(0, 0, 0, now, null),
@@ -436,6 +489,256 @@ public final class ConversationCommandService {
         return new RenameResult(response, List.of(event));
     }
 
+    private BranchResult createBranchOnce(
+            String conversationId,
+            String idempotencyKey,
+            String requestHash,
+            CreateBranchRequest request
+    ) {
+        ConversationRepository.ConversationMetadata metadata =
+                repository.findConversationMetadata(conversationId)
+                        .orElseThrow(() -> new ApiProblemException(
+                                HttpStatus.NOT_FOUND,
+                                "conversation_not_found",
+                                "not_found",
+                                "找不到这个对话。"
+                        ));
+        if (metadata.version() != request.expectedConversationVersion()) {
+            throw new ApiProblemException(
+                    HttpStatus.CONFLICT,
+                    "stale_version",
+                    "conflict",
+                    "对话已经发生变化，请刷新后再创建分支。",
+                    java.util.Map.of(
+                            "currentVersion",
+                            metadata.version()
+                    )
+            );
+        }
+        if (!repository.branchBelongsToConversation(
+                request.sourceBranchId(),
+                conversationId
+        )) {
+            throw new ApiProblemException(
+                    HttpStatus.CONFLICT,
+                    "branch_not_in_conversation",
+                    "precondition",
+                    "源分支不属于这个对话。"
+            );
+        }
+        if (repository.hasActiveTurn(
+                conversationId,
+                request.sourceBranchId()
+        )) {
+            throw new ApiProblemException(
+                    HttpStatus.CONFLICT,
+                    "branch_source_active",
+                    "precondition",
+                    "源分支仍有任务在运行，请先停止或等待它结束。"
+            );
+        }
+        ConversationRepository.BranchAnchor anchor = repository
+                .findBranchAnchor(
+                        conversationId,
+                        request.sourceBranchId(),
+                        request.anchorMessageId()
+                )
+                .orElseThrow(() -> new ApiProblemException(
+                        HttpStatus.NOT_FOUND,
+                        "branch_anchor_not_found",
+                        "not_found",
+                        "找不到源分支上的用户消息锚点。"
+                ));
+
+        Instant now = clock.instant();
+        String commandId = id("cmd");
+        String branchId = id("branch");
+        String turnId = id("turn");
+        String messageId = id("msg");
+        String runId = id("run");
+        ConversationRepository.ContextFrame baseFrame =
+                repository.eligibleContextFrame(
+                        conversationId,
+                        request.sourceBranchId(),
+                        anchor.sourceEventSequence()
+                );
+        repository.insertBranch(
+                branchId,
+                conversationId,
+                request.sourceBranchId(),
+                request.anchorMessageId(),
+                anchor.sourceTurnId(),
+                anchor.sourceEventSequence(),
+                baseFrame.frameId(),
+                now
+        );
+        repository.insertMessage(
+                messageId,
+                conversationId,
+                branchId,
+                turnId,
+                request.replacement().text().trim(),
+                "branch-replacement:" + commandId,
+                request.replacement().attachmentRefs(),
+                now
+        );
+        repository.insertTurn(
+                turnId,
+                conversationId,
+                branchId,
+                messageId,
+                runId,
+                now
+        );
+        repository.insertRootRun(
+                runId,
+                conversationId,
+                branchId,
+                turnId,
+                request.replacement().text().trim(),
+                hash("iris.agentic.default:1"),
+                hash(request.replacement()),
+                now
+        );
+        repository.incrementConversationVersion(conversationId, now);
+
+        BranchSummary branch = new BranchSummary(
+                branchId,
+                request.sourceBranchId(),
+                new ForkAnchor(
+                        "replace_user_message",
+                        request.anchorMessageId(),
+                        anchor.sourceTurnId(),
+                        anchor.sourceEventSequence(),
+                        baseFrame.frameId(),
+                        baseFrame.waterlineSequence()
+                ),
+                turnId,
+                "active",
+                1
+        );
+        TurnView turn = new TurnView(
+                turnId,
+                branchId,
+                messageId,
+                new RequestView(
+                        request.replacement().text().trim(),
+                        request.replacement().attachmentRefs()
+                ),
+                "active",
+                List.of(runId),
+                runId,
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                new TurnStats(0, 0, 0, now, null),
+                1
+        );
+        RunView run = new RunView(
+                runId,
+                turnId,
+                null,
+                runId,
+                null,
+                "agentic",
+                new RunDefinition(
+                        "iris.agentic.default",
+                        "1",
+                        hash("iris.agentic.default:1"),
+                        hash(request.replacement()),
+                        null
+                ),
+                request.replacement().text().trim(),
+                "running",
+                List.of(),
+                List.of(),
+                List.of(),
+                new RunBudget(0, 30, 0, 600_000),
+                null,
+                List.of(),
+                null,
+                1,
+                now,
+                null
+        );
+
+        long sequence = repository.nextEventSequence(conversationId);
+        ConversationEvent branchEvent = event(
+                id("evt"),
+                "branch.created",
+                conversationId,
+                branchId,
+                turnId,
+                runId,
+                sequence,
+                "branch",
+                branchId,
+                commandId,
+                runId,
+                now,
+                payload("branch", branch)
+        );
+        ConversationEvent turnEvent = event(
+                id("evt"),
+                "turn.accepted",
+                conversationId,
+                branchId,
+                turnId,
+                runId,
+                sequence + 1,
+                "turn",
+                turnId,
+                branchEvent.eventId(),
+                runId,
+                now,
+                payload("turn", turn)
+        );
+        ConversationEvent runEvent = event(
+                id("evt"),
+                "run.started",
+                conversationId,
+                branchId,
+                turnId,
+                runId,
+                sequence + 2,
+                "run",
+                runId,
+                turnEvent.eventId(),
+                runId,
+                now,
+                payload("run", run)
+        );
+        repository.insertEvent(branchEvent);
+        repository.insertEvent(turnEvent);
+        repository.insertEvent(runEvent);
+
+        CreateBranchResponse response = new CreateBranchResponse(
+                branchId,
+                request.sourceBranchId(),
+                request.anchorMessageId(),
+                messageId,
+                turnId,
+                runId,
+                now,
+                branchEvent.eventId()
+        );
+        repository.insertIdempotency(
+                conversationId,
+                BRANCH_ENDPOINT,
+                idempotencyKey,
+                requestHash,
+                HttpStatus.CREATED.value(),
+                write(response),
+                now
+        );
+        return new BranchResult(
+                response,
+                List.of(branchEvent, turnEvent, runEvent)
+        );
+    }
+
     private ConversationEvent event(
             String eventId,
             String type,
@@ -584,6 +887,12 @@ public final class ConversationCommandService {
 
     private record RenameResult(
             RenameConversationResponse response,
+            List<ConversationEvent> events
+    ) {
+    }
+
+    private record BranchResult(
+            CreateBranchResponse response,
             List<ConversationEvent> events
     ) {
     }

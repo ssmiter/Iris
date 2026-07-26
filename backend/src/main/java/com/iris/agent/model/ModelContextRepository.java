@@ -24,8 +24,10 @@ public class ModelContextRepository {
             String roundId
     ) {
         return jdbc.sql("""
-                WITH target AS (
+                WITH RECURSIVE target AS (
                     SELECT ar.created_at AS target_time,
+                           ar.run_id AS target_run_id,
+                           ar.round_index AS target_round_index,
                            e.sequence AS target_sequence
                     FROM agent_round ar
                     JOIN conversation_event e
@@ -33,24 +35,41 @@ public class ModelContextRepository {
                      AND e.event_type = 'turn.accepted'
                     WHERE ar.round_id = :roundId
                 ),
+                branch_path(branch_id, cutoff_sequence) AS (
+                    SELECT :branchId, NULL
+                    UNION ALL
+                    SELECT branch.parent_branch_id,
+                           fork.source_event_sequence
+                    FROM branch_path path
+                    JOIN conversation_branch branch
+                      ON branch.branch_id = path.branch_id
+                    JOIN branch_fork fork
+                      ON fork.branch_id = path.branch_id
+                    WHERE branch.parent_branch_id IS NOT NULL
+                ),
+                context_head AS (
+                    SELECT frame.frame_id, frame.frame_kind,
+                           frame.waterline_sequence
+                    FROM branch_context_head head
+                    JOIN context_frame frame
+                      ON frame.frame_id = head.frame_id
+                    WHERE head.branch_id = :branchId
+                ),
                 boundary AS (
                     SELECT cb.boundary_id, cs.summary_text,
-                           be.sequence AS cutoff_sequence,
+                           head.waterline_sequence AS cutoff_sequence,
                            bt.started_at AS boundary_time
-                    FROM compact_boundary cb
+                    FROM context_head head
+                    JOIN compact_boundary cb
+                      ON cb.frame_id = head.frame_id
                     JOIN compact_summary cs
                       ON cs.boundary_id = cb.boundary_id
-                    JOIN conversation_event be
-                      ON be.turn_id = cb.before_turn_id
-                     AND be.event_type = 'turn.accepted'
                     JOIN conversation_turn bt
                       ON bt.turn_id = cb.before_turn_id
                     JOIN target t
                     WHERE cb.conversation_id = :conversationId
-                      AND cb.branch_id = :branchId
-                      AND be.sequence <= t.target_sequence
-                    ORDER BY be.sequence DESC
-                    LIMIT 1
+                      AND head.frame_kind = 'compact'
+                      AND head.waterline_sequence <= t.target_sequence
                 ),
                 facts AS (
                     SELECT b.boundary_time AS fact_time,
@@ -76,11 +95,39 @@ public class ModelContextRepository {
                     JOIN conversation_event me
                       ON me.turn_id = m.turn_id
                      AND me.event_type = 'turn.accepted'
+                    JOIN branch_path path
+                      ON path.branch_id = m.branch_id
                     JOIN target t
                     WHERE m.conversation_id = :conversationId
-                      AND m.branch_id = :branchId
                       AND m.role = 'user'
-                      AND m.created_at <= t.target_time
+                      AND (
+                          path.cutoff_sequence IS NULL
+                          OR me.sequence < path.cutoff_sequence
+                      )
+                      AND (
+                          m.created_at <= t.target_time
+                          OR EXISTS (
+                              SELECT 1
+                              FROM turn_supplement s
+                              LEFT JOIN agent_round previous_round
+                                ON previous_round.round_id =
+                                   s.injected_after_round_id
+                              WHERE s.message_id = m.message_id
+                                AND s.phase = 'injected'
+                                AND (
+                                    (
+                                        s.injected_after_round_id IS NULL
+                                        AND t.target_round_index = 0
+                                    )
+                                    OR (
+                                        previous_round.run_id =
+                                            t.target_run_id
+                                        AND previous_round.round_index <
+                                            t.target_round_index
+                                    )
+                                )
+                          )
+                      )
                       AND (
                           NOT EXISTS (SELECT 1 FROM boundary)
                           OR me.sequence >= (
@@ -102,12 +149,17 @@ public class ModelContextRepository {
                     JOIN conversation_event ae
                       ON ae.turn_id = ma.turn_id
                      AND ae.event_type = 'turn.accepted'
+                    JOIN branch_path path
+                      ON path.branch_id = ar.branch_id
                     JOIN model_content_block b ON b.attempt_id = ma.attempt_id
                     LEFT JOIN model_tool_call tc ON tc.block_id = b.block_id
                     JOIN target t
                     WHERE ma.conversation_id = :conversationId
-                      AND ar.branch_id = :branchId
                       AND ma.phase = 'completed'
+                      AND (
+                          path.cutoff_sequence IS NULL
+                          OR ae.sequence < path.cutoff_sequence
+                      )
                       AND ma.ended_at < t.target_time
                       AND b.block_kind IN ('text', 'tool_call')
                       AND (
@@ -132,10 +184,15 @@ public class ModelContextRepository {
                     JOIN conversation_event oe
                       ON oe.turn_id = ma.turn_id
                      AND oe.event_type = 'turn.accepted'
+                    JOIN branch_path path
+                      ON path.branch_id = ar.branch_id
                     JOIN target t
                     WHERE ma.conversation_id = :conversationId
-                      AND ar.branch_id = :branchId
                       AND o.created_at < t.target_time
+                      AND (
+                          path.cutoff_sequence IS NULL
+                          OR oe.sequence < path.cutoff_sequence
+                      )
                       AND (
                           NOT EXISTS (SELECT 1 FROM boundary)
                           OR oe.sequence >= (

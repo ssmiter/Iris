@@ -54,4 +54,24 @@ public final class ConversationCommands {
             String eventCursor
     ) {
     }
+
+    public record CreateBranchRequest(
+            @NotBlank String sourceBranchId,
+            @NotBlank String anchorMessageId,
+            @NotNull @Valid TurnInput replacement,
+            long expectedConversationVersion
+    ) {
+    }
+
+    public record CreateBranchResponse(
+            String branchId,
+            String forkedFromBranchId,
+            String anchorMessageId,
+            String requestMessageId,
+            String turnId,
+            String rootRunId,
+            Instant acceptedAt,
+            String eventCursor
+    ) {
+    }
 }
