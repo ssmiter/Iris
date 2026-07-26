@@ -3,30 +3,35 @@
 > 当前策略：先把 reference 中已经验证过的基础语义用透，形成可恢复、可观测、可扩展
 > 的 Agent 内核。工业互联网与个人助手都是后续产品化方向；当前不按场景数量推进，也
 > 不提前建设通用工作流市场。
+>
+> **截至 2026-07-26**：M0 已跑通；M1 与 M2 的首个纵向切片已进入真实对话体验，
+> 但长对话中的分支 × 压缩水位线、复杂工具链与进程恢复仍需持续验证。下列勾选表示
+> “已有可运行实现”，不等于该能力已经产品化完成。
 
 ## M0 · 骨架可跑
-- [ ] backend：Spring Boot 工程 + `POST /api/v1/conversations/{id}/turns` + conversation SSE（接一家模型）
-- [ ] frontend：Vite React 工程 + 最小对话页（发消息、流式显示）
-- [ ] SQLite 最小事实与投影（Conversation / Message / Turn / Run / Event / RenderNode）
-- 验收：发一句话，流式回答，刷新后历史还在
+- [x] backend：Spring Boot 工程 + `POST /api/v1/conversations/{id}/turns` + conversation SSE（DeepSeek OpenAI-compatible）
+- [x] frontend：Vite React 工程 + 对话页（发消息、流式显示、失败与运行状态）
+- [x] SQLite 最小事实与投影（Conversation / Message / Turn / Run / Event / RenderNode）
+- [x] 验收：发一句话，流式回答，刷新后历史还在
 
 ## M1 · 对话内核
-- [ ] 轮次模型 + renderNodes + 瀑布流渲染（摘要行/折叠纯手动/逐字揭示）
-- [ ] 补充注入 + 排队 + 停止红线
-- [ ] 压缩线（手动 /compact）+ 分支多叉树 + 位置语义
-- [ ] 前端只持久化可丢弃 View State；分支、压缩和运行事实全部在 SQLite
-- 验收：一次长对话里完成补充、分支、压缩、回分支继续，全部无损
+- [x] 轮次模型 + renderNodes + 瀑布流渲染（摘要行/折叠纯手动/逐字揭示）
+- [x] 补充注入 + 排队 + Agentic Stop
+- [x] 压缩线 + 分支多叉树 + 位置语义的首版实现
+- [x] 前端只持久化可丢弃 View State；分支、压缩和运行事实全部在 SQLite
+- [ ] 组合验收：一次长对话里完成补充、分支、压缩、回分支继续，全部无损
 
 ## M2 · 工具平台
-- [ ] Tool 契约 + Registry + 目录即路径 + 能力树统计
-- [ ] 发现三原语 + Capability Working Set / schema lease + 系统提示元认知注入
-- [ ] 审批闸门 + 审批条 UI（两阶段退场）
+- [x] Tool 契约 + Registry + 目录即路径 + 能力树统计
+- [x] 发现三原语 + Capability Working Set / schema lease 的首版实现
+- [x] 审批闸门 + 审批条 UI
 - [ ] 足够闭环的系统原语；业务领域能力只用于验证抽象，不以数量充当效果指标
 - [ ] 只落地 2-3 个 code-defined system Pipeline，通用 DSL、自动轨迹挖掘与公共 authoring 后置
-- 验收：模型通过目录找到自己没见过的工具并正确调用；写操作必审批
+- [ ] 组合验收：模型通过目录找到自己没见过的工具并正确调用；写操作必审批
 
 ## M3 · 工作区 + 沙箱
-- [ ] 路径围栏 + 文件工具 + Checkpoint；恢复是独立受审批写动作
+- [x] 工作区路径围栏（越界 fail-close）
+- [ ] 文件工具 + Checkpoint；恢复是独立受审批写动作
 - [ ] Trusted Runner / Sandbox 边界 + staged input/output + 产物卡片
 - 验收："整理这个 Excel 并生成报告 docx"一次跑通，文件卡片可预览
 

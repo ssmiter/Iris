@@ -1,9 +1,30 @@
 # Iris
 
-> 一个属于你自己的 AI 个人助手：瀑布流对话前端 + 原生 Agentic Java 后端 + 可组合的能力网络 + 真浏览器自动化 + 本地工作区。
-> 目标：像 Claude Code 一样可靠好用，但面向**日常生活**而不是编码——订票、出行规划、秋招网申、记账、信息整理。
+> 一个本地优先的 AI Agent 产品实验：瀑布流对话前端 + 原生 Agentic Java 后端 + 可发现、可组合的能力网络 + 工作区与浏览器自动化。
+> 当前先把对话、运行、工具、审批、恢复和上下文这些基础语义做深；工业互联网与个人助手都是后续验证方向，不靠提前堆场景决定产品形态。
 >
-> 中文命名故事：Iris 是希腊神话中的彩虹女神、众神与人间的信使（"虹使"）。详见 [docs/10](docs/10-naming-and-identity.md)。
+> Iris 来自希腊神话中的彩虹女神与信使。“虹使”只保留为命名故事，不作为界面里的固定中文称谓。详见 [docs/10](docs/10-naming-and-identity.md)。
+
+## 当前阶段
+
+Iris 已经不再只是设计稿或 mock 对话。当前版本可以启动真实的 React 前端与 Spring Boot
+后端，连接 OpenAI-compatible 模型完成流式对话，并把 Conversation、Turn、Run、Round、
+模型 Attempt、工具过程、审批、分支与压缩边界持久化到 SQLite。
+
+这一阶段的目标不是宣布“通用个人助手已经完成”，而是建立一条足够真实的纵向链路：
+
+```text
+用户输入
+  → Turn / Run / Round
+  → 上下文装配与 Capability Lease
+  → 模型流 / 工具发现 / 工具执行
+  → 审批、补充或停止
+  → Answer Projection
+  → SSE 渲染与 SQLite 历史
+```
+
+第一轮应用层体验已经跑通。接下来继续用真实多轮对话验证分支与压缩水位线、复杂工具链、
+进程恢复和失败诊断，而不是在尚未使用的抽象上继续加层。
 
 ## 为什么存在
 
@@ -12,7 +33,7 @@
 1. **它们是通用的，而你的生活不是。** 官方助手面向所有人的平均水平设计；而真实生活充满了非规则化的需求——"帮我把这 300 家风马牛不相及的网申按我的优先级填掉"、"按我家的规矩记账"、"用我习惯的方式整理这一堆杂乱文件"。这些需求没有现成按钮，只能从你的生活中抽象出来。
 2. **它们的能力是封闭的，而你的问题需要组合。** 官方工具箱给什么用什么；但真正解决生活问题，往往需要把客观原语（读文件、观察页面、计算、写入、验证）按你的情境自由组合成新的能力——组合权必须在你和 Agent 手里，而不是在产品经理的路线图里。
 
-Iris 的回答：**自己造一个扎根本地的助手**。它只读你的文件、只操作你的工作区、只记住你的偏好；它的能力不是一堆按钮，而是一棵可以由你持续生长的能力树。
+Iris 的回答：**做一个扎根本地、边界清楚、能够持续生长的 Agent**。它只在明确的工作区内操作，重要写入必须审批；它的能力不是一排固定按钮，而是一棵可以按需发现、组合和演进的能力树。
 
 ## 真正要解决的问题
 
@@ -72,10 +93,10 @@ Agentic 探索出的成功轨迹，经识别前置条件、抽离偶然数据、
 |---|---|---|
 | 面向 | 编码任务 | 日常生活 / 工作琐事 |
 | 交互 | 终端文本 | 瀑布流可视化对话（自研前端） |
-| 浏览器 | 无 | 真 Chrome 窗口自动化 + 人工接管 |
-| 工具规模 | 内建 ~20 | 平台化能力树，可生长至上万 |
+| 浏览器 | 无 | 独立 WebBridge + 人工接管（建设中） |
+| 工具规模 | 内建小型工具集 | 按目录发现的能力平台（首版已运行） |
 | 工作区 | 代码仓库 | 个人文件空间 + 检查点回滚 |
-| 执行环境 | shell | Python（数据处理/文档生成） |
+| 执行环境 | shell | 工作区 + 受控执行环境（继续建设） |
 
 Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深度交互、长对话稳定性——这些要做到它的水平。但编码不是 Iris 的第一目标；它要面对的还是非规则化的日常需求。
 
@@ -89,10 +110,16 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 ## 项目现状
 
 - [x] 设计文档体系（docs/01–23，含对 Claude Code 内核与企业级后端的研究基线）
-- [x] 前端视觉与交互骨架：设计令牌、瀑布流渲染、Composer、状态管理（mock 数据驱动）
-- [x] 后端持久化 Agentic 内核：Turn 命令 + SSE、Run/Round 状态机、模型流装配、Tool Runtime + 审批、能力目录、工作区围栏
-- [ ] 前后端对接与完整闭环（进行中）
-- [ ] 分支 / 压缩 / 补充注入、生活能力板块、WebBridge、exe 产品化
+- [x] 真实前后端闭环：发送消息、SSE 流式回答、失败状态、刷新恢复与多对话列表
+- [x] 持久化 Agentic 内核：Turn / Run / Round / Attempt、模型协议装配、运行投影与恢复
+- [x] 运行中交互：补充注入、Agentic Stop、工具审批与状态回放
+- [x] 能力平台首版：目录发现三原语、Capability Lease、Tool Runtime 与工作区路径围栏
+- [x] 分支与压缩首版：Context Frame、Compact Boundary、水位线和分支位置语义
+- [ ] 长对话组合验证：补充 × 工具 × 分支 × 压缩 × 恢复仍需通过真实体验持续校准
+- [ ] 足够闭环的文件/文档原语、WebBridge 集成、具体业务板块与 Windows exe 产品化
+
+更细的完成度和验收边界见 [docs/09](docs/09-roadmap.md)。勾选表示已有可运行实现，
+不表示已经达到最终产品质量。
 
 ## 文档地图
 
@@ -115,21 +142,40 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 
 ## 技术栈
 
-- **后端**：Java 21 + Spring Boot 3（WebFlux）+ Spring Data JDBC + SQLite
+- **后端**：Java 21 + Spring Boot 3（WebFlux）+ Spring JDBC + SQLite
 - **前端**：Vite + React 18 + TypeScript + Tailwind CSS + zustand + react-virtuoso
 - **浏览器自动化**：Node.js 守护进程（CDP / Playwright，见 [docs/05](docs/05-webbridge.md) 权衡）
 - **打包**（后期）：后端自包含 jar + 内嵌前端 + Inno Setup exe
 
 ## 本地运行
 
-```bash
-# 后端 :15001（模型经 IRIS_MODEL_* 环境变量注入，密钥不入库）
-cd backend && ./mvnw spring-boot:run
+Iris 默认使用后端 `15001`、前端 `15173`，避免与常见的 `5001/5173` 开发端口冲突。
+模型配置通过环境变量或被 Git 忽略的 `backend/application-local.yml` 注入，密钥不进入仓库。
 
-# 前端 :15173（/api 代理到 :15001）
-cd frontend && npm install && npm run dev
+Windows PowerShell 示例：
+
+```powershell
+# 终端 1：后端
+$env:IRIS_MODEL_PROFILE = "deepseek-v4-flash"
+$env:IRIS_MODEL_KIND = "openai-compatible"
+$env:IRIS_MODEL_ID = "deepseek-v4-flash"
+$env:IRIS_MODEL_BASE_URL = "https://api.deepseek.com"
+$env:IRIS_MODEL_ENDPOINT_PATH = "/chat/completions"
+$env:IRIS_MODEL_API_KEY = "<your-api-key>"
+Set-Location backend
+.\mvnw.cmd spring-boot:run
+
+# 终端 2：前端
+Set-Location frontend
+npm install
+npm run dev
 ```
+
+打开 <http://127.0.0.1:15173/>。前端的 `/api` 会代理到
+<http://127.0.0.1:15001/>。
 
 ## 免责声明
 
-本项目为个人学习与个人产品项目。所有文档均为设计级原创描述，不包含任何第三方公司的代码、密钥、客户信息或专有数据。Claude Code等是研究灵感的来源，不是代码或业务的模板——实现全部为全新编写。
+本项目是持续演进中的个人产品与工程研究项目。仓库中的 Iris 实现为独立设计和编写；
+`reference/` 只保留项目作者有权使用的参考材料，用于问题驱动的研究，不作为直接复制的
+实现模板。仓库不提交 API Key、客户信息或生产环境凭据。
