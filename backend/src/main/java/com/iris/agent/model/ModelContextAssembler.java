@@ -6,6 +6,7 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.agent.model.ModelContextWindowPlanner.WindowPlan;
+import com.iris.agent.model.ToolObservationMicroCompactor.Projection;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class ModelContextAssembler {
     private final ToolRegistry tools;
     private final ObjectMapper objectMapper;
     private final ModelContextWindowPlanner windows;
+    private final ToolObservationMicroCompactor microCompactor;
     private final ModelContextSnapshotRepository snapshots;
     private final ModelTokenEstimator tokens;
     private final Clock clock = Clock.systemUTC();
@@ -34,6 +36,7 @@ public class ModelContextAssembler {
             ToolRegistry tools,
             ObjectMapper objectMapper,
             ModelContextWindowPlanner windows,
+            ToolObservationMicroCompactor microCompactor,
             ModelContextSnapshotRepository snapshots,
             ModelTokenEstimator tokens
     ) {
@@ -41,6 +44,7 @@ public class ModelContextAssembler {
         this.tools = tools;
         this.objectMapper = objectMapper;
         this.windows = windows;
+        this.microCompactor = microCompactor;
         this.snapshots = snapshots;
         this.tokens = tokens;
     }
@@ -95,9 +99,16 @@ public class ModelContextAssembler {
                 round.roundId()
         );
         String leaseHash = hash(definitions);
-        WindowPlan window = windows.plan(
+        Projection observationProjection = microCompactor.project(
+                run.conversationId(),
                 seed.systemInstruction(),
                 allItems,
+                definitions,
+                seed.budget()
+        );
+        WindowPlan window = windows.plan(
+                seed.systemInstruction(),
+                observationProjection.items(),
                 definitions,
                 seed.budget()
         );
@@ -112,7 +123,10 @@ public class ModelContextAssembler {
                 window.droppedFactCount(),
                 seed.maxCapabilityTokens(),
                 estimatedCapabilityTokens,
-                seed.omittedCapabilityCount()
+                seed.omittedCapabilityCount(),
+                observationProjection.compactedObservationCount(),
+                observationProjection.decisionsAdded(),
+                observationProjection.estimatedTokensSaved()
         );
         String payloadJson = write(payload);
         String contextHash = hash(payloadJson);
@@ -227,7 +241,10 @@ public class ModelContextAssembler {
             int droppedFactCount,
             int maxCapabilityTokens,
             int estimatedCapabilityTokens,
-            int omittedCapabilityCount
+            int omittedCapabilityCount,
+            int microCompactedObservationCount,
+            int microCompactDecisionsAdded,
+            int estimatedTokensSavedByMicroCompact
     ) {
     }
 }

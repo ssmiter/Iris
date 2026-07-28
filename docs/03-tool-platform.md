@@ -72,6 +72,54 @@ tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
 2. **受限域排除集**：某些域不暴露特定能力（如 `guest` 域不可见支付/写文件工具）；
 3. **段语义标签**：目录段的通用语义词典（query/create/update/notify/sync 等动作词 + express/train/resume 等对象词），用于生成目录的展示名与搜索提示，与具体业务无关。
 
+这里的“目录即路径”约束的是本地 provider **如何声明初始语义位置**，不意味着把
+class 文件目录当持久化数据库。Capability Catalog 是独立的语义命名空间：
+
+- 稳定身份是 `capabilityId + definitionVersion`，路径是该版本的发现位置；
+- SQLite 保存已被接受或被历史引用的 Definition metadata、schema hash、snapshot
+  reference 与生命周期事实；
+- Registry 启动时把当前 provider binding 绑定到精确 Definition；实现缺席只改变
+  availability，不删除历史 Definition；
+- Catalog 树、统计和倒排搜索是可从 Definition 重建的投影，不是第二份执行真相；
+- 以后移动能力目录时发布新 Definition version 或显式 alias，不能原地改写旧
+  ToolCall 所引用的路径。
+
+模型看到的是 `capability://<capabilityId>@<version>` 与 `/domain/path/name` 这样的
+语义地址，不看到 Java class、SQLite row id 或对象仓物理路径。
+
+### 4.1 `/system/files`：工作区文件原语
+
+文件原语是通用 Agentic 内核的一部分，不属于代码 IDE 特例。只读观察底座包含三个能力：
+
+| capability path | name | 作用 | 关键边界 |
+|---|---|---|---|
+| `/system/files/list_files` | `list_files` | 确认目录结构与候选文件 | 稳定排序、深度与数量预算、不跟随目录链接 |
+| `/system/files/search_files` | `search_files` | 在工作区文本或只读语义目录中定位事实 | 默认字面量、可选正则、范围与命中预算、零命中也返回扫描证据 |
+| `/system/files/read_file` | `read_file` | 按行读取一个文本文件 | 行号、范围、字符预算、编码与二进制识别、给出下一段游标 |
+
+- 三个 Tool 都放在 `tools/system/files/`，因此目录路径天然一致；它们属于常驻工作区原语，
+  模型可直接使用。
+- 默认 `namespace=workspace`，输入只使用工作区逻辑相对路径，输出也只暴露 `/` 分隔的逻辑路径，不把 Windows 盘符和实际工作区根写入模型上下文。
+- `search_files(namespace=capabilities)` 复用同一个“定位描述”原语搜索 Capability Catalog；此时 `path` 是能力绝对目录，结果路径可直接交给 `read_capability`。它只复用模型接口，不把 Capability Definition 伪装成物理工作区文件，也不允许 `read_file` 或写工具进入该命名空间。
+- 有界输出不是静默丢弃：结果必须带 `truncated`、实际扫描范围与可继续行动的提示。搜索零命中也要说明扫描了多少文件、跳过了什么。
+- `read_file` 与 `search_files` 只处理文本；图片、PDF、Office 等以后由内容类型专用原语处理，不能把二进制误解码后塞入上下文。
+- 路径解析、链接围栏、编码检测与遍历策略由共享 Workspace 层实现。Tool 只负责契约、输入归一化和结果投影，禁止各自复制一套安全判断。
+- `write_file / apply_patch / move_file / delete_file` 沿用相同逻辑路径和共享 Workspace 层，
+  并经过 Operation Snapshot、策略、版本复核和 Checkpoint。
+
+上下文恢复原语单独位于 `/system/context/read_tool_result` 与
+`/system/context/query_tool_result`。前者按
+`execution_id + start_character + character_count` 读取 Runtime 已持久化的完整结果，
+后者以 JSON Pointer 精确选择节点并对数组或对象分页；两者都不混入 `/system/files`，
+因为 Tool output 的规范身份属于对话执行历史，而不是用户文件。
+这让“结果可找回”与“工作区不被系统缓存污染”同时成立。
+
+### 4.2 `/system/math`：客观计算原语
+
+`calculate` 使用确定性的十进制表达式求值器处理 `+ - * / % ^`、括号与一元正负号，
+由输入声明有效数字精度和固定舍入规则。金额、比例、工时和产量等计算不交给语言模型
+猜测；首版不混入单位换算、日期或业务公式，这些语义以后由独立能力组合。
+
 ### 域过滤（FilterBySystem）
 
 每个会话有系统/身份码（个人版默认 `personal`），决定可见域：
@@ -97,26 +145,59 @@ tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
 
 统计是模型的方向感：“这个目录有 128 个 Capability”比“有个目录”更能引导探索。统计在启动时一次计算、注册变化时增量更新。
 
-## 6. 发现原语（模型可调用的三个元工具）
+## 6. 发现接口（两个元工具 + 一个共享搜索原语）
 
 | 原语 | 作用 | 要点 |
 |---|---|---|
 | `list_capabilities(path?)` | 看目录树（带统计） | 顶层调用返回各域与工具数；懒加载，不返回 schema |
 | `read_capability(path)` | 读取精确 Capability Definition | 返回判别联合 `ToolManifest | PipelineDefinition | GuidanceDefinition` |
-| `tool_search(query, limit?)` | 关键词搜索 | 覆盖 name/description/目录段/参数名；返回 total 让模型知道截断 |
+| `search_files(namespace="capabilities", query, path?)` | 定点搜索能力描述 | 复用文件搜索心智，覆盖 name/description/目录段/参数名；结果按能力聚合并返回扫描证据 |
 
-首个本地实现位于 `/system/capabilities`，三个发现原语本身始终处于基础 lease。
-`read_capability` 成功 observation 会成为下一 ModelAttempt 扩展 schema lease 的唯一
-依据；仅搜索或列目录不会激活目标 schema。三个发现原语是不可逐出的 required
-集合；其余候选按最近成功 inspect 的顺序，在独立的 schema token budget 内逐个准入。
+`list_capabilities` 与 `read_capability` 位于 `/system/capabilities`；`search_files`
+仍只有 `/system/files` 下的一份 Definition，通过显式 namespace 路由到只读 Catalog
+projection。基础 lease 不再等同于“只给模型一张工具目录”：它固定保留两个目录入口，
+以及 `list_files / search_files / read_file / make_directory / write_file / apply_patch`
+这组有界的工作区原语，并保留 `read_tool_result / query_tool_result` 两个结果读取原语。
+后者必须与 Context micro-compaction 同时可用，否则系统虽然能把旧结果收敛成引用，模型却
+不能立刻读回。常见的观察、创建与局部编辑因此可以直接开始；复制、移动、删除、恢复等
+低频或影响更大的操作仍按需发现。系统不再注册语义重复的 `tool_search`。
+`read_capability` 成功 observation 会成为下一 Model Step 扩展 schema lease 的唯一
+依据；仅搜索或列目录不会激活目标 schema。基础原语是不可逐出的 required 集合；
+其余候选来自紧邻上一 Round 成功 inspect 的 Definition，以及上一 Round 实际调用过的
+能力，并在独立的 schema token budget 内逐个准入。已调用能力以滚动方式续租；只 inspect
+却没有使用的能力在下一 Round 后自然逐出，不因长对话曾经见过就永久驻留。若上一 Round
+的工作区写入形成 `outcome_unknown` 且确有 Checkpoint，策略会直接激活
+`inspect_workspace_change`，使安全恢复不再额外经过一次目录发现。
 超出预算的 Definition 不进入本轮 Exposure，但不会从目录或历史中删除；后续 Round
 仍可重新 inspect。候选数量上限只用于约束查询成本，不能替代 token budget。这样既
 避免长对话把曾经检查过的所有工具永久泄露进上下文，也避免少数巨型 schema 挤掉
 用户请求和工具观察。
 
-**搜索索引首版基线**：内存倒排（name、description、中英文 description、目录段、参数属性名）。先用召回率、误选率、schema token 成本和启动耗时观察真实数据，再决定是否引入 Lucene 或向量检索。
+**搜索索引首版基线**：Java 后端在 Registry 完成校验后编译紧凑的结构化搜索文档
+（name、description、目录段、参数属性名、风险与副作用），查询直接在内存 projection
+上完成，不生成 Markdown、不经过前端、不维护第二份执行真相。先用召回率、误选率、
+schema token 成本和延迟观察真实数据；只有规模和轨迹证明线性扫描不够时，才替换为
+倒排、Lucene 或向量混合索引，模型侧契约保持不变。
 
 ### 6.1 能力 Working Set 与生命周期
+
+“加载能力”必须拆成四个独立生命周期，不能用一个布尔值混在一起：
+
+```text
+常驻轻量 Catalog index
+→ 按需读取 Definition
+→ 当前 Model Step 的 active schema lease
+→ 调用时取得 executor 与外部资源
+```
+
+- Catalog index 像目录项，只保存发现所需的紧凑字段，不意味着 schema、实现或连接都已载入；
+- 少量跨任务高频且可组合的基础原语随每个 Model Step 常驻，其范围由真实轨迹收敛，
+  不是把某个完整工具域永久塞入上下文；
+- Definition 可以被预取和缓存，但只有预算明确准入后才进入模型的 active lease；
+- 无状态 Java executor 可以保持轻量 binding；插件、脚本、远程 Provider 等重实现以后由
+  lazy executor handle 在首次调用前物化，不要求 JVM 卸载普通工具 class；
+- 数据库连接、浏览器会话、进程和临时产物在 prepare/execute 时创建或从池中借出，
+  按调用、会话或 TTL 回收，不能被 Tool 单例偷偷永久持有。
 
 几千个 Capability 被良好组织，不代表一次长对话可以无限累计 schema。每个 Model Step 从三个层次按需收敛：
 
@@ -139,7 +220,8 @@ Definition status 只有 `active / deprecated / retired`；注册校验是一次
 
 系统提示必须包含（见 docs/06 §系统提示组装）：
 
-- 一个有界 Catalog snapshot summary（epoch/hash + 少量 top-level roots），以及恒定可用的发现原语；它不永久罗列所有已加载域；
+- 一个有界 Catalog snapshot summary（epoch/hash + 少量 top-level roots），以及恒定可用的
+  目录入口和工作区基础原语；它不永久罗列所有已加载域；
 - 发现流程五步法（意图→目录统计→读 schema→必要时澄清→调用）；
 - 禁令：不凭名字猜参数、不调用未获得 active lease 的工具；inspect 数量受 schema token budget 约束。
 
@@ -181,10 +263,23 @@ normalize → validate → durable claim → prepare → snapshot
 
 ## 9. SQL 工具的路由（可选能力）
 
-个人版默认用 SQLite；若接入外部数据库：
+个人版默认用 SQLite；若接入外部数据库，SQL 环境分为连接目录、语句分析、执行与结果
+证据四层：
 
 - 按连接标识路由到对应数据源（demo SQLite / 个人 PostgreSQL）；
 - 只读账号连接外部库（数据库层兜底，不只靠应用层）。
+- Connection Definition 只暴露稳定 ID、方言、说明和读写能力，不暴露 JDBC URL、账号
+  或密码；缺少当前 provider binding 时保留历史 Definition，但 availability 为 unavailable。
+- SQL 先经过理解字符串、引用标识符、注释、括号深度和 CTE 的词法分析；无法确定读写
+  时返回 ambiguous 并 fail-close，不能用关键词正则默认放行为 SELECT。
+- `query_sql` 与未来 `execute_sql` 是两个 Tool：前者静态 `read_only`，允许并行且只接受
+  分析器确认的读语句；后者静态写契约，经过 Operation Snapshot、策略、事务提交和
+  verify。拆分源于副作用与恢复语义不同，不是为了增加工具数量。
+- 参数和值必须走 JDBC bind，连接 ID、标识符和 SQL 文本不能相互替代；查询设置超时、
+  行列与单元格预算，规范完整结果仍由 Tool Runtime 落 Managed Object Store，并通过
+  `query_tool_result / read_tool_result` 按需取回。
+- 业务口径明确时优先领域 Capability；SQL 是结构化数据的客观原语和缺口出口，不在
+  System Prompt 中预设某家工厂的表名或查询 SOP。
 
 ## 10. 扩展路线：1000 → 10000
 

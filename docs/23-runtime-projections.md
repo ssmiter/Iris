@@ -19,6 +19,21 @@ ToolExecution、Approval 与瀑布流节点不是三套真相。Runtime 表保�
 
 投影表可重建，`tool_execution` 与 `tool_approval_request` 才是 canonical facts。
 
+### 1.1 工具详情按需读取
+
+前后端不往返完整 Tool output：
+
+- SSE 的 ToolNode 只携带 `toolExecutionId / toolName / status / summary /
+  resultRef / evidenceSummary`，不发送结果正文；
+- ConversationView 水合相同轻量投影，未展开的 Tool 卡片不会读取、解析或进入前端状态树；
+- 用户展开结果时，Frontend 才通过 conversation-scoped detail endpoint 按字符窗口读取；
+- 收起卡片后详情是可丢弃缓存，不写回 canonical ConversationView；
+- 模型的 `read_tool_result` 直接访问 Backend payload store，与 Frontend 是否在线、是否
+  展开完全无关。
+
+Artifact、表格或图片以后可以声明专用 preview projection；默认仍是短摘要 + 稳定引用。
+后端不能因为“前端可能会展示”而提前序列化和推送完整 payload。
+
 ## 2. Answer 流的节点身份
 
 一次 ModelAttempt 的可见文本使用确定性节点 ID：

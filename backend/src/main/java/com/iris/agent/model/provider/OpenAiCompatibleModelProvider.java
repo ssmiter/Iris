@@ -10,6 +10,7 @@ import com.iris.agent.model.ModelStreamEvent;
 import com.iris.agent.model.ModelStreamEvent.FragmentMode;
 import com.iris.agent.model.provider.ProviderMessageCompiler.CompiledConversation;
 import com.iris.agent.model.provider.ProviderMessageCompiler.ProviderMessage;
+import com.iris.agent.model.provider.ProviderMessageCompiler.ProviderStatePart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.TextPart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.ToolCallPart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.ToolResultPart;
@@ -22,6 +23,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -37,6 +40,10 @@ import java.util.List;
         havingValue = "openai-compatible"
 )
 public class OpenAiCompatibleModelProvider implements ModelProvider {
+    private static final Logger LOGGER = LoggerFactory.getLogger(
+            OpenAiCompatibleModelProvider.class
+    );
+    private static final int MAX_PROVIDER_ERROR_CHARACTERS = 2_000;
     private static final ParameterizedTypeReference<ServerSentEvent<String>>
             SSE_TYPE = new ParameterizedTypeReference<>() {
             };
@@ -110,9 +117,13 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                     .retrieve()
                     .onStatus(
                             HttpStatusCode::isError,
-                            response -> Mono.error(providerHttpError(
-                                    response.statusCode()
-                            ))
+                            response -> response.bodyToMono(String.class)
+                                    .defaultIfEmpty("")
+                                    .onErrorReturn("")
+                                    .map(responseBody -> providerHttpError(
+                                            response.statusCode(),
+                                            responseBody
+                                    ))
                     )
                     .bodyToFlux(SSE_TYPE)
                     .flatMapIterable(event -> mapEvent(mapper, event.data()))
@@ -200,9 +211,19 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         List<String> texts = new ArrayList<>();
         ArrayNode toolCalls = objectMapper.createArrayNode();
         ToolResultPart result = null;
+        ProviderStatePart providerState = null;
         for (ProviderMessageCompiler.MessagePart part : message.parts()) {
             if (part instanceof TextPart text) {
                 texts.add(text.text());
+            } else if (part instanceof ProviderStatePart state) {
+                if (providerState != null
+                        && !providerState.equals(state)) {
+                    throw new ModelProtocolException(
+                            "provider_state_conflict",
+                            "Assistant message contains conflicting provider state"
+                    );
+                }
+                providerState = state;
             } else if (part instanceof ToolCallPart call) {
                 ObjectNode item = toolCalls.addObject();
                 item.put("id", call.providerCallId());
@@ -222,12 +243,27 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         serialized.put("content", String.join("\n", texts));
         if (!toolCalls.isEmpty()) {
             serialized.set("tool_calls", toolCalls);
+            if (providerState != null) {
+                if (!"reasoning_content".equals(
+                        providerState.stateKey()
+                )) {
+                    throw new ModelProtocolException(
+                            "openai_provider_state_unsupported",
+                            "OpenAI-compatible provider state is unsupported"
+                    );
+                }
+                serialized.put(
+                        "reasoning_content",
+                        providerState.content()
+                );
+            }
         }
         return serialized;
     }
 
     private ModelProviderException providerHttpError(
-            HttpStatusCode status
+            HttpStatusCode status,
+            String responseBody
     ) {
         int code = status.value();
         String category = switch (code) {
@@ -240,11 +276,71 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                     : "provider_request_rejected";
         };
         boolean retryable = code == 408 || code == 429 || code >= 500;
+        ProviderErrorDetail detail = providerErrorDetail(responseBody);
+        LOGGER.warn(
+                "Model provider rejected request: status={}, category={}, "
+                        + "providerCode={}, providerType={}, detail={}",
+                code,
+                category,
+                detail.code(),
+                detail.type(),
+                detail.message()
+        );
         return new ModelProviderException(
                 category,
                 retryable,
-                "Model provider request failed with HTTP " + code
+                "Model provider request failed with HTTP " + code,
+                code,
+                detail.code(),
+                detail.type(),
+                detail.message()
         );
+    }
+
+    private ProviderErrorDetail providerErrorDetail(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return new ProviderErrorDetail(null, null, null);
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode error = root.path("error");
+            if (!error.isObject()) {
+                return new ProviderErrorDetail(
+                        scalar(root.get("code")),
+                        scalar(root.get("type")),
+                        bounded(scalar(root.get("message")))
+                );
+            }
+            return new ProviderErrorDetail(
+                    scalar(error.get("code")),
+                    scalar(error.get("type")),
+                    bounded(scalar(error.get("message")))
+            );
+        } catch (Exception ignored) {
+            return new ProviderErrorDetail(
+                    null,
+                    null,
+                    "Provider returned a non-JSON error body"
+            );
+        }
+    }
+
+    private String scalar(JsonNode value) {
+        if (value == null || value.isNull() || value.isContainerNode()) {
+            return null;
+        }
+        return bounded(value.asText());
+    }
+
+    private String bounded(String value) {
+        if (value == null) {
+            return null;
+        }
+        String sanitized = value.replaceAll("[\\p{Cntrl}&&[^\\r\\n\\t]]", "")
+                .trim();
+        return sanitized.length() <= MAX_PROVIDER_ERROR_CHARACTERS
+                ? sanitized
+                : sanitized.substring(0, MAX_PROVIDER_ERROR_CHARACTERS);
     }
 
     private void validate(IrisModelProperties properties) {
@@ -278,5 +374,12 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
 
     private boolean blank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private record ProviderErrorDetail(
+            String code,
+            String type,
+            String message
+    ) {
     }
 }

@@ -66,6 +66,14 @@ Round index 在同一 Agentic Run 内单调递增。`agent_round` 的唯一约�
 
 ## 4. canonical model protocol
 
+Provider 要求续接的内部状态（例如 OpenAI-compatible 的
+`reasoning_content`）属于 assistant 轨迹的协议事实，不是给用户展示的
+thinking 节点。Adapter 必须把它作为不可见 `provider_state` block 原样交给内核；
+内核随 ModelAttempt 持久化，并且只在相同 provider profile 与 model 上重放。
+一次 assistant 响应中的 provider state、text、全部 tool call 及其 tool result 是
+上下文裁剪的一个原子组：保留就完整保留，丢弃就完整丢弃，禁止压缩出一个协议上
+残缺的工具轨迹。切换 profile/model 时丢弃旧的模型绑定状态，但不删除历史事实。
+
 Provider adapter 只能输出以下内部事件：
 
 ```text
@@ -183,9 +191,26 @@ StopRequest 是持久事实，进程内 `RunCancellationRegistry` 只是低延�
 - 活跃 provider Flux 订阅取消信号，迟到 delta 不得越过 attempt commit；
 - 被取消的 streaming attempt 闭合为 `user_cancelled`，对应 Round 进入 `stopped`；
 - registry 丢失时，启动恢复仍从 StopRequest 重建，不把内存 signal 当成真相；
+- ToolContext 暴露的是对 `RunCancellationRegistry` 的实时读取，而不是 Round 开始时
+  复制出的 boolean；长文件扫描会在自身检查点及时停止；
 - 尚未执行的 ToolCall 形成可审计失败 observation；已进入 execute/verify 的动作继续
   核验，StopRequest 暂处 `draining`；
 - 正常完成、失败或停止后清理进程内 registry，不在 Reactor 终结回调中执行 JDBC。
+
+### 8.2 同一 Round 的 ToolCall 调度
+
+模型一次响应可能产生多个 ToolCall。Iris 按 ordinal 切成若干连续批次：
+
+```text
+[parallel_safe read, parallel_safe search] → 并行、有界
+[serial write]                             → 单独执行，形成屏障
+[parallel_safe read, parallel_safe read]   → 下一并行批
+```
+
+并行批只并发执行 Tool Runtime invocation；结果随后按 ordinal 依次形成 projection 和
+ToolObservation。这样磁盘等待可以重叠，但 provider 协议配对、Conversation 历史和
+下一次模型视野仍完全确定。任何 Manifest 缺失、调度判定异常或未来动态判定不明确都
+fail-close 为串行。
 
 ## 9. 首轮实现边界
 

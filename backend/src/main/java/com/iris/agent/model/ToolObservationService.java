@@ -91,11 +91,12 @@ public class ToolObservationService {
         if (!error && source.outputJson() != null) {
             content.set("output", read(source.outputJson()));
         } else {
+            String errorCode = source.errorCode() == null
+                    ? source.phase()
+                    : source.errorCode();
             content.put(
                     "errorCode",
-                    source.errorCode() == null
-                            ? source.phase()
-                            : source.errorCode()
+                    errorCode
             );
             content.put(
                     "message",
@@ -103,13 +104,20 @@ public class ToolObservationService {
                             ? defaultMessage(source.phase())
                             : source.errorMessage()
             );
-            if ("outcome_unknown".equals(source.phase())) {
-                content.put("retryAllowed", false);
-                content.put(
-                        "instruction",
-                        "结果未知；先核验证据，不得自动重试同一写操作"
-                );
-            }
+            content.put(
+                    "effect",
+                    "outcome_unknown".equals(source.phase())
+                            ? "may_have_changed"
+                            : "none_confirmed"
+            );
+            Recovery recovery = recovery(source.phase(), errorCode);
+            ObjectNode recoveryNode = content.putObject("recovery");
+            recoveryNode.put("action", recovery.action());
+            recoveryNode.put(
+                    "newToolCallRequired",
+                    recovery.newToolCallRequired()
+            );
+            recoveryNode.put("instruction", recovery.instruction());
         }
 
         String contentHash = hash(write(content));
@@ -138,6 +146,94 @@ public class ToolObservationService {
             case "outcome_unknown" -> "工具可能已经改变外部状态，但无法确认";
             default -> "工具执行失败";
         };
+    }
+
+    private Recovery recovery(String phase, String errorCode) {
+        if ("outcome_unknown".equals(phase)) {
+            return new Recovery(
+                    "inspect_before_retry",
+                    true,
+                    "先读取目标的当前状态或调用 inspect_workspace_change；确认没有生效后，才能用新的工具调用重试"
+            );
+        }
+        if ("rejected".equals(phase)) {
+            return new Recovery(
+                    "stop",
+                    true,
+                    "停止这项操作；只有用户重新明确要求时，才发起新的工具调用"
+            );
+        }
+        if ("expired".equals(phase)
+                || "snapshot_expired".equals(errorCode)) {
+            return new Recovery(
+                    "prepare_again",
+                    true,
+                    "重新读取必要状态，并用新的工具调用重新准备操作"
+            );
+        }
+        if (isCancellation(errorCode)) {
+            return new Recovery(
+                    "stop",
+                    true,
+                    "操作已在确认无副作用的边界停止；除非任务仍然需要，否则不要重试"
+            );
+        }
+        if (isInvalidInput(errorCode)) {
+            return new Recovery(
+                    "correct_input",
+                    true,
+                    "根据 errorCode 和 message 修正参数，再发起新的工具调用"
+            );
+        }
+        if (isStaleObservation(errorCode)) {
+            return new Recovery(
+                    "observe_then_retry",
+                    true,
+                    "目标状态已经变化；先重新读取相关资源，再基于新状态发起工具调用"
+            );
+        }
+        if (errorCode.startsWith("tool_timeout")) {
+            return new Recovery(
+                    "retry_if_still_needed",
+                    true,
+                    "本次执行已确认没有副作用；若任务仍需要，可缩小范围后发起新的工具调用"
+            );
+        }
+        return new Recovery(
+                "replan",
+                true,
+                "结合 errorCode 和 message 调整方案；不要原样重复失败的调用"
+        );
+    }
+
+    private boolean isCancellation(String errorCode) {
+        return "tool_cancelled".equals(errorCode)
+                || "cancelled_before_commit".equals(errorCode);
+    }
+
+    private boolean isInvalidInput(String errorCode) {
+        return errorCode.startsWith("invalid_")
+                || errorCode.startsWith("unsafe_")
+                || errorCode.startsWith("calculation_")
+                || errorCode.startsWith("tool_result_")
+                || errorCode.endsWith("_empty")
+                || errorCode.endsWith("_too_long")
+                || errorCode.endsWith("_too_large")
+                || errorCode.contains("_same_path")
+                || errorCode.contains("_line_out_of_range")
+                || errorCode.contains("_text_not_found")
+                || errorCode.contains("_not_unique")
+                || errorCode.contains("_empty_match");
+    }
+
+    private boolean isStaleObservation(String errorCode) {
+        return errorCode.startsWith("operation_snapshot_")
+                || errorCode.endsWith("_version_changed")
+                || errorCode.endsWith("_target_changed")
+                || errorCode.endsWith("_destination_exists")
+                || errorCode.endsWith("_parent_not_found")
+                || errorCode.endsWith("_path_not_found")
+                || errorCode.endsWith("_directory_exists");
     }
 
     private JsonNode read(String json) {
@@ -171,5 +267,12 @@ public class ToolObservationService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 unavailable", exception);
         }
+    }
+
+    private record Recovery(
+            String action,
+            boolean newToolCallRequired,
+            String instruction
+    ) {
     }
 }

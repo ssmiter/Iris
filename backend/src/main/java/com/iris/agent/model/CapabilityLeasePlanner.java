@@ -55,7 +55,7 @@ public class CapabilityLeasePlanner {
         int estimatedTokens = tokens.estimate(selectedDefinitions);
         if (estimatedTokens > maxSchemaTokens) {
             throw new PromptTooLargeException(
-                    "Required discovery capabilities exceed the schema budget"
+                    "Required resident capabilities exceed the schema budget"
             );
         }
 

@@ -17,6 +17,12 @@ spring:
 
 iris:
   workspace: ~/Iris/workspace
+  agent:
+    max-parallel-read-tools: ${IRIS_MAX_PARALLEL_READ_TOOLS:4}
+  tools:
+    approval-mode: ${IRIS_TOOL_APPROVAL_MODE:required}
+  storage:
+    object-root: ${IRIS_OBJECT_STORE_PATH:${user.home}/Iris/data/objects}
   sandbox:
     timeout-sec: 120
     output-limit-kb: 64

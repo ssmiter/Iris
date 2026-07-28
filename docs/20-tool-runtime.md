@@ -102,6 +102,35 @@ createdAt, expiresAt, decidedAt, decisionBy
 保存 verify 产生的安全证据引用与摘要；大结果和敏感原文进入 Artifact，
 不塞进 Event 或模型上下文。
 
+### `tool_output_payload`、Object 与 Observation
+
+Tool 成功返回后产生两份用途不同、但来源唯一的数据：
+
+```text
+canonical output bytes（完整、不可变、按内容 hash 保存）
+                 ↓ SQL 记录 executionId → objectRef
+                 ↓ 有界投影
+tool observation（预览、尺寸、稳定引用、继续读取方法）
+```
+
+- Runtime 必须先把完整 output 原子写入 Managed Object Store，再在同一 SQL 事务中
+  保存 payload metadata、完成 ToolExecution 并生成 Observation；
+  `resultCharacterLimit`
+  只限制 Observation，绝不能改写 canonical payload。
+- 超预算 Observation 带 `tool-result://<executionId>` 稳定引用、原始字符数和
+  小预览。模型可发现 `/system/context/read_tool_result` 后按字符窗口继续读取。
+- `tool_output_payload` 只保存 `executionId、objectRef、mediaType、hash、byteCount、
+  characterCount`；原始 JSON 不进入 SQL。它属于对话执行历史，不伪装成用户工作区
+  文件；canonical identity 仍是 executionId。
+- 按字符读取由对象仓以 UTF-8 Reader 流式跳过和读取，内存只保留请求窗口；首版
+  深分页是 O(offset)，真实负载证明需要时再增加稀疏字符索引，不提前制造索引系统。
+- micro compact 可以清除旧 Observation 的大段预览，只保留 executionId、工具名、
+  结果 hash 和读回指引；完整 payload 与 `tool_observation` 历史记录都不得删除。
+- 普通 compact summary 只改变 Context Frame，必须引用 source execution/message
+  range；不能用摘要覆盖 `tool_execution`、payload 或原始消息。
+- 敏感结果是否允许落盘必须在 Tool 执行前由授权策略决定，不能先完整保存再依靠
+  Observation 脱敏补救。
+
 ## 5. Runtime 返回值
 
 调用 Runtime 不阻塞等待 UI：
@@ -113,6 +142,31 @@ createdAt, expiresAt, decidedAt, decisionBy
 - `executing/verifying` 在进程中断后进入 reconciliation，不能盲目重试。
 
 节点 2.3 只消费 Runtime outcome，不获得 Tool 实例。
+
+### 5.1 Tool 的调度语义也是契约
+
+Tool 不能只声明“做什么”，还必须声明调度器怎样安全地运行它：
+
+```text
+concurrency: serial | parallel_safe
+cancellation: cooperative | commit_boundary
+```
+
+- `parallel_safe` 首版只允许 `read_only + sideEffect=none`，表示同一模型响应中相邻的
+  同类调用可以并行；未知、校验失败或未声明一律按 `serial`；
+- 调度器只合并**连续**的 parallel-safe ToolCall，遇到 serial ToolCall 形成屏障，
+  不跨越模型给出的 ordinal 猜测依赖；
+- 并行执行可以乱序完成，但 ToolObservation、投影和下一轮模型输入必须按原
+  ToolCall ordinal 稳定提交；
+- `cooperative` Tool 在扫描、读取和等待边界重复读取实时 cancellation signal；
+  不能把开始执行时的布尔快照当作取消状态；Manifest timeout 也汇入同一实时信号，
+  审批恢复时重新开始执行期限，不把用户等待审批的时间算成工具运行；
+- `commit_boundary` Tool 只允许在副作用提交前取消。进入 execute/verify 后继续核验，
+  无法确认时闭合为 `OutcomeUnknown`，不能为了响应 Stop 而假装没有执行。
+
+这不是性能开关。它把“哪些动作彼此独立、什么时候还能安全停止”从调度器猜测提升为
+Capability Definition 的一部分。首版最大只读并发数有界，避免模型一次生成大量调用
+压垮 SQLite、磁盘或 provider。
 
 ## 6. 风险与审批不变量
 
@@ -157,7 +211,7 @@ approval.resolved
 - 模型 ToolCall → Runtime invocation adapter；
 - Tool result observation 格式；
 - Round/RenderNode/Attention 的完整 projector；
-- 超时执行器与进程级取消协调。
+- 进程级强制终止留给隔离 Runner；内核不以“返回超时”掩盖仍在后台运行的线程。
 
 ## 9. 验证
 
@@ -169,3 +223,4 @@ approval.resolved
 - approval 拒绝、过期、执行失败与 outcome unknown 不混淆；
 - workspace 越界在 prepare 阶段 fail-close；
 - 成功 execution 保存 outcome 与 evidence。
+- 完整 Tool output 与有界 Observation 分离；任何截断都可通过 executionId 读回。

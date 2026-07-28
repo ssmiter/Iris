@@ -76,21 +76,34 @@ public class ModelContextRepository {
                            -100 AS fact_order,
                            b.boundary_id AS fact_id,
                            'history_summary' AS fact_kind,
+                           NULL AS source_attempt_id,
+                           NULL AS source_provider_profile,
+                           NULL AS source_model_id,
+                           NULL AS provider_state_key,
                            b.summary_text AS text_content,
                            NULL AS tool_call_id,
                            NULL AS provider_call_id,
                            NULL AS tool_name,
                            NULL AS json_content,
-                           NULL AS outcome_kind
+                           NULL AS outcome_kind,
+                           NULL AS execution_id,
+                           NULL AS manifest_hash,
+                           NULL AS payload_hash
                     FROM boundary b
 
                     UNION ALL
 
                     SELECT m.created_at AS fact_time, 0 AS fact_order,
                            m.message_id AS fact_id, 'user' AS fact_kind,
+                           NULL AS source_attempt_id,
+                           NULL AS source_provider_profile,
+                           NULL AS source_model_id,
+                           NULL AS provider_state_key,
                            m.content AS text_content, NULL AS tool_call_id,
                            NULL AS provider_call_id, NULL AS tool_name,
-                           NULL AS json_content, NULL AS outcome_kind
+                           NULL AS json_content, NULL AS outcome_kind,
+                           NULL AS execution_id, NULL AS manifest_hash,
+                           NULL AS payload_hash
                     FROM message m
                     JOIN conversation_event me
                       ON me.turn_id = m.turn_id
@@ -140,10 +153,17 @@ public class ModelContextRepository {
                     SELECT ma.ended_at AS fact_time,
                            10 + b.block_index AS fact_order,
                            b.block_id AS fact_id, b.block_kind AS fact_kind,
+                           ma.attempt_id AS source_attempt_id,
+                           ma.provider_profile AS source_provider_profile,
+                           ma.model_id AS source_model_id,
+                           b.provider_block_id AS provider_state_key,
                            b.text_content, tc.tool_call_id,
                            tc.provider_call_id, tc.tool_name,
                            tc.arguments_json AS json_content,
-                           NULL AS outcome_kind
+                           NULL AS outcome_kind,
+                           NULL AS execution_id,
+                           NULL AS manifest_hash,
+                           NULL AS payload_hash
                     FROM model_attempt ma
                     JOIN agent_round ar ON ar.round_id = ma.round_id
                     JOIN conversation_event ae
@@ -161,7 +181,17 @@ public class ModelContextRepository {
                           OR ae.sequence < path.cutoff_sequence
                       )
                       AND ma.ended_at < t.target_time
-                      AND b.block_kind IN ('text', 'tool_call')
+                      AND b.block_kind IN (
+                          'provider_state', 'text', 'tool_call'
+                      )
+                      AND (
+                          b.block_kind <> 'provider_state'
+                          OR EXISTS (
+                              SELECT 1
+                              FROM model_tool_call state_call
+                              WHERE state_call.attempt_id = ma.attempt_id
+                          )
+                      )
                       AND (
                           NOT EXISTS (SELECT 1 FROM boundary)
                           OR ae.sequence >= (
@@ -173,12 +203,22 @@ public class ModelContextRepository {
 
                     SELECT o.created_at AS fact_time, 1000 + tc.ordinal AS fact_order,
                            o.observation_id AS fact_id, 'tool_result' AS fact_kind,
+                           ma.attempt_id AS source_attempt_id,
+                           ma.provider_profile AS source_provider_profile,
+                           ma.model_id AS source_model_id,
+                           NULL AS provider_state_key,
                            NULL AS text_content, tc.tool_call_id,
                            tc.provider_call_id, tc.tool_name,
                            o.content_json AS json_content,
-                           o.outcome_kind
+                           o.outcome_kind, o.execution_id,
+                           execution.manifest_hash AS manifest_hash,
+                           payload.content_hash AS payload_hash
                     FROM tool_observation o
                     JOIN model_tool_call tc ON tc.tool_call_id = o.tool_call_id
+                    JOIN tool_execution execution
+                      ON execution.execution_id = o.execution_id
+                    LEFT JOIN tool_output_payload payload
+                      ON payload.execution_id = o.execution_id
                     JOIN model_attempt ma ON ma.attempt_id = tc.attempt_id
                     JOIN agent_round ar ON ar.round_id = ma.round_id
                     JOIN conversation_event oe
@@ -218,20 +258,36 @@ public class ModelContextRepository {
                             rs.getString("fact_id"),
                             rs.getString("text_content")
                     );
+                    case "provider_state" ->
+                            new ModelInputItem.AssistantProviderState(
+                                    rs.getString("source_attempt_id"),
+                                    rs.getString("fact_id"),
+                                    rs.getString("source_provider_profile"),
+                                    rs.getString("source_model_id"),
+                                    rs.getString("provider_state_key"),
+                                    rs.getString("text_content")
+                            );
                     case "text" -> new ModelInputItem.AssistantText(
+                            rs.getString("source_attempt_id"),
                             rs.getString("fact_id"),
                             rs.getString("text_content")
                     );
                     case "tool_call" -> new ModelInputItem.AssistantToolCall(
+                            rs.getString("source_attempt_id"),
                             rs.getString("tool_call_id"),
                             rs.getString("provider_call_id"),
                             rs.getString("tool_name"),
                             read(rs.getString("json_content"))
                     );
                     case "tool_result" -> new ModelInputItem.ToolResult(
+                            rs.getString("source_attempt_id"),
+                            rs.getString("fact_id"),
                             rs.getString("tool_call_id"),
                             rs.getString("provider_call_id"),
+                            rs.getString("execution_id"),
                             rs.getString("outcome_kind"),
+                            rs.getString("manifest_hash"),
+                            rs.getString("payload_hash"),
                             read(rs.getString("json_content"))
                     );
                     default -> throw new IllegalStateException(

@@ -884,6 +884,31 @@ GET /api/v1/tool-executions/{toolExecutionId}
 
 内部状态可以覆盖 `proposed / claimed / preparing / awaiting_approval / ready / executing / verifying / succeeded / failed / rejected / cancelled / timed_out / outcome_unknown / reconciling`。`rejected` 表示用户明确拒绝；Approval 超时是独立 `expired` 事实。`cancelled / timed_out` 只有在确认活动停止且副作用未发生时才能闭合，否则进入 `outcome_unknown`。无论成功、拒绝、取消还是未知，Model protocol 都必须得到闭合 observation；详情 API 不返回秘密输入或原始凭据。
 
+工具卡片展开时才读取结果正文：
+
+```http
+GET /api/v1/conversations/{conversationId}/tool-executions/{toolExecutionId}/output
+    ?startCharacter=0&characterCount=20000
+```
+
+```json
+{
+  "toolExecutionId": "execution_opaque",
+  "format": "json",
+  "contentHash": "sha256-opaque",
+  "totalCharacters": 48231,
+  "startCharacter": 0,
+  "endCharacterExclusive": 20000,
+  "content": "{...当前窗口...}",
+  "truncated": true,
+  "nextStartCharacter": 20000
+}
+```
+
+该端点是用户主动展开后的懒加载，不用于轮询。SSE 和 ConversationView 永不内嵌完整
+output；Frontend 收起后可以丢弃窗口缓存。Backend 必须按 conversationId 校验归属，
+不能仅凭 executionId 跨对话读取。
+
 ## 8. Capability Catalog
 
 Catalog API 供 Frontend 浏览，也由 Backend 内部发现原语使用。模型不会直接通过 HTTP 调自己。

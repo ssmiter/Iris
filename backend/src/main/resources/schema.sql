@@ -401,6 +401,83 @@ CREATE TABLE IF NOT EXISTS tool_execution (
 CREATE INDEX IF NOT EXISTS idx_tool_execution_run
     ON tool_execution(conversation_id, run_id, created_at);
 
+CREATE TABLE IF NOT EXISTS capability_definition (
+    capability_id TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    capability_path TEXT NOT NULL,
+    description TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    definition_status TEXT NOT NULL,
+    manifest_hash TEXT NOT NULL,
+    snapshot_object_ref TEXT NOT NULL,
+    snapshot_content_hash TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (capability_id, definition_version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_capability_definition_path_version
+    ON capability_definition(capability_path, definition_version);
+
+CREATE TABLE IF NOT EXISTS capability_binding_state (
+    capability_id TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    availability TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    PRIMARY KEY (
+        capability_id,
+        definition_version,
+        provider_key
+    ),
+    FOREIGN KEY (capability_id, definition_version)
+        REFERENCES capability_definition(
+            capability_id,
+            definition_version
+        )
+);
+
+CREATE TABLE IF NOT EXISTS tool_output_payload (
+    execution_id TEXT PRIMARY KEY,
+    object_ref TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    byte_count INTEGER NOT NULL,
+    character_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspace_checkpoint_set (
+    checkpoint_id TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL UNIQUE,
+    phase TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    applied_at TEXT,
+    FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspace_checkpoint_item (
+    checkpoint_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    logical_path TEXT NOT NULL,
+    resource_kind TEXT NOT NULL,
+    change_kind TEXT NOT NULL,
+    before_exists INTEGER NOT NULL,
+    before_object_ref TEXT,
+    before_hash TEXT NOT NULL,
+    before_size INTEGER NOT NULL,
+    before_modified_at TEXT,
+    after_hash TEXT,
+    PRIMARY KEY (checkpoint_id, ordinal),
+    UNIQUE (checkpoint_id, logical_path),
+    FOREIGN KEY (checkpoint_id)
+        REFERENCES workspace_checkpoint_set(checkpoint_id)
+);
+
 CREATE TABLE IF NOT EXISTS operation_snapshot (
     snapshot_id TEXT PRIMARY KEY,
     execution_id TEXT NOT NULL UNIQUE,
@@ -469,6 +546,17 @@ CREATE TABLE IF NOT EXISTS model_attempt (
     FOREIGN KEY (turn_id) REFERENCES conversation_turn(turn_id),
     FOREIGN KEY (run_id) REFERENCES agent_run(run_id),
     FOREIGN KEY (round_id) REFERENCES agent_round(round_id)
+);
+
+CREATE TABLE IF NOT EXISTS model_attempt_failure_detail (
+    attempt_id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    provider_status INTEGER,
+    provider_code TEXT,
+    provider_type TEXT,
+    diagnostic_message TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES model_attempt(attempt_id)
 );
 
 CREATE TABLE IF NOT EXISTS model_context_snapshot (
@@ -553,4 +641,16 @@ CREATE TABLE IF NOT EXISTS tool_observation (
     created_at TEXT NOT NULL,
     FOREIGN KEY (tool_call_id) REFERENCES model_tool_call(tool_call_id),
     FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
+);
+
+CREATE TABLE IF NOT EXISTS tool_observation_retention_decision (
+    observation_id TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (observation_id)
+        REFERENCES tool_observation(observation_id),
+    FOREIGN KEY (execution_id)
+        REFERENCES tool_execution(execution_id)
 );

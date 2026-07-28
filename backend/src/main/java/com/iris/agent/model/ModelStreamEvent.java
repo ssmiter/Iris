@@ -33,6 +33,7 @@ public sealed interface ModelStreamEvent {
     }
 
     enum BlockKind {
+        PROVIDER_STATE,
         THINKING,
         TEXT,
         TOOL_CALL

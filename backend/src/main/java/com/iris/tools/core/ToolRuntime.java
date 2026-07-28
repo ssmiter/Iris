@@ -10,7 +10,9 @@ import com.iris.tools.core.ToolExecutionViews.ApprovalDecision;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolManifest.SideEffect;
+import com.iris.tools.core.ToolOutputPayloadService.PendingPayload;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -36,24 +38,31 @@ public class ToolRuntime {
     private final ToolRegistry registry;
     private final ToolInputValidator validator;
     private final ToolRuntimeRepository repository;
+    private final ToolOutputPayloadService outputPayloads;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ReentrantLock[] locks;
+    private final ApprovalMode approvalMode;
 
     public ToolRuntime(
             ToolRegistry registry,
             ToolInputValidator validator,
             ToolRuntimeRepository repository,
+            ToolOutputPayloadService outputPayloads,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            @Value("${iris.tools.approval-mode:required}")
+            String approvalMode
     ) {
         this.registry = registry;
         this.validator = validator;
         this.repository = repository;
+        this.outputPayloads = outputPayloads;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.clock = Clock.systemUTC();
+        this.approvalMode = ApprovalMode.parse(approvalMode);
         this.locks = new ReentrantLock[LOCK_COUNT];
         for (int index = 0; index < LOCK_COUNT; index++) {
             locks[index] = new ReentrantLock();
@@ -73,6 +82,10 @@ public class ToolRuntime {
                             "找不到工具 " + invocation.toolName()
                                     + "；请先通过能力目录发现精确定义"
                     ));
+            ToolContext boundedContext = withDeadline(
+                    context,
+                    binding.manifest()
+            );
             requireExactModelExposure(invocation, binding);
             String inputHash = hash(write(input));
             RuntimeResult existing = repository.findByToolCall(
@@ -94,28 +107,42 @@ public class ToolRuntime {
                     inputHash,
                     now
             ));
-            if (context.cancelled()) {
-                completeFailure(
+            if (boundedContext.cancelled()) {
+                completeCancellation(
                         executionId,
-                        ToolOutcome.Kind.FAILED,
-                        "cancelled_before_prepare",
-                        "用户已停止当前任务，工具没有进入准备或执行阶段。",
-                        List.of()
+                        boundedContext,
+                        "prepare"
                 );
                 return result(executionId);
             }
 
             PreparedOperation prepared;
             try {
-                prepared = binding.tool().prepare(input.deepCopy(), context);
+                prepared = binding.tool().prepare(
+                        input.deepCopy(),
+                        boundedContext
+                );
                 validatePrepared(binding, prepared);
             } catch (Exception exception) {
+                boolean timedOut = boundedContext.deadlineExceeded();
                 completeFailure(
                         executionId,
                         ToolOutcome.Kind.FAILED,
-                        "prepare_failed",
-                        safeMessage(exception),
+                        timedOut
+                                ? "tool_timeout_during_prepare"
+                                : errorCode(exception, "prepare_failed"),
+                        timedOut
+                                ? "工具准备阶段超过声明的运行时间，尚未改变外部状态"
+                                : safeMessage(exception),
                         List.of()
+                );
+                return result(executionId);
+            }
+            if (boundedContext.cancelled()) {
+                completeCancellation(
+                        executionId,
+                        boundedContext,
+                        "prepare"
                 );
                 return result(executionId);
             }
@@ -173,7 +200,7 @@ public class ToolRuntime {
             if (requiresApproval(binding.manifest())) {
                 return result(executionId);
             }
-            return execute(executionId, binding, context);
+            return execute(executionId, binding, boundedContext);
         });
     }
 
@@ -243,7 +270,11 @@ public class ToolRuntime {
                     approval.toolName(),
                     approval.executionId()
             );
-            return execute(approval.executionId(), binding, context);
+            return execute(
+                    approval.executionId(),
+                    binding,
+                    withDeadline(context, binding.manifest())
+            );
         });
     }
 
@@ -276,13 +307,14 @@ public class ToolRuntime {
         if ("approved".equals(approval.status())) {
             RuntimeResult current = result(approval.executionId());
             if ("awaiting_approval".equals(current.phase())) {
+                ToolBinding binding = exactBinding(
+                        approval.toolName(),
+                        approval.executionId()
+                );
                 return execute(
                         approval.executionId(),
-                        exactBinding(
-                                approval.toolName(),
-                                approval.executionId()
-                        ),
-                        context
+                        binding,
+                        withDeadline(context, binding.manifest())
                 );
             }
             return current;
@@ -313,13 +345,7 @@ public class ToolRuntime {
             ToolContext context
     ) {
         if (context.cancelled()) {
-            completeFailure(
-                    executionId,
-                    ToolOutcome.Kind.FAILED,
-                    "cancelled_before_execution",
-                    "工具在改变外部状态前被取消",
-                    List.of()
-            );
+            completeCancellation(executionId, context, "execution");
             return result(executionId);
         }
         ToolRuntimeRepository.SnapshotRow snapshot =
@@ -335,13 +361,6 @@ public class ToolRuntime {
             );
             return result(executionId);
         }
-        boolean claimed = transactions.execute(status ->
-                repository.markExecuting(executionId, now)
-        );
-        if (!claimed) {
-            return result(executionId);
-        }
-
         CommittedOperation operation = new CommittedOperation(
                 executionId,
                 snapshot.snapshotId(),
@@ -349,6 +368,35 @@ public class ToolRuntime {
                 readTree(snapshot.normalizedInputJson()),
                 readResources(snapshot.resourcesJson())
         );
+        if (binding.manifest().sideEffect() != SideEffect.NONE
+                && !passesCommitGate(
+                executionId,
+                binding,
+                operation,
+                context
+        )) {
+            return result(executionId);
+        }
+        if (context.cancelled()) {
+            completeCancellation(executionId, context, "execution");
+            return result(executionId);
+        }
+        if (!snapshot.expiresAt().isAfter(clock.instant())) {
+            completeFailure(
+                    executionId,
+                    ToolOutcome.Kind.FAILED,
+                    "snapshot_expired",
+                    "操作快照在提交前核对期间过期；Iris 尚未改变外部状态",
+                    List.of()
+            );
+            return result(executionId);
+        }
+        boolean claimed = transactions.execute(status ->
+                repository.markExecuting(executionId, clock.instant())
+        );
+        if (!claimed) {
+            return result(executionId);
+        }
         ToolOutcome outcome;
         try {
             outcome = binding.tool().execute(operation, context);
@@ -357,14 +405,21 @@ public class ToolRuntime {
             }
         } catch (Exception exception) {
             boolean writeMayHaveHappened =
-                    binding.manifest().sideEffect() != SideEffect.NONE;
+                    binding.manifest().sideEffect() != SideEffect.NONE
+                            && !noOperationEffect(exception);
+            boolean timedOutWithoutEffect = context.deadlineExceeded()
+                    && !writeMayHaveHappened;
             completeFailure(
                     executionId,
                     writeMayHaveHappened
                             ? ToolOutcome.Kind.OUTCOME_UNKNOWN
                             : ToolOutcome.Kind.FAILED,
-                    "execution_interrupted",
-                    safeMessage(exception),
+                    timedOutWithoutEffect
+                            ? "tool_timeout"
+                            : errorCode(exception, "execution_interrupted"),
+                    timedOutWithoutEffect
+                            ? "工具超过声明的运行时间，已在提交边界前停止"
+                            : safeMessage(exception),
                     List.of()
             );
             return result(executionId);
@@ -388,11 +443,16 @@ public class ToolRuntime {
         try {
             verification = binding.tool().verify(outcome, operation, context);
         } catch (Exception exception) {
+            boolean timedOut = context.deadlineExceeded();
             completeFailure(
                     executionId,
                     ToolOutcome.Kind.OUTCOME_UNKNOWN,
-                    "verification_failed",
-                    safeMessage(exception),
+                    timedOut
+                            ? "tool_timeout_during_verification"
+                            : errorCode(exception, "verification_failed"),
+                    timedOut
+                            ? "工具验证阶段超过声明的运行时间，外部结果需要核对"
+                            : safeMessage(exception),
                     List.of()
             );
             return result(executionId);
@@ -415,22 +475,100 @@ public class ToolRuntime {
             persistedKind = ToolOutcome.Kind.OUTCOME_UNKNOWN;
             errorCode = "postcondition_unknown";
         }
-        String outputJson = persistedKind == ToolOutcome.Kind.SUCCEEDED
-                ? boundedOutput(binding.manifest(), outcome.output())
+        String canonicalOutputJson = persistedKind == ToolOutcome.Kind.SUCCEEDED
+                ? write(outcome.output())
                 : null;
+        PendingPayload pendingPayload = null;
+        if (canonicalOutputJson != null) {
+            try {
+                pendingPayload = outputPayloads.writeJson(canonicalOutputJson);
+            } catch (Exception exception) {
+                completeFailure(
+                        executionId,
+                        binding.manifest().sideEffect() == SideEffect.NONE
+                                ? ToolOutcome.Kind.FAILED
+                                : ToolOutcome.Kind.OUTCOME_UNKNOWN,
+                        "tool_output_persistence_failed",
+                        "工具结果无法持久化；Iris 没有把不完整历史宣布为成功",
+                        verification.evidence()
+                );
+                return result(executionId);
+            }
+        }
+        String outputJson = canonicalOutputJson == null
+                ? null
+                : boundedOutput(
+                        binding.manifest(),
+                        canonicalOutputJson,
+                        executionId
+                );
         Instant completedAt = clock.instant();
         String finalErrorCode = errorCode;
-        transactions.executeWithoutResult(status -> repository.complete(
-                executionId,
-                phase,
-                persistedKind,
-                outputJson,
-                finalErrorCode,
-                message,
-                verification.evidence(),
-                completedAt
-        ));
+        PendingPayload finalPayload = pendingPayload;
+        transactions.executeWithoutResult(status -> {
+            if (finalPayload != null) {
+                outputPayloads.attach(
+                        executionId,
+                        finalPayload,
+                        completedAt
+                );
+            }
+            repository.complete(
+                    executionId,
+                    phase,
+                    persistedKind,
+                    outputJson,
+                    finalErrorCode,
+                    message,
+                    verification.evidence(),
+                    completedAt
+            );
+        });
         return result(executionId);
+    }
+
+    private boolean passesCommitGate(
+            String executionId,
+            ToolBinding binding,
+            CommittedOperation committed,
+            ToolContext context
+    ) {
+        try {
+            PreparedOperation refreshed = binding.tool().prepare(
+                    committed.normalizedInput().deepCopy(),
+                    context
+            );
+            validatePrepared(binding, refreshed);
+            if (!refreshed.normalizedInput().equals(
+                    committed.normalizedInput()
+            )) {
+                throw new ToolRuntimeException(
+                        "operation_snapshot_input_changed",
+                        "操作的规范化输入已经变化；Iris 尚未写入，请重新发起"
+                );
+            }
+            if (!refreshed.resources().equals(committed.resources())) {
+                throw new ToolRuntimeException(
+                        "operation_snapshot_resources_changed",
+                        "目标资源在准备后发生变化；Iris 尚未写入，请基于当前状态重新发起"
+                );
+            }
+            return true;
+        } catch (Exception exception) {
+            boolean timedOut = context.deadlineExceeded();
+            completeFailure(
+                    executionId,
+                    ToolOutcome.Kind.FAILED,
+                    timedOut
+                            ? "tool_timeout_during_commit_gate"
+                            : errorCode(exception, "commit_gate_failed"),
+                    timedOut
+                            ? "提交前核对超过声明的运行时间，尚未改变外部状态"
+                            : safeMessage(exception),
+                    List.of()
+            );
+            return false;
+        }
     }
 
     private RuntimeResult requireSameInvocation(
@@ -499,7 +637,7 @@ public class ToolRuntime {
                     "工具没有生成可读的影响说明"
             );
         }
-        if (requiresApproval(binding.manifest())
+        if (hasSideEffect(binding.manifest())
                 && prepared.resources().isEmpty()) {
             throw new ToolRuntimeException(
                     "invalid_operation_snapshot",
@@ -520,6 +658,11 @@ public class ToolRuntime {
     }
 
     private boolean requiresApproval(ToolManifest manifest) {
+        return approvalMode == ApprovalMode.REQUIRED
+                && hasSideEffect(manifest);
+    }
+
+    private boolean hasSideEffect(ToolManifest manifest) {
         return manifest.riskLevel() != RiskLevel.READ_ONLY
                 || manifest.sideEffect() != SideEffect.NONE;
     }
@@ -546,6 +689,45 @@ public class ToolRuntime {
         ));
     }
 
+    private enum ApprovalMode {
+        REQUIRED,
+        AUTO;
+
+        private static ApprovalMode parse(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return REQUIRED;
+            }
+            try {
+                return valueOf(raw.trim().toUpperCase(
+                        java.util.Locale.ROOT
+                ));
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalStateException(
+                        "iris.tools.approval-mode 只能是 required 或 auto"
+                );
+            }
+        }
+    }
+
+    private void completeCancellation(
+            String executionId,
+            ToolContext context,
+            String stage
+    ) {
+        boolean timedOut = context.deadlineExceeded();
+        completeFailure(
+                executionId,
+                ToolOutcome.Kind.FAILED,
+                timedOut
+                        ? "tool_timeout_before_" + stage
+                        : "cancelled_before_" + stage,
+                timedOut
+                        ? "工具超过声明的运行时间，尚未改变外部状态"
+                        : "用户已停止当前任务，工具尚未改变外部状态",
+                List.of()
+        );
+    }
+
     private RuntimeResult result(String executionId) {
         return repository.findByExecutionId(executionId)
                 .orElseThrow(() -> new IllegalStateException(
@@ -553,20 +735,31 @@ public class ToolRuntime {
                 ));
     }
 
-    private String boundedOutput(ToolManifest manifest, JsonNode output) {
-        if (output == null) {
-            return "null";
-        }
-        String json = write(output);
+    private String boundedOutput(
+            ToolManifest manifest,
+            String json,
+            String executionId
+    ) {
         if (json.length() <= manifest.resultCharacterLimit()) {
             return json;
         }
         ObjectNode truncated = objectMapper.createObjectNode();
         truncated.put("truncated", true);
         truncated.put("originalCharacters", json.length());
+        truncated.put("resultReference", "tool-result://" + executionId);
+        int previewLimit = Math.max(
+                0,
+                manifest.resultCharacterLimit() - 1_000
+        );
         truncated.put(
                 "preview",
-                json.substring(0, manifest.resultCharacterLimit())
+                json.substring(0, previewLimit)
+        );
+        truncated.put(
+                "guidance",
+                "完整结果仍已保存；使用 read_tool_result 按字符窗口读取。"
+                        + "如工具尚未加载，先读取能力 "
+                        + "/system/context/read_tool_result"
         );
         return write(truncated);
     }
@@ -624,6 +817,28 @@ public class ToolRuntime {
         return message == null || message.isBlank()
                 ? exception.getClass().getSimpleName()
                 : message;
+    }
+
+    private String errorCode(Exception exception, String fallback) {
+        return exception instanceof ToolRuntimeException runtimeException
+                ? runtimeException.code()
+                : fallback;
+    }
+
+    private boolean noOperationEffect(Exception exception) {
+        return exception instanceof ToolRuntimeException runtimeException
+                && runtimeException.noOperationEffect();
+    }
+
+    private ToolContext withDeadline(
+            ToolContext context,
+            ToolManifest manifest
+    ) {
+        return new DeadlineToolContext(
+                context,
+                clock.instant().plusSeconds(manifest.timeoutSeconds()),
+                clock
+        );
     }
 
     private void requireInvocation(
@@ -685,5 +900,46 @@ public class ToolRuntime {
 
     private String id(String prefix) {
         return prefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private record DeadlineToolContext(
+            ToolContext delegate,
+            Instant deadline,
+            Clock clock
+    ) implements ToolContext {
+        @Override
+        public String conversationId() {
+            return delegate.conversationId();
+        }
+
+        @Override
+        public String turnId() {
+            return delegate.turnId();
+        }
+
+        @Override
+        public String runId() {
+            return delegate.runId();
+        }
+
+        @Override
+        public String roundId() {
+            return delegate.roundId();
+        }
+
+        @Override
+        public java.nio.file.Path workspaceRoot() {
+            return delegate.workspaceRoot();
+        }
+
+        @Override
+        public boolean cancelled() {
+            return delegate.cancelled() || deadlineExceeded();
+        }
+
+        @Override
+        public boolean deadlineExceeded() {
+            return !clock.instant().isBefore(deadline);
+        }
     }
 }

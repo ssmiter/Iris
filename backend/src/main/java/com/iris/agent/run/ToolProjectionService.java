@@ -192,6 +192,12 @@ public class ToolProjectionService {
         projection.put("toolExecutionId", result.executionId());
         projection.put("toolName", call.toolName());
         projection.put("summary", toolSummary(result));
+        if ("succeeded".equals(result.phase())) {
+            projection.put(
+                    "resultRef",
+                    "tool-result://" + result.executionId()
+            );
+        }
         if (result.message() != null && !result.message().isBlank()) {
             projection.put("evidenceSummary", result.message());
         }

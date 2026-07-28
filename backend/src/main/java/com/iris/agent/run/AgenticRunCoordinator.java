@@ -175,7 +175,10 @@ public class AgenticRunCoordinator {
                         return failRun(runId, next.failure());
                     }
                     ContextSeed effectiveSeed = contextSeed == null
-                            ? contextPolicy.seedFor(runId)
+                            ? contextPolicy.seedFor(
+                                    runId,
+                                    next.round().roundId()
+                            )
                             : contextSeed;
                     return rounds.advance(
                                     next.round().roundId(),

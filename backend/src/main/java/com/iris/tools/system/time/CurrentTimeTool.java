@@ -27,7 +27,7 @@ public class CurrentTimeTool implements Tool {
         this.objectMapper = objectMapper;
         this.manifest = new ToolManifest(
                 "iris.system.time.current_time",
-                "1",
+                "3",
                 "current_time",
                 "读取指定时区的当前时间；需要可靠时间事实而非模型猜测时使用",
                 inputSchema(),
@@ -37,7 +37,10 @@ public class CurrentTimeTool implements Tool {
                 5,
                 2_000,
                 ToolManifest.IdempotencySemantics.NON_IDEMPOTENT,
-                ToolManifest.EvidencePolicy.SUMMARY
+                ToolManifest.EvidencePolicy.SUMMARY,
+                ToolManifest.ContextRetention.PINNED,
+                ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
+                ToolManifest.CancellationSemantics.COOPERATIVE
         );
     }
 

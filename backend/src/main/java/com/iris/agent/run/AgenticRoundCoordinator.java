@@ -5,6 +5,7 @@ import com.iris.agent.model.ModelAttemptRepository.AttemptRow;
 import com.iris.agent.model.AnswerStreamProjector;
 import com.iris.agent.model.ModelAttemptResult;
 import com.iris.agent.model.ModelAttemptService;
+import com.iris.agent.model.ModelAttemptService.FailureDiagnostic;
 import com.iris.agent.model.ModelContext;
 import com.iris.agent.model.ModelContextAssembler;
 import com.iris.agent.model.ModelContextAssembler.ContextSeed;
@@ -147,6 +148,7 @@ public class AgenticRoundCoordinator {
                             context.items(),
                             context.tools(),
                             Map.of(
+                                    "providerProfile", provider.profileId(),
                                     "providerKind", provider.providerKind(),
                                     "contextHash", context.contextHash(),
                                     "capabilityLeaseHash",
@@ -313,7 +315,8 @@ public class AgenticRoundCoordinator {
                     AttemptRow successor = attempts.retry(
                             failed.attempt().attemptId(),
                             failed.attempt().version(),
-                            category(error)
+                            category(error),
+                            FailureDiagnostic.from(error)
                     );
                     RoundRow round = runFacts.findRound(
                             successor.roundId()
@@ -343,7 +346,11 @@ public class AgenticRoundCoordinator {
             Throwable error
     ) {
         return Mono.<RoundAdvance>fromCallable(() -> {
-                    attempts.fail(attempt.attemptId(), category(error));
+                    attempts.fail(
+                            attempt.attemptId(),
+                            category(error),
+                            FailureDiagnostic.from(error)
+                    );
                     lifecycleEvents.roundUpdated(attempt.roundId());
                     throw propagate(error);
                 })

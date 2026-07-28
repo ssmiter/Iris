@@ -67,7 +67,8 @@ flowchart TB
 
         subgraph DATA["持久化与本机设施"]
             SQL["SQLite<br/>事实 / 事件 / 投影 / 审批"]
-            FS["Workspace 文件系统<br/>Checkpoint / Artifact"]
+            OBJECTS["Managed Object Store<br/>不可变大内容 / Checkpoint 原文"]
+            FS["User Workspace<br/>用户文件 / 可见 Artifact"]
             SECRETS["Windows 本机秘密存储"]
             CACHE["进程内可重建缓存<br/>Catalog 索引 / provider health / 热投影"]
         end
@@ -75,6 +76,9 @@ flowchart TB
         FE <-->|"REST commands + SSE projections"| APP
         CONV --> SQL
         EXEC --> SQL
+        CONV --> OBJECTS
+        EXEC --> OBJECTS
+        WS --> OBJECTS
         WS --> FS
         CONN --> SECRETS
         CAP --> CACHE
@@ -99,7 +103,30 @@ flowchart TB
 
 ### 3.2 数据层与缓存层
 
-SQLite 是业务真相，不是缓存。文件内容留在 Workspace，数据库只保存逻辑路径、版本、hash、checkpoint 与 artifact 引用。秘密进入 Windows Credential Manager、DPAPI 包装存储或后续验证过的等价机制，不进入 SQLite 明文字段。
+Iris 不用一种介质承载所有数据，而按语义和访问形态分三层：
+
+| 层 | 保存什么 | 不保存什么 |
+|---|---|---|
+| SQLite | Conversation、Run、ToolExecution、Capability Definition、路径、版本、hash、状态机、引用与索引 | 大段 Tool output、Checkpoint 原文字节、用户文件 |
+| Managed Object Store | 按内容寻址的不可变字节，如完整 Tool output、Checkpoint 原文、内部 Artifact payload | 可变业务状态、目录树、用户可直接编辑的文件 |
+| User Workspace | 用户理解并拥有的文件、显式发布的 Artifact | Iris 内部缓存、对话 payload、Checkpoint 私有副本 |
+
+语义身份不暴露物理路径。模型和历史使用 `workspace://`、`capability://`、
+`tool-result://`、`checkpoint://` 等稳定引用；SQLite 把这些身份连接到当前版本和
+`objectRef`，Managed Object Store 再把 `objectRef` 映射为受保护物理文件。对象先以
+内容 hash 原子落盘，再提交 SQL 引用；中断最多产生以后可回收的孤儿对象，不能产生
+指向未落盘内容的有效事实。
+
+Capability Catalog 与 Workspace 都属于语义组织，但两者不是同一棵树：
+
+- Workspace 路径组织用户对象，允许在审批后改变内容；
+- Capability 路径组织模型可发现的能力，Definition version 不可变，当前 binding
+  与可重建搜索索引是另外的状态；
+- Java package 只负责推导本地 provider 的初始能力路径，不是历史身份；SQL 保存
+  已被引用的 Definition snapshot/hash，保证实现离线、移动或升级后历史仍可解释。
+
+秘密进入 Windows Credential Manager、DPAPI 包装存储或后续验证过的等价机制，不进入
+SQLite 明文字段，也不进入 Managed Object Store。
 
 “SQLite 是首版真相”是当前实现基线，不是对最终存储形态的永久承诺。Iris 后续必须用真实
 负载评估整条数据路径：token/event 写放大、单写者等待、ConversationView 水合 P95、
@@ -830,9 +857,11 @@ Controller、Pipeline、Agent、MCP、Cron 和 WebBridge 都提交给 Tool Runti
 
 Branch 改历史视野，Compact 改模型视野，Workspace restore 改文件世界；三者不能因 UI 操作静默联动。
 
-### D02-08：SQLite 是真相，缓存可全部丢弃
+### D02-08：事实、内容与用户文件分层持久化
 
-首版不引入外部缓存中间件。
+SQLite 保存结构化事实及对象引用；Managed Object Store 保存不可变大内容；User
+Workspace 保存用户可理解、可编辑的文件。三者不能互相伪装，首版不引入外部缓存
+中间件。
 
 ### D02-09：Capability schema 使用短期 Working Set
 

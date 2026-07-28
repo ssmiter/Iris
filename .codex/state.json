@@ -1,7 +1,7 @@
 {
   "continent": "大陆 2",
-  "node": "2.4-2.7 纵向对话内核（Supplement/Stop/Approval/Capability Lease/Compaction/Branch）",
-  "status": "implemented_pending_experience_iteration",
+  "node": "2.4-3.4 对话上下文、工具结果、能力定义与工作区持久化纵切",
+  "status": "implemented_pending_unified_verification",
   "outputs": [
     "docs/10-naming-and-identity.md",
     "docs/11-design-system.md",
@@ -29,12 +29,18 @@
     "frontend/src/theme/theme.ts",
     "frontend/src/App.tsx",
     "frontend/package.json",
-    "frontend/package-lock.json"
+    "frontend/package-lock.json",
+    "backend/src/main/java/com/iris/storage/ManagedObjectStore.java",
+    "backend/src/main/java/com/iris/tools/catalog/CapabilityDefinitionPersistence.java",
+    "backend/src/main/java/com/iris/tools/core/ToolOutputPayloadService.java",
+    "backend/src/main/java/com/iris/workspace/WorkspaceCheckpointService.java",
+    "backend/src/main/java/com/iris/agent/model/ToolObservationMicroCompactor.java"
   ],
   "verification": "2026-07-26 阶段检查：frontend npm run build 通过（1841 modules，保留既有 Vite chunk warning）；backend Maven 离线编译 104 个 Java 源文件通过；SQLite 新库启动、15001 API、15173 Vite 代理均返回 200。用户已完成第一轮应用层实际体验；据此修复 CompactionRepository 代理、开发工作区、DeepSeek 外网运行边界及 OpenAI 兼容字段/端点。",
   "next": [
     "继续由用户从应用层体验真实多轮对话，并按运行事实修正交互与内核",
     "验证 CompactBoundary、分支位置与压缩水位线在长对话中的组合行为",
+    "统一验证 SQLite + Managed Object Store + User Workspace 的启动、结果读回与 Checkpoint 恢复",
     "完善 Provider 失败诊断、重试分类与 attempt 隔离策略",
     "扩展能力发现与真实工具执行的纵向体验"
   ],

@@ -363,7 +363,10 @@ public class ToolRuntimeRepository {
                     error_message = :errorMessage,
                     version = version + 1, updated_at = :now
                 WHERE execution_id = :executionId
-                  AND phase IN ('executing', 'verifying', 'claimed')
+                  AND phase IN (
+                      'executing', 'verifying', 'claimed',
+                      'prepared', 'awaiting_approval'
+                  )
                 """)
                 .param("phase", phase)
                 .param("outcomeKind", outcomeKind.name().toLowerCase())
@@ -394,6 +397,61 @@ public class ToolRuntimeRepository {
                     .param("now", now.toString())
                     .update();
         }
+    }
+
+    public void storeOutputPayload(
+            String executionId,
+            String objectRef,
+            String mediaType,
+            String contentHash,
+            long byteCount,
+            int characterCount,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO tool_output_payload(
+                    execution_id, object_ref, media_type, content_hash,
+                    byte_count, character_count, created_at
+                ) VALUES (
+                    :executionId, :objectRef, :mediaType, :contentHash,
+                    :byteCount, :characterCount, :now
+                )
+                ON CONFLICT(execution_id) DO NOTHING
+                """)
+                .param("executionId", executionId)
+                .param("objectRef", objectRef)
+                .param("mediaType", mediaType)
+                .param("contentHash", contentHash)
+                .param("byteCount", byteCount)
+                .param("characterCount", characterCount)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public Optional<OutputPayload> findOutputPayload(
+            String conversationId,
+            String executionId
+    ) {
+        return jdbc.sql("""
+                SELECT p.execution_id, p.object_ref, p.media_type,
+                       p.content_hash, p.byte_count, p.character_count
+                FROM tool_output_payload p
+                JOIN tool_execution e
+                  ON e.execution_id = p.execution_id
+                WHERE p.execution_id = :executionId
+                  AND e.conversation_id = :conversationId
+                """)
+                .param("executionId", executionId)
+                .param("conversationId", conversationId)
+                .query((rs, rowNum) -> new OutputPayload(
+                        rs.getString("execution_id"),
+                        rs.getString("object_ref"),
+                        rs.getString("media_type"),
+                        rs.getString("content_hash"),
+                        rs.getLong("byte_count"),
+                        rs.getInt("character_count")
+                ))
+                .optional();
     }
 
     public SnapshotRow snapshot(String executionId) {
@@ -528,6 +586,16 @@ public class ToolRuntimeRepository {
             String normalizedInputJson,
             String resourcesJson,
             Instant expiresAt
+    ) {
+    }
+
+    public record OutputPayload(
+            String executionId,
+            String objectRef,
+            String mediaType,
+            String contentHash,
+            long byteCount,
+            int characterCount
     ) {
     }
 }

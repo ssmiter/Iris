@@ -34,7 +34,16 @@ public class ToolRegistry {
     }
 
     private void register(Tool tool, ObjectMapper objectMapper) {
-        ToolManifest manifest = requireValidManifest(tool.manifest());
+        ToolManifest manifest;
+        try {
+            manifest = requireValidManifest(tool.manifest());
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException(
+                    "工具定义无效 " + tool.getClass().getName()
+                            + "：" + exception.getMessage(),
+                    exception
+            );
+        }
         String directoryPath = DomainCatalog.inferPath(tool.getClass());
         String capabilityPath = directoryPath + "/" + manifest.name();
         String identity = manifest.id() + "@" + manifest.version();
@@ -93,8 +102,26 @@ public class ToolRegistry {
         if (manifest.timeoutSeconds() <= 0
                 || manifest.resultCharacterLimit() <= 0
                 || manifest.idempotency() == null
-                || manifest.evidencePolicy() == null) {
+                || manifest.evidencePolicy() == null
+                || manifest.contextRetention() == null
+                || manifest.concurrency() == null
+                || manifest.cancellation() == null) {
             throw new IllegalStateException("工具运行策略声明不完整");
+        }
+        if (manifest.concurrency()
+                == ToolManifest.ConcurrencySemantics.PARALLEL_SAFE
+                && (manifest.riskLevel() != RiskLevel.READ_ONLY
+                || manifest.sideEffect() != ToolManifest.SideEffect.NONE)) {
+            throw new IllegalStateException(
+                    "parallel_safe 首版只允许无副作用只读工具"
+            );
+        }
+        if (manifest.cancellation()
+                == ToolManifest.CancellationSemantics.COOPERATIVE
+                && manifest.sideEffect() != ToolManifest.SideEffect.NONE) {
+            throw new IllegalStateException(
+                    "有副作用工具不能声明 cooperative cancellation"
+            );
         }
         return manifest;
     }

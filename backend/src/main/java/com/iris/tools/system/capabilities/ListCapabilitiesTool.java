@@ -32,9 +32,9 @@ public class ListCapabilitiesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.list",
-                "1",
+                "2",
                 "list_capabilities",
-                "列出能力目录的直接子目录、数量和当前层工具卡片；探索能力方向时使用",
+                "列出能力目录的直接子目录、数量和当前层工具卡片；结构未知时浏览，词面明确时用 search_files 的 capabilities 命名空间",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -42,7 +42,10 @@ public class ListCapabilitiesTool implements Tool {
                 5,
                 20_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT,
-                ToolManifest.EvidencePolicy.SUMMARY
+                ToolManifest.EvidencePolicy.SUMMARY,
+                ToolManifest.ContextRetention.PINNED,
+                ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
+                ToolManifest.CancellationSemantics.COOPERATIVE
         );
     }
 

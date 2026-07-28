@@ -102,34 +102,60 @@ public class ModelContextWindowPlanner {
 
     private List<AtomicGroup> atomicGroups(List<ModelInputItem> facts) {
         List<AtomicGroup> groups = new ArrayList<>();
-        Map<String, MutableToolGroup> toolGroups = new LinkedHashMap<>();
+        Map<String, MutableAssistantTrajectory> trajectories =
+                new LinkedHashMap<>();
+        Map<String, MutableAssistantTrajectory> toolGroups =
+                new LinkedHashMap<>();
         Set<String> resultIds = new HashSet<>();
         for (ModelInputItem fact : facts) {
-            if (fact instanceof ModelInputItem.AssistantToolCall call) {
+            if (fact instanceof ModelInputItem.AssistantProviderState state) {
+                trajectory(
+                        state.attemptId(),
+                        trajectories,
+                        groups
+                ).add(state);
+            } else if (fact instanceof ModelInputItem.AssistantText text) {
+                trajectory(
+                        text.attemptId(),
+                        trajectories,
+                        groups
+                ).add(text);
+            } else if (fact instanceof ModelInputItem.AssistantToolCall call) {
                 if (toolGroups.containsKey(call.toolCallId())) {
                     throw protocol("Duplicate ToolCall in model context");
                 }
-                MutableToolGroup group = new MutableToolGroup(
-                        call
+                MutableAssistantTrajectory group = trajectory(
+                        call.attemptId(),
+                        trajectories,
+                        groups
                 );
+                group.add(call);
                 toolGroups.put(call.toolCallId(), group);
-                groups.add(group);
             } else if (fact instanceof ModelInputItem.ToolResult result) {
-                MutableToolGroup group = toolGroups.get(result.toolCallId());
+                MutableAssistantTrajectory group =
+                        toolGroups.get(result.toolCallId());
                 if (group == null) {
                     throw protocol(
                             "ToolResult has no preceding assistant ToolCall"
                     );
                 }
+                if (!group.attemptId().equals(
+                        result.assistantAttemptId()
+                )) {
+                    throw protocol(
+                            "ToolResult belongs to another assistant attempt"
+                    );
+                }
                 if (!resultIds.add(result.toolCallId())) {
                     throw protocol("ToolCall has duplicate ToolResult facts");
                 }
-                group.addResult(result);
+                group.add(result);
             } else {
                 groups.add(new ImmutableGroup(List.of(fact)));
             }
         }
-        for (Map.Entry<String, MutableToolGroup> entry : toolGroups.entrySet()) {
+        for (Map.Entry<String, MutableAssistantTrajectory> entry
+                : toolGroups.entrySet()) {
             if (!resultIds.contains(entry.getKey())) {
                 throw protocol(
                         "Completed context contains ToolCall without ToolResult"
@@ -137,6 +163,25 @@ public class ModelContextWindowPlanner {
             }
         }
         return List.copyOf(groups);
+    }
+
+    private MutableAssistantTrajectory trajectory(
+            String attemptId,
+            Map<String, MutableAssistantTrajectory> trajectories,
+            List<AtomicGroup> groups
+    ) {
+        if (attemptId == null || attemptId.isBlank()) {
+            throw protocol("Assistant fact has no source attempt");
+        }
+        MutableAssistantTrajectory existing = trajectories.get(attemptId);
+        if (existing != null) {
+            return existing;
+        }
+        MutableAssistantTrajectory created =
+                new MutableAssistantTrajectory(attemptId);
+        trajectories.put(attemptId, created);
+        groups.add(created);
+        return created;
     }
 
     private ModelProtocolException protocol(String message) {
@@ -179,7 +224,7 @@ public class ModelContextWindowPlanner {
     }
 
     private sealed interface AtomicGroup
-            permits ImmutableGroup, MutableToolGroup {
+            permits ImmutableGroup, MutableAssistantTrajectory {
         List<ModelInputItem> items();
     }
 
@@ -188,17 +233,21 @@ public class ModelContextWindowPlanner {
     ) implements AtomicGroup {
     }
 
-    private static final class MutableToolGroup implements AtomicGroup {
-        private final List<ModelInputItem> items = new ArrayList<>(2);
+    private static final class MutableAssistantTrajectory
+            implements AtomicGroup {
+        private final String attemptId;
+        private final List<ModelInputItem> items = new ArrayList<>();
 
-        private MutableToolGroup(
-                ModelInputItem.AssistantToolCall call
-        ) {
-            items.add(call);
+        private MutableAssistantTrajectory(String attemptId) {
+            this.attemptId = attemptId;
         }
 
-        private void addResult(ModelInputItem.ToolResult result) {
-            items.add(result);
+        private String attemptId() {
+            return attemptId;
+        }
+
+        private void add(ModelInputItem item) {
+            items.add(item);
         }
 
         @Override

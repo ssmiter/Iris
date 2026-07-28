@@ -4,9 +4,25 @@
 > 的 Agent 内核。工业互联网与个人助手都是后续产品化方向；当前不按场景数量推进，也
 > 不提前建设通用工作流市场。
 >
-> **截至 2026-07-26**：M0 已跑通；M1 与 M2 的首个纵向切片已进入真实对话体验，
+> **截至 2026-07-28**：M0 已跑通；M1 与 M2 的首个纵向切片已进入真实对话体验，
 > 但长对话中的分支 × 压缩水位线、复杂工具链与进程恢复仍需持续验证。下列勾选表示
 > “已有可运行实现”，不等于该能力已经产品化完成。
+
+## 当前收敛顺序：先闭环，再扩原语
+
+1. **P0 信息闭环**：Tool 完整结果与 Observation 分离；截断可读回；stop/error/重启
+   不丢 Turn 成果；prompt-too-long 重试基于本轮 canonical facts，不退回启动快照。
+2. **P0 单 Agent 主循环**：Round 边界、并行只读与串行依赖、取消、失败分类、
+   compact 水位线和恢复状态机形成同一条确定性路径。
+3. **P1 原语完备**：先完成文件 `read/list/search → write/patch/move/checkpoint`，
+   再补进程、网页与结构化数据。每个原语以客观、正交、充分必要为准，不按数量推进。
+4. **P1 上下文效率**：只清理可重取 Tool Observation 的 micro compact、历史投影
+   决策冻结、稳定 prompt 前缀、Capability lease 逐出和压缩后关键引用回填。
+5. **P2 体验投影**：前端消费相同 Run/Round/Tool/Attention 事实；流式与动画只做
+   增量投影，不在 UI 重新推断内核状态。
+
+横切不变量：canonical history 永不被摘要或截断覆盖；系统结果存储与用户工作区分区；
+权限先于落盘；所有上下文优化都必须留下稳定来源引用和可恢复路径。
 
 ## M0 · 骨架可跑
 - [x] backend：Spring Boot 工程 + `POST /api/v1/conversations/{id}/turns` + conversation SSE（DeepSeek OpenAI-compatible）
@@ -25,12 +41,14 @@
 - [x] Tool 契约 + Registry + 目录即路径 + 能力树统计
 - [x] 发现三原语 + Capability Working Set / schema lease 的首版实现
 - [x] 审批闸门 + 审批条 UI
+- [x] Tool 完整结果持久化与有界 Observation 分离；超预算结果可按 executionId 读回
 - [ ] 足够闭环的系统原语；业务领域能力只用于验证抽象，不以数量充当效果指标
 - [ ] 只落地 2-3 个 code-defined system Pipeline，通用 DSL、自动轨迹挖掘与公共 authoring 后置
 - [ ] 组合验收：模型通过目录找到自己没见过的工具并正确调用；写操作必审批
 
 ## M3 · 工作区 + 沙箱
 - [x] 工作区路径围栏（越界 fail-close）
+- [x] 文件只读原语首切片：稳定列目录、文本搜索、按行读取（Windows 一等公民）
 - [ ] 文件工具 + Checkpoint；恢复是独立受审批写动作
 - [ ] Trusted Runner / Sandbox 边界 + staged input/output + 产物卡片
 - 验收："整理这个 Excel 并生成报告 docx"一次跑通，文件卡片可预览

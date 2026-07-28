@@ -2,14 +2,19 @@ package com.iris.tools.catalog;
 
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.ToolRuntimeException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * 能力树服务（docs/03 §5）：目录树 + 每个目录的工具数统计。
@@ -18,10 +23,28 @@ import java.util.Optional;
 @Service
 public class CapabilityService {
 
+    private static final int MAX_QUERY_CHARACTERS = 256;
+    private static final Pattern UNSAFE_REGEX = Pattern.compile(
+            "\\([^)]*[+*][^)]*\\)[+*]"
+    );
+    private static final Set<String> BASE_DISCOVERY_TOOLS = Set.of(
+            "list_capabilities",
+            "search_files",
+            "read_capability"
+    );
+
     private final ToolRegistry registry;
+    private final List<CatalogDocument> searchDocuments;
 
     public CapabilityService(ToolRegistry registry) {
         this.registry = registry;
+        this.searchDocuments = registry.all().stream()
+                .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
+                        binding.manifest().name()
+                ))
+                .map(this::document)
+                .sorted(Comparator.comparing(CatalogDocument::path))
+                .toList();
     }
 
     public record CapabilityNode(
@@ -96,44 +119,73 @@ public class CapabilityService {
         );
     }
 
-    public SearchResult search(
+    /**
+     * search_files 的 Capability namespace projection。
+     *
+     * Definition 仍以 Registry binding 为执行真相；这里仅预编译稳定字段，避免每次
+     * 查询重新序列化 schema 或构造虚拟 Markdown 文件。
+     */
+    public CapabilityFileSearchResult searchFiles(
             String query,
+            String parentPath,
+            boolean regex,
+            boolean caseSensitive,
+            String glob,
             int limit,
             String systemCode
     ) {
         if (query == null || query.isBlank()) {
-            throw new IllegalArgumentException("Search query cannot be blank");
+            throw new IllegalArgumentException("query 不能为空");
         }
-        if (limit < 1 || limit > 50) {
-            throw new IllegalArgumentException(
-                    "Search limit must be between 1 and 50"
+        if (query.length() > MAX_QUERY_CHARACTERS) {
+            throw new ToolRuntimeException(
+                    "search_query_too_long",
+                    "搜索内容不能超过 " + MAX_QUERY_CHARACTERS + " 个字符"
             );
         }
-        List<String> terms = List.of(
-                query.toLowerCase(Locale.ROOT).trim().split("\\s+")
-        );
-        List<RankedCard> matches = registry.all().stream()
-                .filter(binding -> DomainCatalog.visible(
-                        systemCode,
-                        binding.capabilityPath()
-                ))
-                .map(binding -> new RankedCard(
-                        score(binding, terms),
-                        card(binding)
-                ))
-                .filter(result -> result.score() > 0)
-                .sorted(java.util.Comparator
-                        .comparingInt(RankedCard::score)
-                        .reversed()
-                        .thenComparing(result -> result.card().path()))
-                .toList();
-        return new SearchResult(
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException(
+                    "搜索结果上限必须在 1 到 100 之间"
+            );
+        }
+        String parent = normalizePath(parentPath);
+        Pattern queryPattern = compileSearchPattern(
                 query.trim(),
+                regex,
+                caseSensitive
+        );
+        Pattern globPattern = compileGlob(glob);
+        List<CatalogDocument> candidates = searchDocuments.stream()
+                .filter(document -> DomainCatalog.visible(
+                        systemCode,
+                        document.path()
+                ))
+                .filter(document -> within(document.path(), parent))
+                .filter(document -> matchesGlob(
+                        document.path(),
+                        parent,
+                        globPattern
+                ))
+                .toList();
+        List<RankedDocument> matches = candidates.stream()
+                .map(document -> rank(document, queryPattern))
+                .filter(result -> result.score() > 0)
+                .sorted(Comparator
+                        .comparingInt(RankedDocument::score)
+                        .reversed()
+                        .thenComparing(result -> result.document().path()))
+                .toList();
+        return new CapabilityFileSearchResult(
+                query.trim(),
+                parent,
+                candidates.size(),
                 matches.size(),
                 matches.stream()
                         .limit(limit)
-                        .map(RankedCard::card)
-                        .toList()
+                        .map(this::fileMatch)
+                        .toList(),
+                matches.size() > limit,
+                candidates.size()
         );
     }
 
@@ -151,35 +203,150 @@ public class CapabilityService {
                 .findFirst();
     }
 
-    private int score(ToolBinding binding, List<String> terms) {
-        String name = binding.manifest().name().toLowerCase(Locale.ROOT);
-        String description = binding.manifest().description()
-                .toLowerCase(Locale.ROOT);
-        String path = binding.capabilityPath().toLowerCase(Locale.ROOT);
-        String schema = binding.manifest().inputSchema()
-                .path("properties").fieldNames().hasNext()
-                ? binding.manifest().inputSchema()
-                        .path("properties").toString()
-                        .toLowerCase(Locale.ROOT)
-                : "";
+    private RankedDocument rank(
+            CatalogDocument document,
+            Pattern pattern
+    ) {
         int score = 0;
-        for (String term : terms) {
-            if (name.equals(term)) {
-                score += 20;
-            } else if (name.contains(term)) {
-                score += 10;
-            }
-            if (path.contains(term)) {
-                score += 6;
-            }
-            if (description.contains(term)) {
-                score += 4;
-            }
-            if (schema.contains(term)) {
-                score += 2;
+        String matchedField = null;
+        if (pattern.matcher(document.name()).find()) {
+            score += 80;
+            matchedField = "name";
+        }
+        if (pattern.matcher(document.path()).find()) {
+            score += 50;
+            if (matchedField == null) matchedField = "path";
+        }
+        if (pattern.matcher(document.description()).find()) {
+            score += 30;
+            if (matchedField == null) matchedField = "description";
+        }
+        if (pattern.matcher(document.parameterNames()).find()) {
+            score += 20;
+            if (matchedField == null) matchedField = "parameters";
+        }
+        if (pattern.matcher(document.metadata()).find()) {
+            score += 10;
+            if (matchedField == null) matchedField = "metadata";
+        }
+        return new RankedDocument(score, matchedField, document);
+    }
+
+    private CapabilityFileMatch fileMatch(RankedDocument ranked) {
+        CatalogDocument document = ranked.document();
+        return new CapabilityFileMatch(
+                document.path(),
+                document.name(),
+                document.description(),
+                ranked.matchedField(),
+                document.binding().manifest().riskLevel()
+                        .name().toLowerCase(Locale.ROOT)
+        );
+    }
+
+    private CatalogDocument document(ToolBinding binding) {
+        List<String> parameters = new ArrayList<>();
+        binding.manifest().inputSchema().path("properties")
+                .fieldNames().forEachRemaining(parameters::add);
+        parameters.sort(String::compareTo);
+        String metadata = String.join(" ",
+                binding.manifest().id(),
+                binding.manifest().version(),
+                binding.manifest().riskLevel().name(),
+                binding.manifest().sideEffect().name()
+        );
+        return new CatalogDocument(
+                binding,
+                binding.capabilityPath(),
+                binding.manifest().name(),
+                binding.manifest().description(),
+                String.join(" ", parameters),
+                metadata
+        );
+    }
+
+    private Pattern compileSearchPattern(
+            String query,
+            boolean regex,
+            boolean caseSensitive
+    ) {
+        String expression = regex ? query : Pattern.quote(query);
+        if (regex && UNSAFE_REGEX.matcher(expression).find()) {
+            throw new ToolRuntimeException(
+                    "unsafe_search_regex",
+                    "正则包含容易造成灾难性回溯的嵌套量词；请使用更直接的表达式"
+            );
+        }
+        int flags = caseSensitive
+                ? 0
+                : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+        try {
+            return Pattern.compile(expression, flags);
+        } catch (PatternSyntaxException exception) {
+            throw new ToolRuntimeException(
+                    "invalid_search_regex",
+                    "搜索正则无效：" + exception.getDescription()
+            );
+        }
+    }
+
+    private Pattern compileGlob(String glob) {
+        if (glob == null || glob.isBlank()) {
+            return null;
+        }
+        String normalized = glob.trim().replace('\\', '/');
+        if (normalized.length() > 256
+                || normalized.startsWith("/")
+                || normalized.contains(":")
+                || List.of(normalized.split("/")).contains("..")) {
+            throw new ToolRuntimeException(
+                    "invalid_search_glob",
+                    "glob 必须是能力目录内不含 .. 的相对模式"
+            );
+        }
+        StringBuilder expression = new StringBuilder("^");
+        for (int index = 0; index < normalized.length(); index++) {
+            char current = normalized.charAt(index);
+            if (current == '*') {
+                if (index + 1 < normalized.length()
+                        && normalized.charAt(index + 1) == '*') {
+                    expression.append(".*");
+                    index++;
+                } else {
+                    expression.append("[^/]*");
+                }
+            } else if (current == '?') {
+                expression.append("[^/]");
+            } else {
+                if (".+()^${}|[]\\".indexOf(current) >= 0) {
+                    expression.append('\\');
+                }
+                expression.append(current);
             }
         }
-        return score;
+        expression.append('$');
+        return Pattern.compile(expression.toString());
+    }
+
+    private boolean matchesGlob(
+            String path,
+            String parent,
+            Pattern globPattern
+    ) {
+        if (globPattern == null) {
+            return true;
+        }
+        String prefix = "/".equals(parent) ? "/" : parent + "/";
+        String relative = path.startsWith(prefix)
+                ? path.substring(prefix.length())
+                : path;
+        return globPattern.matcher(relative).matches();
+    }
+
+    private boolean within(String path, String parent) {
+        return "/".equals(parent)
+                || path.equals(parent)
+                || path.startsWith(parent + "/");
     }
 
     private CapabilityCard card(ToolBinding binding) {
@@ -194,7 +361,7 @@ public class CapabilityService {
         );
     }
 
-    private String normalizePath(String path) {
+    public String normalizePath(String path) {
         if (path == null || path.isBlank() || "/".equals(path.trim())) {
             return "/";
         }
@@ -248,13 +415,40 @@ public class CapabilityService {
     ) {
     }
 
-    public record SearchResult(
+    public record CapabilityFileSearchResult(
             String query,
+            String path,
+            int candidateFiles,
             int total,
-            List<CapabilityCard> items
+            List<CapabilityFileMatch> matches,
+            boolean truncated,
+            int scannedEntries
     ) {
     }
 
-    private record RankedCard(int score, CapabilityCard card) {
+    public record CapabilityFileMatch(
+            String path,
+            String name,
+            String preview,
+            String matchedField,
+            String riskLevel
+    ) {
+    }
+
+    private record CatalogDocument(
+            ToolBinding binding,
+            String path,
+            String name,
+            String description,
+            String parameterNames,
+            String metadata
+    ) {
+    }
+
+    private record RankedDocument(
+            int score,
+            String matchedField,
+            CatalogDocument document
+    ) {
     }
 }

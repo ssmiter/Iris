@@ -33,7 +33,7 @@ public class ReadCapabilityTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.read",
-                "1",
+                "2",
                 "read_capability",
                 "读取一个精确能力路径的完整版本化定义与参数 schema；决定调用前使用",
                 inputSchema(),
@@ -43,7 +43,10 @@ public class ReadCapabilityTool implements Tool {
                 5,
                 30_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT,
-                ToolManifest.EvidencePolicy.REQUIRED
+                ToolManifest.EvidencePolicy.REQUIRED,
+                ToolManifest.ContextRetention.PINNED,
+                ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
+                ToolManifest.CancellationSemantics.COOPERATIVE
         );
     }
 

@@ -261,6 +261,35 @@ public class ModelAttemptRepository {
                 .update() == 1;
     }
 
+    public void insertFailureDetail(
+            String attemptId,
+            String category,
+            Integer providerStatus,
+            String providerCode,
+            String providerType,
+            String diagnosticMessage,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO model_attempt_failure_detail(
+                    attempt_id, category, provider_status, provider_code,
+                    provider_type, diagnostic_message, created_at
+                ) VALUES (
+                    :attemptId, :category, :providerStatus, :providerCode,
+                    :providerType, :diagnosticMessage, :now
+                )
+                ON CONFLICT(attempt_id) DO NOTHING
+                """)
+                .param("attemptId", attemptId)
+                .param("category", category)
+                .param("providerStatus", providerStatus, Types.INTEGER)
+                .param("providerCode", providerCode, Types.VARCHAR)
+                .param("providerType", providerType, Types.VARCHAR)
+                .param("diagnosticMessage", diagnosticMessage, Types.VARCHAR)
+                .param("now", now.toString())
+                .update();
+    }
+
     public int reconcileInterrupted(Instant now) {
         int attemptsUpdated = jdbc.sql("""
                 UPDATE model_attempt

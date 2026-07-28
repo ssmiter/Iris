@@ -81,6 +81,12 @@ Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座�
 
 完整 Tool schema 不属于永久系统提示。每个 Model attempt 只激活 Capability Working Set 中有预算、绑定 `contextFrameId + modelStepId + modelAttemptId + capabilityId/version + schemaHash` 的短期 schema lease；Agentic ToolCall 必须链接对应 Exposure。CompactBoundary 只保留 source range、summary/fact refs 和少量未来求解 hints，不会让曾读过的 schema 跨长对话永久驻留。
 
+稳定的工具元认知提示只负责四件事：建立“结果必须来自客观 observation”的事实观，
+说明目录/搜索/读取 Definition 的发现循环，说明工作区、结果对象与计算等平台如何组合，
+以及根据结构化 `effect + recovery.action` 处理失败和止损。它不罗列全量工具，不写某个
+业务域的临时 SOP，也不提前承诺尚未接通的 SQL、沙箱或浏览器环境。Catalog 摘要只含
+Definition hash 与顶层目录计数；Definition 未变化时，系统提示前缀保持逐字节稳定。
+
 ## 7. 持久化
 
 | 数据 | 位置 | 说明 |
@@ -88,7 +94,7 @@ Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座�
 | Message / Turn / Run / Round / ToolCall | 后端 SQLite | canonical facts，结构完整 |
 | RenderNode / ConversationView | 后端 SQLite | 可迁移重建的持久化投影 |
 | 分支 / 压缩边界 / Context Frame | 后端 SQLite | 只改变历史或模型视野，不删除原事实 |
-| 检查点 | 工作区受保护存储 | 文件系统快照 + SQLite metadata |
+| 检查点 | Managed Object Store + SQLite | 不可变原文对象 + 结构化 metadata |
 | 展开 / 滚动 / 草稿 | 前端 View State | 可丢弃、可重建，不是历史真相 |
 
 SQLite 事务先提交事实和事件，再由 SSE 投影。前端刷新从 ConversationView 的 event cursor 续传；IndexedDB/localStorage 不能成为分支、压缩或审批的唯一来源。

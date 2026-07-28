@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.agent.model.ModelAttemptRepository.AttemptRow;
 import com.iris.agent.model.ModelAttemptResult.ContentBlock;
+import com.iris.agent.model.provider.ModelProviderException;
 import com.iris.agent.run.RoundPhase;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
@@ -216,7 +217,8 @@ public class ModelAttemptService {
 
     public void fail(
             String attemptId,
-            String category
+            String category,
+            FailureDiagnostic diagnostic
     ) {
         requireText(category, "category");
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
@@ -237,6 +239,12 @@ public class ModelAttemptService {
                             "ModelAttempt failure 发生并发冲突"
                     );
                 }
+                persistFailureDetail(
+                        attemptId,
+                        category,
+                        diagnostic,
+                        now
+                );
                 if (round.phase() == RoundPhase.MODEL_STREAMING) {
                     if (!attempts.transitionRound(
                             round.roundId(),
@@ -262,7 +270,8 @@ public class ModelAttemptService {
     public AttemptRow retry(
             String attemptId,
             long expectedAttemptVersion,
-            String category
+            String category,
+            FailureDiagnostic diagnostic
     ) {
         requireText(category, "category");
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
@@ -294,6 +303,12 @@ public class ModelAttemptService {
                                 "ModelAttempt retry close 发生并发冲突"
                         );
                     }
+                    persistFailureDetail(
+                            attemptId,
+                            category,
+                            diagnostic,
+                            now
+                    );
                     RunStateMachine.requireTransition(
                             RoundPhase.MODEL_STREAMING,
                             RoundPhase.ACCEPTED
@@ -461,6 +476,63 @@ public class ModelAttemptService {
     private void requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " 不能为空");
+        }
+    }
+
+    private void persistFailureDetail(
+            String attemptId,
+            String category,
+            FailureDiagnostic diagnostic,
+            Instant now
+    ) {
+        if (diagnostic == null) {
+            return;
+        }
+        attempts.insertFailureDetail(
+                attemptId,
+                category,
+                diagnostic.providerStatus(),
+                diagnostic.providerCode(),
+                diagnostic.providerType(),
+                diagnostic.message(),
+                now
+        );
+    }
+
+    public record FailureDiagnostic(
+            Integer providerStatus,
+            String providerCode,
+            String providerType,
+            String message
+    ) {
+        public static FailureDiagnostic from(Throwable error) {
+            Throwable current = error;
+            while (current.getCause() != null
+                    && current != current.getCause()) {
+                current = current.getCause();
+            }
+            if (current instanceof ModelProviderException provider) {
+                return new FailureDiagnostic(
+                        provider.httpStatus(),
+                        provider.providerCode(),
+                        provider.providerType(),
+                        provider.diagnosticMessage()
+                );
+            }
+            if (current instanceof ModelProtocolException protocol) {
+                return new FailureDiagnostic(
+                        null,
+                        protocol.code(),
+                        "model_protocol",
+                        protocol.getMessage()
+                );
+            }
+            return new FailureDiagnostic(
+                    null,
+                    null,
+                    current.getClass().getSimpleName(),
+                    current.getMessage()
+            );
         }
     }
 

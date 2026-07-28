@@ -19,6 +19,14 @@ public interface ToolContext {
     /** 工作区根目录（文件工具的路径围栏基准，docs/04 §1） */
     Path workspaceRoot();
 
-    /** 用户停止对话时置 true；长任务工具应周期检查并尽快返回 */
+    /**
+     * 实时取消信号，不是调用开始时的快照。
+     * cooperative 工具应在遍历、分页和等待边界周期检查。
+     */
     boolean cancelled();
+
+    /** cancelled() 是否由精确 Tool Definition 的运行截止时间触发。 */
+    default boolean deadlineExceeded() {
+        return false;
+    }
 }

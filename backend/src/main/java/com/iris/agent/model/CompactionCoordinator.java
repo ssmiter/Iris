@@ -7,6 +7,7 @@ import com.iris.agent.model.CompactionRepository.CompactionRow;
 import com.iris.agent.model.CompactionService.CompactBoundary;
 import com.iris.agent.model.CompactionService.CompactPlan;
 import com.iris.agent.model.ModelAttemptRepository.AttemptRow;
+import com.iris.agent.model.ModelAttemptService.FailureDiagnostic;
 import com.iris.agent.model.ModelAttemptResult.ContentBlock;
 import com.iris.agent.model.ModelStreamEvent.BlockKind;
 import com.iris.agent.model.provider.ModelProvider;
@@ -121,7 +122,8 @@ public final class CompactionCoordinator {
                                 AttemptRow successor = attempts.retry(
                                         prepared.attempt().attemptId(),
                                         prepared.attempt().version(),
-                                        failureCode(cause)
+                                        failureCode(cause),
+                                        FailureDiagnostic.from(cause)
                                 );
                                 return new Prepared(
                                         prepared.compaction(),
@@ -229,6 +231,7 @@ public final class CompactionCoordinator {
                 context.items(),
                 List.of(),
                 Map.of(
+                        "providerProfile", provider.profileId(),
                         "pipeline", "compact_context",
                         "sourceSnapshotId", row.sourceSnapshotId(),
                         "sourceContentHash", row.sourceContentHash()
@@ -373,7 +376,11 @@ public final class CompactionCoordinator {
         failure.put("source", "compaction_pipeline");
         compactions.streamingAttemptId(runId).ifPresent(attemptId -> {
             try {
-                attempts.fail(attemptId, failureCode(error));
+                attempts.fail(
+                        attemptId,
+                        failureCode(error),
+                        FailureDiagnostic.from(error)
+                );
             } catch (RuntimeException ignored) {
                 // The durable failure projection below remains authoritative.
             }

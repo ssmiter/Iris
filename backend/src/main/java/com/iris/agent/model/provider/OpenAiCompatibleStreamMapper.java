@@ -21,9 +21,15 @@ import java.util.Map;
  * Chat Completions 风格 stream mapper。一个 stream 对应一个实例。
  */
 public final class OpenAiCompatibleStreamMapper {
+    private static final int PROVIDER_STATE_INDEX = 0;
+    private static final int TEXT_INDEX = 1;
+    private static final int TOOL_INDEX_OFFSET = 2;
+
     private final FragmentMode argumentMode;
     private final Map<Integer, ToolBlock> tools = new HashMap<>();
     private boolean messageStarted;
+    private boolean providerStateStarted;
+    private boolean providerStateCompleted;
     private boolean textStarted;
     private boolean textCompleted;
     private int inputTokens;
@@ -63,10 +69,30 @@ public final class OpenAiCompatibleStreamMapper {
         }
         JsonNode choice = choices.get(0);
         JsonNode delta = choice.path("delta");
+        String reasoningContent = nullableText(
+                delta,
+                "reasoning_content"
+        );
+        if (reasoningContent != null) {
+            if (!providerStateStarted) {
+                events.add(new BlockStarted(
+                        PROVIDER_STATE_INDEX,
+                        BlockKind.PROVIDER_STATE,
+                        "reasoning_content",
+                        null
+                ));
+                providerStateStarted = true;
+            }
+            events.add(new BlockDelta(
+                    PROVIDER_STATE_INDEX,
+                    reasoningContent,
+                    FragmentMode.APPEND
+            ));
+        }
         if (delta.has("content") && !delta.path("content").isNull()) {
             if (!textStarted) {
                 events.add(new BlockStarted(
-                        0,
+                        TEXT_INDEX,
                         BlockKind.TEXT,
                         null,
                         null
@@ -74,7 +100,7 @@ public final class OpenAiCompatibleStreamMapper {
                 textStarted = true;
             }
             events.add(new BlockDelta(
-                    0,
+                    TEXT_INDEX,
                     delta.path("content").asText(""),
                     FragmentMode.APPEND
             ));
@@ -86,7 +112,9 @@ public final class OpenAiCompatibleStreamMapper {
                 int providerIndex = requireToolIndex(toolDelta);
                 ToolBlock block = tools.computeIfAbsent(
                         providerIndex,
-                        ignored -> new ToolBlock(providerIndex + 1)
+                        ignored -> new ToolBlock(
+                                providerIndex + TOOL_INDEX_OFFSET
+                        )
                 );
                 String id = nullableText(toolDelta, "id");
                 if (id != null) {
@@ -153,8 +181,12 @@ public final class OpenAiCompatibleStreamMapper {
                 );
             }
             this.finishReason = finishReason;
+            if (providerStateStarted && !providerStateCompleted) {
+                events.add(new BlockCompleted(PROVIDER_STATE_INDEX));
+                providerStateCompleted = true;
+            }
             if (textStarted && !textCompleted) {
-                events.add(new BlockCompleted(0));
+                events.add(new BlockCompleted(TEXT_INDEX));
                 textCompleted = true;
             }
             tools.values().stream()

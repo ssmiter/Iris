@@ -29,6 +29,18 @@ public class ProviderMessageCompiler {
                         ));
                 case ModelInputItem.UserText user ->
                         append(messages, Role.USER, new TextPart(user.text()));
+                case ModelInputItem.AssistantProviderState state -> {
+                    if (replayable(request, state)) {
+                        append(
+                                messages,
+                                Role.ASSISTANT,
+                                new ProviderStatePart(
+                                        state.stateKey(),
+                                        state.content()
+                                )
+                        );
+                    }
+                }
                 case ModelInputItem.AssistantText assistant ->
                         append(
                                 messages,
@@ -56,6 +68,16 @@ public class ProviderMessageCompiler {
         }
         validatePairing(messages);
         return new CompiledConversation(messages, request.tools());
+    }
+
+    private boolean replayable(
+            ModelRequest request,
+            ModelInputItem.AssistantProviderState state
+    ) {
+        return state.providerProfile().equals(
+                        request.metadata().get("providerProfile")
+                )
+                && state.modelId().equals(request.modelId());
     }
 
     private void append(
@@ -129,6 +151,12 @@ public class ProviderMessageCompiler {
     }
 
     public record TextPart(String text) implements MessagePart {
+    }
+
+    public record ProviderStatePart(
+            String stateKey,
+            String content
+    ) implements MessagePart {
     }
 
     public record ToolCallPart(

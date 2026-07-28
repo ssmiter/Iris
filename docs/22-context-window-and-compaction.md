@@ -13,6 +13,10 @@ ToolObservation 或分支事实。每次实际发送的上下文保存为不可�
 工具定义仍来自本轮 schema lease。预算不足时只能减少历史视野，不能偷偷把全量能力
 目录换成摘要，也不能拆开 `assistant tool call -> tool result`。
 
+Tool output payload、Tool Observation 与 Context projection 是三层不同实体：payload
+保存完整结果，Observation 保存当时实际回注模型的不可变内容，Context projection
+决定某次 attempt 是否还能看见它。清理 projection 不能反向改写前两层。
+
 ## 2. 预算
 
 首版使用保守估算器，不伪装成 provider tokenizer。预算包含：
@@ -42,6 +46,19 @@ Planner 从最新事实向前选择原子组：
 
 被裁掉的事实仍保留在 canonical history。存在 CompactBoundary 时，后续将由经过验证
 的 summary artifact 替代它覆盖的旧视野；边界本身不复制或删除原始历史。
+
+### 3.1 Tool Observation 的两级收敛
+
+- **结果预算**发生在 Tool 完成时：完整 payload 按 executionId 保存，Observation
+  超预算时变成“预览 + hash + `tool-result://` 引用 + 读回方法”。
+- **micro compact**发生在后续 attempt 组装时：只处理声明为可重取的 read/list/search
+  等旧 Observation，保留工具名、输入摘要、executionId、payload hash 和结果状态。
+- 最近若干个 Tool Observation 必须保留原文；数量和 token 水位由真实数据决定，
+  不能把某个参考实现的常量写成产品真理。
+- 写操作、`outcome_unknown`、审批、验证 evidence 与用户不可重新取得的外部返回，
+  禁止自动 micro compact。
+- 结果替换决策一旦进入某个 Context Frame 就被冻结；后续组装不得因当前总长度变化
+  反复改写旧前缀。这样上下文行为可解释，也让 Provider prompt cache 有稳定前缀。
 
 ## 4. 快照
 

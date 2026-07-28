@@ -13,41 +13,49 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
+import com.iris.workspace.WorkspaceCheckpointService;
+import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
+import com.iris.workspace.WorkspaceFileMutationService;
+import com.iris.workspace.WorkspaceFileMutationService.TargetState;
+import com.iris.workspace.WorkspaceFileService.TextDocument;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.List;
 
 /**
- * 向工作区笔记追加一行。package 目录自动形成 /life/notes/append_note。
+ * 向工作区文本笔记追加一条记录。
  */
 @Component
 public class AppendNoteTool implements Tool {
+
+    private static final int MAX_LINE_CHARACTERS = 20_000;
+
     private final ObjectMapper objectMapper;
+    private final WorkspaceFileMutationService files;
+    private final WorkspaceCheckpointService checkpoints;
     private final ToolManifest manifest;
 
-    public AppendNoteTool(ObjectMapper objectMapper) {
+    public AppendNoteTool(
+            ObjectMapper objectMapper,
+            WorkspaceFileMutationService files,
+            WorkspaceCheckpointService checkpoints
+    ) {
         this.objectMapper = objectMapper;
+        this.files = files;
+        this.checkpoints = checkpoints;
         this.manifest = new ToolManifest(
                 "iris.life.notes.append_note",
-                "1",
+                "3",
                 "append_note",
-                "向工作区笔记文件追加一行；记录待办、想法或持续日志时使用",
+                "向工作区文本笔记追加一条记录；记录待办、想法或持续日志时使用",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.STANDARD,
                 ToolManifest.SideEffect.WORKSPACE_WRITE,
                 30,
-                4_000,
+                6_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
                 ToolManifest.EvidencePolicy.REQUIRED
         );
@@ -61,26 +69,37 @@ public class AppendNoteTool implements Tool {
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context)
             throws IOException {
-        String logicalPath = normalizeLogicalPath(input.path("path").asText());
-        Path target = resolveInsideWorkspace(
+        String line = requireLine(input.path("line").asText());
+        TargetState target = files.inspect(
                 context.workspaceRoot(),
-                logicalPath
+                input.path("path").asText()
         );
-        String expectedVersion = versionOf(target);
+        checkpoints.requireCapturable(target);
+        if (target.exists()) {
+            // 在审批前确认它确实是受支持的文本，而不是到提交阶段才猜编码。
+            files.readForEdit(
+                    context.workspaceRoot(),
+                    target.logicalPath(),
+                    context::cancelled
+            );
+        }
         ObjectNode normalized = objectMapper.createObjectNode();
-        normalized.put("path", logicalPath);
-        normalized.put("line", input.path("line").asText());
-        String impact = Files.exists(target)
-                ? "将向工作区文件 " + logicalPath + " 追加一行，当前版本 "
-                        + expectedVersion.substring(0, 12)
-                : "将创建工作区文件 " + logicalPath + " 并写入一行";
+        normalized.put("path", target.logicalPath());
+        normalized.put("line", line);
+        String impact = target.exists()
+                ? "将向工作区笔记 " + target.logicalPath()
+                        + " 末尾追加一条 " + line.length()
+                        + " 字符记录；写入前保留完整 Checkpoint"
+                : "将创建工作区笔记 " + target.logicalPath()
+                        + " 并写入一条 " + line.length()
+                        + " 字符记录；父目录必须已经存在";
         return new PreparedOperation(
                 normalized,
                 impact,
                 List.of(new ResourceClaim(
                         "workspace_file",
-                        logicalPath,
-                        expectedVersion
+                        target.logicalPath(),
+                        target.version()
                 )),
                 Instant.now().plusSeconds(300)
         );
@@ -92,40 +111,65 @@ public class AppendNoteTool implements Tool {
             ToolContext context
     ) throws IOException {
         ResourceClaim resource = operation.resources().getFirst();
-        Path target = resolveInsideWorkspace(
+        TargetState target = files.inspect(
                 context.workspaceRoot(),
                 resource.logicalPath()
         );
-        String currentVersion = versionOf(target);
-        if (!currentVersion.equals(resource.expectedVersion())) {
-            return ToolOutcome.failed(
-                    "resource_version_changed",
-                    "文件在审批期间发生变化，需要重新预览并批准"
-            );
-        }
-        Path parent = target.getParent();
-        if (parent == null) {
-            return ToolOutcome.failed(
-                    "invalid_workspace_path",
-                    "文件路径缺少安全父目录"
-            );
-        }
-        Files.createDirectories(parent);
+        files.requireVersion(target, resource.expectedVersion());
         String line = operation.normalizedInput().path("line").asText();
-        Files.writeString(
-                target,
-                line + System.lineSeparator(),
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
+        TextDocument document = target.exists()
+                ? files.readForEdit(
+                        context.workspaceRoot(),
+                        target.logicalPath(),
+                        context::cancelled
+                )
+                : null;
+        if (context.cancelled()) {
+            throw ToolRuntimeException.beforeCommit(
+                    "cancelled_before_commit",
+                    "任务已停止，笔记尚未写入"
+            );
+        }
+        Checkpoint checkpoint = checkpoints.capture(
+                operation.executionId(),
+                target.exists() ? "append_note" : "create_note",
+                target
         );
+        if (context.cancelled()) {
+            throw ToolRuntimeException.beforeCommit(
+                    "cancelled_before_commit",
+                    "任务已停止，笔记尚未写入"
+            );
+        }
+
+        if (document == null) {
+            files.writeUtf8(target, line + "\n");
+        } else {
+            files.writeDocument(
+                    target,
+                    document,
+                    appendLine(document.content(), line)
+            );
+        }
+        TargetState after = files.inspect(
+                context.workspaceRoot(),
+                target.logicalPath()
+        );
+        checkpoints.markApplied(
+                checkpoint.checkpointId(),
+                after.version()
+        );
+
         ObjectNode output = objectMapper.createObjectNode();
-        output.put("path", resource.logicalPath());
+        output.put("path", target.logicalPath());
+        output.put("bytesAppended", after.sizeBytes() - target.sizeBytes());
         output.put(
-                "bytesAppended",
-                (line + System.lineSeparator())
-                        .getBytes(StandardCharsets.UTF_8).length
+                "encoding",
+                document == null ? "UTF-8" : document.encoding()
         );
+        output.put("checkpointId", checkpoint.checkpointId());
+        output.put("beforeHash", target.version());
+        output.put("afterHash", after.version());
         return ToolOutcome.succeeded(output);
     }
 
@@ -135,34 +179,65 @@ public class AppendNoteTool implements Tool {
             CommittedOperation operation,
             ToolContext context
     ) throws IOException {
-        ResourceClaim resource = operation.resources().getFirst();
-        Path target = resolveInsideWorkspace(
+        TargetState current = files.inspect(
                 context.workspaceRoot(),
-                resource.logicalPath()
+                operation.resources().getFirst().logicalPath()
         );
-        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+        String expectedHash = outcome.output().path("afterHash").asText();
+        if (!current.exists() || !current.version().equals(expectedHash)) {
             return new VerificationResult(
                     VerificationResult.Status.UNKNOWN,
                     List.of(),
-                    "写入返回成功，但目标文件无法确认"
-            );
-        }
-        String content = Files.readString(target, StandardCharsets.UTF_8);
-        String line = operation.normalizedInput().path("line").asText();
-        if (!content.endsWith(line + System.lineSeparator())) {
-            return new VerificationResult(
-                    VerificationResult.Status.UNKNOWN,
-                    List.of(),
-                    "目标文件存在，但无法确认追加内容位于末尾"
+                    "追加操作已返回，但笔记文件版本无法确认"
             );
         }
         return VerificationResult.confirmed(List.of(
                 new VerificationResult.Evidence(
                         "workspace_file_version",
-                        resource.logicalPath(),
-                        "追加已确认，文件版本 " + versionOf(target).substring(0, 12)
+                        current.logicalPath(),
+                        "笔记追加后的内容版本为 "
+                                + expectedHash.substring(0, 12)
+                ),
+                new VerificationResult.Evidence(
+                        "workspace_checkpoint",
+                        outcome.output().path("checkpointId").asText(),
+                        "追加前的完整笔记内容已保留"
                 )
         ));
+    }
+
+    private String requireLine(String value) {
+        String line = value == null ? "" : value;
+        if (line.isBlank()) {
+            throw new ToolRuntimeException(
+                    "note_line_empty",
+                    "笔记内容不能为空"
+            );
+        }
+        if (line.indexOf('\n') >= 0 || line.indexOf('\r') >= 0) {
+            throw new ToolRuntimeException(
+                    "note_line_has_line_break",
+                    "append_note 每次只追加一条单行记录；多段内容请使用 write_file"
+            );
+        }
+        if (line.length() > MAX_LINE_CHARACTERS) {
+            throw new ToolRuntimeException(
+                    "note_line_too_long",
+                    "单条笔记不能超过 2 万字符"
+            );
+        }
+        return line;
+    }
+
+    private String appendLine(String content, String line) {
+        String ending = content.contains("\r\n") ? "\r\n" : "\n";
+        if (content.isEmpty()) {
+            return line + ending;
+        }
+        if (content.endsWith("\n") || content.endsWith("\r")) {
+            return content + line + ending;
+        }
+        return content + ending + line + ending;
     }
 
     private JsonNode inputSchema() {
@@ -172,10 +247,10 @@ public class AppendNoteTool implements Tool {
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("path")
                 .put("type", "string")
-                .put("description", "工作区内相对路径，如 notes/todo.md");
+                .put("description", "工作区内相对文本笔记路径；父目录必须已经存在");
         properties.putObject("line")
                 .put("type", "string")
-                .put("description", "要追加的一行 UTF-8 文本");
+                .put("description", "要追加的一条单行记录，不包含换行符");
         schema.putArray("required").add("path").add("line");
         return schema;
     }
@@ -187,101 +262,29 @@ public class AppendNoteTool implements Tool {
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("path")
                 .put("type", "string")
-                .put("description", "完成写入的工作区相对路径");
+                .put("description", "完成追加的工作区逻辑路径");
         properties.putObject("bytesAppended")
                 .put("type", "integer")
-                .put("description", "本次追加的 UTF-8 字节数");
-        schema.putArray("required").add("path").add("bytesAppended");
+                .put("description", "文件大小实际增加的字节数");
+        properties.putObject("encoding")
+                .put("type", "string")
+                .put("description", "保持或新建时使用的文本编码");
+        properties.putObject("checkpointId")
+                .put("type", "string")
+                .put("description", "追加前完整状态的 Checkpoint ID");
+        properties.putObject("beforeHash")
+                .put("type", "string")
+                .put("description", "追加前内容版本或 absent");
+        properties.putObject("afterHash")
+                .put("type", "string")
+                .put("description", "追加后 SHA-256 内容版本");
+        schema.putArray("required")
+                .add("path")
+                .add("bytesAppended")
+                .add("encoding")
+                .add("checkpointId")
+                .add("beforeHash")
+                .add("afterHash");
         return schema;
-    }
-
-    private String normalizeLogicalPath(String rawPath) {
-        if (rawPath == null || rawPath.isBlank()) {
-            throw new ToolRuntimeException(
-                    "invalid_workspace_path",
-                    "工作区路径不能为空"
-            );
-        }
-        Path logical;
-        try {
-            logical = Path.of(rawPath);
-        } catch (RuntimeException exception) {
-            throw new ToolRuntimeException(
-                    "invalid_workspace_path",
-                    "工作区路径格式无效"
-            );
-        }
-        if (logical.isAbsolute()
-                || rawPath.indexOf('\0') >= 0
-                || rawPath.startsWith("\\\\")
-                || rawPath.contains(":")
-                || logical.normalize().startsWith("..")) {
-            throw new ToolRuntimeException(
-                    "workspace_path_outside_fence",
-                    "路径越界：只能使用工作区内相对路径"
-            );
-        }
-        String normalized = logical.normalize().toString().replace('\\', '/');
-        if (normalized.isBlank() || ".".equals(normalized)) {
-            throw new ToolRuntimeException(
-                    "invalid_workspace_path",
-                    "路径必须指向工作区内文件"
-            );
-        }
-        return normalized;
-    }
-
-    private Path resolveInsideWorkspace(Path configuredRoot, String logicalPath)
-            throws IOException {
-        Path root = configuredRoot.toRealPath(LinkOption.NOFOLLOW_LINKS);
-        Path target = root.resolve(logicalPath).normalize();
-        if (!target.startsWith(root)) {
-            throw new ToolRuntimeException(
-                    "workspace_path_outside_fence",
-                    "路径越界：只能操作工作区内文件"
-            );
-        }
-        Path ancestor = target;
-        while (ancestor != null && !Files.exists(
-                ancestor,
-                LinkOption.NOFOLLOW_LINKS
-        )) {
-            ancestor = ancestor.getParent();
-        }
-        if (ancestor == null
-                || !ancestor.toRealPath().startsWith(root)) {
-            throw new ToolRuntimeException(
-                    "workspace_path_outside_fence",
-                    "目标路径的已存在父目录越过工作区围栏"
-            );
-        }
-        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                && !target.toRealPath().startsWith(root)) {
-            throw new ToolRuntimeException(
-                    "workspace_path_outside_fence",
-                    "目标符号链接指向工作区之外"
-            );
-        }
-        return target;
-    }
-
-    private String versionOf(Path target) throws IOException {
-        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-            return "absent";
-        }
-        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new ToolRuntimeException(
-                    "workspace_target_not_file",
-                    "目标存在但不是普通文件"
-            );
-        }
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256")
-                            .digest(Files.readAllBytes(target))
-            );
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 unavailable", exception);
-        }
     }
 }

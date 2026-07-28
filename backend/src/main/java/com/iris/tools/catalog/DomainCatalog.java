@@ -46,7 +46,8 @@ public final class DomainCatalog {
             Map.entry("hotel", "酒店"), Map.entry("notes", "笔记"),
             Map.entry("resume", "简历"), Map.entry("local", "本地"),
             Map.entry("code", "代码"), Map.entry("system", "系统"),
-            Map.entry("web", "网页")
+            Map.entry("web", "网页"), Map.entry("files", "工作区文件"),
+            Map.entry("context", "上下文"), Map.entry("math", "计算")
     );
 
     public static String segmentLabel(String segment) {
