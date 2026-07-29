@@ -133,6 +133,21 @@ Provider 重试发生在 ModelAttempt 边界，不发生在字节流内部：
 - 多 Provider fallback 以后也必须遵循同一 Attempt 隔离，但只有显式配置的 route
   才能切换 profile；首版不把任意可用模型当作隐式 fallback。
 
+### 5.2 输出上限续接
+
+`stop_reason = max_tokens` 不是失败，也不是一次完整回答。内核按以下规则续接：
+
+- 当前 Attempt 仍完整提交，已经产生的 assistant text 是 canonical fact，不丢弃、
+  不与下一次流拼成同一 Attempt；
+- 当前 Round 以 stage 结束，Run 打开下一 Round，而不是误报 succeeded；
+- 内核在下一轮上下文中派生一个不可见的 continuation directive，要求模型从中止处
+  继续且不复述；它不是用户 Message，也不进入用户历史；
+- 被截断的 assistant 轨迹与 directive 是一个上下文原子组，裁剪时共同保留或共同
+  拒绝，避免模型只看到“继续”却看不到要续接的内容；
+- 单个 Run 最多自动续接 4 次。达到上限时以明确的 budget failure 结束，保留全部
+  已生成内容，避免无限输出和不可控成本；
+- `content_filter`、未知 stop reason 等不得伪装成正常完成，必须形成协议失败。
+
 ## 6. Tool 配对
 
 每个 ToolCall 恰好关联一个 ToolExecution，并最终形成一个 ToolObservation：

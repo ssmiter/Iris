@@ -31,9 +31,29 @@ public class CapabilityDirectoryCatalog {
                     "原料基础信息、收发存、检验与库存风险"
             ),
             directory(
+                    "/industry/mes/_01raw/inventory",
+                    "原料库存",
+                    "按物料和仓库观察可用、预留与安全库存"
+            ),
+            directory(
                     "/industry/mes/_02mixing",
                     "密炼",
                     "密炼计划、执行、物料、设备事件与胶料质量"
+            ),
+            directory(
+                    "/industry/mes/_02mixing/_02plan",
+                    "密炼计划与执行",
+                    "密炼机台计划、优先级、班次与完成进度"
+            ),
+            directory(
+                    "/industry/mes/_02mixing/_06equipment",
+                    "密炼设备事件",
+                    "密炼设备停机、降速、告警原因和闭环状态"
+            ),
+            directory(
+                    "/industry/mes/_02mixing/_07quality",
+                    "密炼质量",
+                    "胶料批次测量、标准上下限与判定"
             ),
             directory(
                     "/industry/mes/_03semifinished",
@@ -41,9 +61,19 @@ public class CapabilityDirectoryCatalog {
                     "半制品基础数据、计划、生产、库存与报表目录骨架"
             ),
             directory(
+                    "/industry/mes/_03semifinished/production_inventory",
+                    "半制品生产与库存",
+                    "连接上游产出与下游成型需求的产出和缓冲库存"
+            ),
+            directory(
                     "/industry/mes/_04forming",
                     "成型",
                     "成型计划、生产实绩、物料、在制品与设备协同目录骨架"
+            ),
+            directory(
+                    "/industry/mes/_04forming/plan_execution",
+                    "成型计划与实绩",
+                    "成型机台的计划数量、实际完成与合格损耗"
             ),
             directory(
                     "/industry/mes/_05curing",
@@ -51,9 +81,19 @@ public class CapabilityDirectoryCatalog {
                     "硫化计划、生产实绩、工装和在制品目录骨架"
             ),
             directory(
+                    "/industry/mes/_05curing/plan_execution",
+                    "硫化计划与实绩",
+                    "硫化设备负荷、模具安排、周期与合格产出"
+            ),
+            directory(
                     "/industry/mes/_06quality",
                     "质量",
                     "外观、检测、判级、异常与质量分析目录骨架"
+            ),
+            directory(
+                    "/industry/mes/_06quality/finished_records",
+                    "成品质量记录",
+                    "成品检验批次、通过数量、缺陷影响与待处置异常"
             ),
             directory(
                     "/industry/mes/_07warehouse",
@@ -61,9 +101,19 @@ public class CapabilityDirectoryCatalog {
                     "入库、退库、出库、库存、装运与统计目录骨架"
             ),
             directory(
+                    "/industry/mes/_07warehouse/inventory_movements",
+                    "成品库存与流转",
+                    "成品可用、分配、冻结以及出入库和装运记录"
+            ),
+            directory(
                     "/industry/mes/_11equipment",
                     "设备",
                     "设备主数据、运行状态、故障、点检和维护"
+            ),
+            directory(
+                    "/industry/mes/_11equipment/status",
+                    "设备运行状态",
+                    "跨工序设备状态、利用率、当前计划和最新告警"
             ),
             directory(
                     "/industry/mes/_12technology",
@@ -71,14 +121,29 @@ public class CapabilityDirectoryCatalog {
                     "工艺标准、配方版本和参数治理目录骨架"
             ),
             directory(
+                    "/industry/mes/_12technology/recipes",
+                    "工艺配方",
+                    "配方版本、审批状态、适用工序和摘要信息"
+            ),
+            directory(
                     "/industry/mes/_13mould",
                     "模具",
                     "模具主数据、使用状态、寿命和维护目录骨架"
             ),
             directory(
+                    "/industry/mes/_13mould/status",
+                    "模具状态",
+                    "模具位置、使用状态、累计次数和维护阈值"
+            ),
+            directory(
                     "/industry/mes/aps",
                     "高级排产",
                     "跨工序约束、需求分解与计划协同目录骨架"
+            ),
+            directory(
+                    "/industry/mes/aps/demand_schedule",
+                    "需求与排程",
+                    "待满足需求、可行排程、瓶颈与预计完成时间"
             ),
             directory(
                     "/industry/mens",

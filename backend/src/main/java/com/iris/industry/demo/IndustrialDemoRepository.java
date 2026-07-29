@@ -1,8 +1,10 @@
 package com.iris.industry.demo;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -309,6 +311,120 @@ public class IndustrialDemoRepository {
         return result;
     }
 
+    public ObjectNode processRecords(
+            String domain,
+            String process,
+            String view,
+            ObjectNode filters
+    ) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT record_type AS recordType,
+                       record_no AS recordNo,
+                       business_date AS businessDate,
+                       item_code AS itemCode,
+                       item_name AS itemName,
+                       resource_code AS resourceCode,
+                       status,
+                       planned_quantity AS plannedQuantity,
+                       actual_quantity AS actualQuantity,
+                       unit,
+                       priority,
+                       detail_json AS detailJson,
+                       updated_at AS updatedAt
+                FROM industrial_demo_process_record
+                WHERE domain_code = :domain
+                  AND process_code = :process
+                """);
+        Map<String, Object> parameters = parameters(domain, filters);
+        parameters.put("process", process);
+        addEquals(
+                sql,
+                parameters,
+                filters,
+                "record_type",
+                " AND record_type = :record_type"
+        );
+        addDateRange(sql, parameters, filters, "business_date");
+        addContains(
+                sql,
+                parameters,
+                filters,
+                "item",
+                " AND (item_code LIKE :item OR item_name LIKE :item)"
+        );
+        addEquals(
+                sql,
+                parameters,
+                filters,
+                "resource_code",
+                " AND resource_code = :resource_code"
+        );
+        addEquals(
+                sql,
+                parameters,
+                filters,
+                "status",
+                " AND status = :status"
+        );
+        sql.append("""
+                 ORDER BY business_date DESC,
+                          CASE priority WHEN 'high' THEN 0 ELSE 1 END,
+                          record_no
+                 LIMIT :fetchLimit
+                """);
+        List<ObjectNode> rows = query(sql.toString(), parameters);
+        rows.forEach(this::expandDetails);
+        return result(domain, view, filters, rows);
+    }
+
+    public ObjectNode referenceObjects(
+            String domain,
+            String objectType,
+            String view,
+            ObjectNode filters
+    ) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT object_code AS objectCode,
+                       object_name AS objectName,
+                       process_code AS processCode,
+                       version,
+                       status,
+                       resource_code AS resourceCode,
+                       detail_json AS detailJson,
+                       updated_at AS updatedAt
+                FROM industrial_demo_reference_object
+                WHERE domain_code = :domain
+                  AND object_type = :objectType
+                """);
+        Map<String, Object> parameters = parameters(domain, filters);
+        parameters.put("objectType", objectType);
+        addContains(
+                sql,
+                parameters,
+                filters,
+                "query",
+                " AND (object_code LIKE :query OR object_name LIKE :query)"
+        );
+        addEquals(
+                sql,
+                parameters,
+                filters,
+                "process_code",
+                " AND process_code = :process_code"
+        );
+        addEquals(
+                sql,
+                parameters,
+                filters,
+                "status",
+                " AND status = :status"
+        );
+        sql.append(" ORDER BY object_code LIMIT :fetchLimit");
+        List<ObjectNode> rows = query(sql.toString(), parameters);
+        rows.forEach(this::expandDetails);
+        return result(domain, view, filters, rows);
+    }
+
     private Map<String, Object> parameters(
             String domain,
             ObjectNode filters
@@ -390,23 +506,40 @@ public class IndustrialDemoRepository {
             String sql,
             Map<String, Object> parameters
     ) {
-        return jdbc.sql(sql)
-                .params(parameters)
-                .query((rs, rowNumber) -> {
-                    ObjectNode row = objectMapper.createObjectNode();
-                    ResultSetMetaData metadata = rs.getMetaData();
-                    for (int index = 1;
-                            index <= metadata.getColumnCount();
-                            index++) {
-                        put(
-                                row,
-                                metadata.getColumnLabel(index),
-                                rs.getObject(index)
-                        );
-                    }
-                    return row;
-                })
-                .list();
+        try {
+            return jdbc.sql(sql)
+                    .params(parameters)
+                    .query((rs, rowNumber) -> {
+                        ObjectNode row = objectMapper.createObjectNode();
+                        ResultSetMetaData metadata = rs.getMetaData();
+                        for (int index = 1;
+                                index <= metadata.getColumnCount();
+                                index++) {
+                            put(
+                                    row,
+                                    metadata.getColumnLabel(index),
+                                    rs.getObject(index)
+                            );
+                        }
+                        return row;
+                    })
+                    .list();
+        } catch (DataAccessException exception) {
+            Throwable cause = exception.getMostSpecificCause();
+            String diagnostic = cause.getMessage() == null
+                    ? cause.getClass().getSimpleName()
+                    : cause.getMessage().replaceAll("\\s+", " ").trim();
+            if (diagnostic.length() > 400) {
+                diagnostic = diagnostic.substring(0, 400);
+            }
+            throw new IndustrialDemoQueryException(
+                    "industrial_demo_sql_unavailable",
+                    "工业模拟数据的只读 SQL 查询失败；无需原样重试参数，"
+                            + "请确认后端 SQLite schema 已初始化。环境反馈："
+                            + diagnostic,
+                    exception
+            );
+        }
     }
 
     private void put(ObjectNode row, String name, Object value)
@@ -427,6 +560,21 @@ public class IndustrialDemoRepository {
             row.put(name, booleanValue);
         } else {
             row.put(name, value.toString());
+        }
+    }
+
+    private void expandDetails(ObjectNode row) {
+        String json = row.path("detailJson").asText();
+        row.remove("detailJson");
+        try {
+            row.set("details", objectMapper.readTree(json));
+        } catch (JsonProcessingException exception) {
+            throw new IndustrialDemoQueryException(
+                    "industrial_demo_record_invalid",
+                    "工业模拟记录的 details 不是合法 JSON；该记录不能作为业务证据，"
+                            + "请修复模拟数据后再查询",
+                    exception
+            );
         }
     }
 

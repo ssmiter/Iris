@@ -106,3 +106,5 @@ SQLite 事务先提交事实和事件，再由 SSE 投影。前端刷新从 Conv
 - Runtime 根据稳定 failure code、`recoveryAction` 和 `sideEffectOutcome` 决定 `retry_same / reprepare / rediscover / reconcile / user_input / none`；不能用“同类错误三次”覆盖副作用语义；
 - 预算同时限制重复 code、相同资源和无进展 observation，熔断结果作为结构化 Failure 回注；
 - 审批超时 = `expired`，不是用户 `rejected`，且不静默重发。
+- 模型因单次输出上限中止时，由内核在新 Round 中有界续接；截断内容保留为 stage，
+  最多自动续接 4 次，不把半截回答误判为 Turn 已完成。

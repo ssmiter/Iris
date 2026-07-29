@@ -139,6 +139,26 @@ class 文件目录当持久化数据库。Capability Catalog 是独立的语义�
   /mens                           密炼执行系统目录骨架，暂不注册具体工具
 ```
 
+MES 样例采用“一段工序，一个代表性能力”的纵切方式，避免把页面或表逐个映射成近义
+Tool：
+
+| 工序目录 | 代表性能力 | 可观察对象 |
+|---|---|---|
+| `/_01raw` | `query_mes_material_inventory` | 可用量、预留量、安全库存 |
+| `/_02mixing` | 密炼计划、设备事件、质量三个样例 | 计划执行、过程异常、胶料测量 |
+| `/_03semifinished` | `query_mes_semifinished_production_inventory` | 半制品生产与库存 |
+| `/_04forming` | `query_mes_forming_plan_execution` | 成型计划与实绩 |
+| `/_05curing` | `query_mes_curing_plan_execution` | 硫化计划与实绩 |
+| `/_06quality` | `query_mes_finished_quality_records` | 检验与质量异常 |
+| `/_07warehouse` | `query_mes_finished_goods_inventory_movements` | 成品库存与出入库流转 |
+| `/_11equipment` | `query_mes_equipment_status` | 设备状态、利用率和告警 |
+| `/_12technology` | `query_mes_process_recipes` | 配方版本与适用工序 |
+| `/_13mould` | `query_mes_mould_status` | 模具状态、位置与寿命信息 |
+| `/aps` | `query_mes_aps_demand_schedule` | 需求与跨工序排程结果 |
+
+同一个代表性能力可以有少量明确枚举的 `record_type`，但不能退化为可传任意表名或 SQL
+的万能查询。用户意图和证据口径明显不同时才拆出新的领域 Tool。
+
 - 路径表达“业务域 → 工序 → 业务对象”，序号只稳定展示顺序，Capability 的身份仍是
   `capabilityId + definitionVersion`；
 - `CapabilityDirectoryCatalog` 允许语义目录先于具体 Tool 存在；空目录必须带人话说明并

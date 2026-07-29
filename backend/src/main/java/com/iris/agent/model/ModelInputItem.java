@@ -32,6 +32,12 @@ public sealed interface ModelInputItem {
     ) implements ModelInputItem {
     }
 
+    record ContinuationDirective(
+            String attemptId,
+            String text
+    ) implements ModelInputItem {
+    }
+
     record AssistantToolCall(
             String attemptId,
             String toolCallId,

@@ -67,6 +67,20 @@ public final class IndustrialToolSchemas {
         );
     }
 
+    public static void stringEnum(
+            ObjectNode schema,
+            String name,
+            String description,
+            Iterable<String> values
+    ) {
+        ObjectNode property = ((ObjectNode) schema.path("properties"))
+                .putObject(name);
+        property.put("type", "string");
+        property.put("description", description);
+        var choices = property.putArray("enum");
+        values.forEach(choices::add);
+    }
+
     public static void bool(
             ObjectNode schema,
             String name,

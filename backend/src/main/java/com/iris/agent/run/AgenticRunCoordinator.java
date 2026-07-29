@@ -29,6 +29,7 @@ import java.util.UUID;
 @Service
 public class AgenticRunCoordinator {
     private static final int MAX_ROUNDS_PER_ADVANCE = 64;
+    private static final int MAX_OUTPUT_CONTINUATIONS = 4;
 
     private final RunRoundRepository facts;
     private final RunRoundService states;
@@ -263,6 +264,28 @@ public class AgenticRunCoordinator {
             );
         }
         if (latest.phase() == RoundPhase.COMPLETED) {
+            String stopReason = facts.latestCompletedAttemptStopReason(
+                    latest.roundId()
+            ).orElseThrow(() -> new ModelProtocolException(
+                    "completed_round_missing_stop_reason",
+                    "Completed Round has no completed model stop reason"
+            ));
+            if ("max_tokens".equals(stopReason)) {
+                answers.publishStage(latest.roundId());
+                if (facts.outputLimitStopCount(runId)
+                        > MAX_OUTPUT_CONTINUATIONS) {
+                    return new NextRound(
+                            null,
+                            null,
+                            "model_output_continuation_limit"
+                    );
+                }
+                return new NextRound(
+                        states.openRound(runId),
+                        null,
+                        null
+                );
+            }
             answers.publishFinal(latest.roundId());
             return new NextRound(null, completeRun(run), null);
         }
@@ -386,7 +409,8 @@ public class AgenticRunCoordinator {
                 recovery = "user_input";
                 message = "当前上下文超过模型可接受范围，需要先压缩历史再继续。";
             }
-            case "round_limit_exceeded", "run_budget_exhausted" -> {
+            case "round_limit_exceeded", "run_budget_exhausted",
+                 "model_output_continuation_limit" -> {
                 category = "budget";
                 message = "本次任务已经达到安全运行上限，Iris 已停止继续扩展步骤。";
             }

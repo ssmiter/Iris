@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.industry.demo.IndustrialDemoRepository;
+import com.iris.industry.demo.IndustrialDemoQueryException;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.PreparedOperation;
 import com.iris.tools.core.PreparedOperation.ResourceClaim;
@@ -76,9 +77,16 @@ public abstract class AbstractIndustrialReadTool implements Tool {
                     "查询在读取模拟数据前已停止"
             );
         }
-        return ToolOutcome.succeeded(
-                query((ObjectNode) operation.normalizedInput())
-        );
+        try {
+            return ToolOutcome.succeeded(
+                    query((ObjectNode) operation.normalizedInput())
+            );
+        } catch (IndustrialDemoQueryException exception) {
+            throw new ToolRuntimeException(
+                    exception.code(),
+                    exception.getMessage()
+            );
+        }
     }
 
     @Override

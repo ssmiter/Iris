@@ -433,6 +433,15 @@ public class ModelAttemptService {
                     "Provider reported a tool stop without a complete ToolCall"
             );
         }
+        if (result.toolCalls().isEmpty()
+                && !"end_turn".equals(result.stopReason())
+                && !"max_tokens".equals(result.stopReason())) {
+            throw new ModelProtocolException(
+                    "unsupported_model_stop_reason",
+                    "Provider ended a text response with unsupported stop reason: "
+                            + result.stopReason()
+            );
+        }
         long toolBlockCount = result.blocks().stream()
                 .filter(block -> block.kind()
                         == ModelStreamEvent.BlockKind.TOOL_CALL)

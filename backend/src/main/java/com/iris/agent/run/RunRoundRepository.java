@@ -182,6 +182,34 @@ public class RunRoundRepository {
                 .optional();
     }
 
+    public Optional<String> latestCompletedAttemptStopReason(String roundId) {
+        return jdbc.sql("""
+                SELECT stop_reason
+                FROM model_attempt
+                WHERE round_id = :roundId
+                  AND phase = 'completed'
+                  AND stop_reason IS NOT NULL
+                ORDER BY attempt_index DESC
+                LIMIT 1
+                """)
+                .param("roundId", roundId)
+                .query(String.class)
+                .optional();
+    }
+
+    public int outputLimitStopCount(String runId) {
+        return jdbc.sql("""
+                SELECT COUNT(*)
+                FROM model_attempt
+                WHERE run_id = :runId
+                  AND phase = 'completed'
+                  AND stop_reason = 'max_tokens'
+                """)
+                .param("runId", runId)
+                .query(Integer.class)
+                .single();
+    }
+
     public RunBudget runBudget(String runId) {
         return jdbc.sql("""
                 SELECT d.tool_calls_limit, d.time_limit_ms,

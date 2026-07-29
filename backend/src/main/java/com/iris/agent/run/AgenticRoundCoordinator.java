@@ -226,6 +226,9 @@ public class AgenticRoundCoordinator {
                                 started.attempt().attemptId(),
                                 visibleText,
                                 result.toolCalls().isEmpty()
+                                        && !"max_tokens".equals(
+                                                result.stopReason()
+                                        )
                                         ? "final"
                                         : "stage"
                         );

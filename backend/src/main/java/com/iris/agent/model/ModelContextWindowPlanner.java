@@ -100,6 +100,9 @@ public class ModelContextWindowPlanner {
                     || groups.get(index).items().stream().anyMatch(
                     ModelInputItem.HistorySummary.class::isInstance
             )
+                    || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.ContinuationDirective.class::isInstance
+            )
                     || containsRequiredUser(
                     groups.get(index),
                     requiredUsers
@@ -191,6 +194,16 @@ public class ModelContextWindowPlanner {
                         trajectories,
                         groups
                 ).add(text);
+            } else if (fact
+                    instanceof ModelInputItem.ContinuationDirective directive) {
+                MutableAssistantTrajectory group =
+                        trajectories.get(directive.attemptId());
+                if (group == null) {
+                    throw protocol(
+                            "Continuation directive has no preceding assistant attempt"
+                    );
+                }
+                group.add(directive);
             } else if (fact instanceof ModelInputItem.AssistantToolCall call) {
                 if (toolGroups.containsKey(call.toolCallId())) {
                     throw protocol("Duplicate ToolCall in model context");

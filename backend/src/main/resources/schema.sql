@@ -78,6 +78,39 @@ CREATE TABLE IF NOT EXISTS industrial_demo_quality_measurement (
     PRIMARY KEY (domain_code, sample_no, metric_code)
 );
 
+CREATE TABLE IF NOT EXISTS industrial_demo_process_record (
+    domain_code TEXT NOT NULL,
+    process_code TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    record_no TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    item_code TEXT NOT NULL,
+    item_name TEXT NOT NULL,
+    resource_code TEXT,
+    status TEXT NOT NULL,
+    planned_quantity REAL,
+    actual_quantity REAL,
+    unit TEXT,
+    priority TEXT,
+    detail_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (domain_code, process_code, record_type, record_no)
+);
+
+CREATE TABLE IF NOT EXISTS industrial_demo_reference_object (
+    domain_code TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    object_code TEXT NOT NULL,
+    object_name TEXT NOT NULL,
+    process_code TEXT NOT NULL,
+    version TEXT,
+    status TEXT NOT NULL,
+    resource_code TEXT,
+    detail_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (domain_code, object_type, object_code)
+);
+
 INSERT OR IGNORE INTO industrial_demo_material_stock VALUES
 ('mes','MAT-A101','通用合成原料 A','polymer','WH-RAW-01',12800,2100,5000,'kg','2026-07-29T08:30:00Z'),
 ('mes','MAT-B205','通用填充材料 B','filler','WH-RAW-01',3600,900,4200,'kg','2026-07-29T08:32:00Z'),
@@ -113,6 +146,26 @@ INSERT OR IGNORE INTO industrial_demo_quality_measurement VALUES
 ('mes','QS-0729-002','BATCH-C11-018','CMP-C11','MX-03','dispersion',7.4,7,9,'pass','2026-07-29T07:52:00Z'),
 ('mes','QS-0729-003','BATCH-C12-014','CMP-C12','MX-04','viscosity',62.7,59,67,'pass','2026-07-29T08:26:00Z'),
 ('mes','QS-0729-003','BATCH-C12-014','CMP-C12','MX-04','dispersion',6.8,7,9,'fail','2026-07-29T08:26:00Z');
+
+INSERT OR IGNORE INTO industrial_demo_process_record VALUES
+('mes','semifinished','production','SEMI-PROD-0729-01','2026-07-29','SEMI-A10','通用半制品 A10','SEMI-LINE-01','running',1200,760,'m','normal','{"shift":"day","nextProcess":"forming"}','2026-07-29T09:12:00Z'),
+('mes','semifinished','inventory','SEMI-STOCK-0729-01','2026-07-29','SEMI-B20','通用半制品 B20','BUFFER-S01','available',800,635,'m','normal','{"ageHours":5.5,"holdQuantity":40}','2026-07-29T09:05:00Z'),
+('mes','forming','plan','FORM-PLAN-0729-01','2026-07-29','PRODUCT-X1','通用制品 X1','FM-01','running',320,188,'piece','high','{"shift":"day","materialReady":true}','2026-07-29T09:10:00Z'),
+('mes','forming','production','FORM-PROD-0729-01','2026-07-29','PRODUCT-X2','通用制品 X2','FM-02','completed',240,242,'piece','normal','{"qualifiedQuantity":238,"scrapQuantity":4}','2026-07-29T08:58:00Z'),
+('mes','curing','plan','CURE-PLAN-0729-01','2026-07-29','PRODUCT-X1','通用制品 X1','CU-02','scheduled',300,0,'piece','high','{"mouldCode":"MOULD-X1-A","plannedStart":"2026-07-29T10:00:00Z"}','2026-07-29T09:03:00Z'),
+('mes','curing','production','CURE-PROD-0729-01','2026-07-29','PRODUCT-X2','通用制品 X2','CU-03','running',260,171,'piece','normal','{"cycleSeconds":720,"qualifiedQuantity":169}','2026-07-29T09:11:00Z'),
+('mes','quality','inspection','FQC-0729-001','2026-07-29','PRODUCT-X2','通用制品 X2','FQC-LINE-01','completed',40,40,'piece','normal','{"passed":38,"failed":2,"inspectionType":"appearance"}','2026-07-29T08:55:00Z'),
+('mes','quality','exception','QEX-0729-001','2026-07-29','PRODUCT-X1','通用制品 X1','FQC-LINE-02','open',1,1,'case','high','{"defectCategory":"surface","affectedQuantity":6,"disposition":"pending"}','2026-07-29T09:02:00Z'),
+('mes','warehouse','inventory','FG-STOCK-0729-01','2026-07-29','PRODUCT-X1','通用制品 X1','WH-FG-01','available',1800,1640,'piece','normal','{"allocatedQuantity":260,"qualityHoldQuantity":20}','2026-07-29T09:06:00Z'),
+('mes','warehouse','movement','FG-MOVE-0729-01','2026-07-29','PRODUCT-X2','通用制品 X2','DOCK-02','completed',320,320,'piece','normal','{"direction":"outbound","vehicleSlot":"SLOT-03"}','2026-07-29T08:47:00Z'),
+('mes','aps','demand','APS-DEMAND-0730-01','2026-07-30','PRODUCT-X1','通用制品 X1',NULL,'accepted',600,0,'piece','high','{"dueDate":"2026-08-01","source":"demo-order"}','2026-07-29T09:00:00Z'),
+('mes','aps','schedule','APS-SCHEDULE-0730-01','2026-07-30','PRODUCT-X1','通用制品 X1','LINE-GROUP-A','feasible',600,600,'piece','high','{"bottleneck":"curing","estimatedCompletion":"2026-07-31T16:00:00Z"}','2026-07-29T09:04:00Z');
+
+INSERT OR IGNORE INTO industrial_demo_reference_object VALUES
+('mes','recipe','RCP-C11','通用胶料 C11 配方','mixing','3.2','active','MX-03','{"componentCount":7,"approved":true}','2026-07-28T12:00:00Z'),
+('mes','recipe','RCP-C12','通用胶料 C12 配方','mixing','2.5','active','MX-04','{"componentCount":8,"approved":true}','2026-07-27T11:00:00Z'),
+('mes','mould','MOULD-X1-A','X1 通用模具 A','curing','1','in_use','CU-02','{"ratedCycles":8000,"usedCycles":5240,"maintenanceDueCycles":6000}','2026-07-29T08:40:00Z'),
+('mes','mould','MOULD-X2-B','X2 通用模具 B','curing','1','available','MOULD-RACK-02','{"ratedCycles":7500,"usedCycles":3190,"maintenanceDueCycles":5000}','2026-07-29T08:42:00Z');
 
 CREATE TABLE IF NOT EXISTS iris_conversation (
     conversation_id TEXT PRIMARY KEY,

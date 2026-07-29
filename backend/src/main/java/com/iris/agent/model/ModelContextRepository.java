@@ -10,6 +10,10 @@ import java.util.List;
 
 @Repository
 public class ModelContextRepository {
+    private static final String CONTINUATION_INSTRUCTION = """
+            上一段回复因单次输出上限而中止。请从中止处继续完成当前任务，不要复述已经完成的内容；可以继续使用必要的工具，完成后正常收尾。
+            """.strip();
+
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
 
@@ -186,12 +190,55 @@ public class ModelContextRepository {
                       )
                       AND (
                           b.block_kind <> 'provider_state'
+                          OR ma.stop_reason = 'max_tokens'
                           OR EXISTS (
                               SELECT 1
                               FROM model_tool_call state_call
                               WHERE state_call.attempt_id = ma.attempt_id
                           )
                       )
+                      AND (
+                          NOT EXISTS (SELECT 1 FROM boundary)
+                          OR ae.sequence >= (
+                              SELECT cutoff_sequence FROM boundary
+                          )
+                      )
+
+                    UNION ALL
+
+                    SELECT ma.ended_at AS fact_time,
+                           900 AS fact_order,
+                           'continuation:' || ma.attempt_id AS fact_id,
+                           'continuation' AS fact_kind,
+                           ma.attempt_id AS source_attempt_id,
+                           ma.provider_profile AS source_provider_profile,
+                           ma.model_id AS source_model_id,
+                           NULL AS provider_state_key,
+                           NULL AS text_content,
+                           NULL AS tool_call_id,
+                           NULL AS provider_call_id,
+                           NULL AS tool_name,
+                           NULL AS json_content,
+                           NULL AS outcome_kind,
+                           NULL AS execution_id,
+                           NULL AS manifest_hash,
+                           NULL AS payload_hash
+                    FROM model_attempt ma
+                    JOIN agent_round ar ON ar.round_id = ma.round_id
+                    JOIN conversation_event ae
+                      ON ae.turn_id = ma.turn_id
+                     AND ae.event_type = 'turn.accepted'
+                    JOIN branch_path path
+                      ON path.branch_id = ar.branch_id
+                    JOIN target t
+                    WHERE ma.conversation_id = :conversationId
+                      AND ma.phase = 'completed'
+                      AND ma.stop_reason = 'max_tokens'
+                      AND (
+                          path.cutoff_sequence IS NULL
+                          OR ae.sequence < path.cutoff_sequence
+                      )
+                      AND ma.ended_at < t.target_time
                       AND (
                           NOT EXISTS (SELECT 1 FROM boundary)
                           OR ae.sequence >= (
@@ -272,6 +319,11 @@ public class ModelContextRepository {
                             rs.getString("fact_id"),
                             rs.getString("text_content")
                     );
+                    case "continuation" ->
+                            new ModelInputItem.ContinuationDirective(
+                                    rs.getString("source_attempt_id"),
+                                    CONTINUATION_INSTRUCTION
+                            );
                     case "tool_call" -> new ModelInputItem.AssistantToolCall(
                             rs.getString("source_attempt_id"),
                             rs.getString("tool_call_id"),
