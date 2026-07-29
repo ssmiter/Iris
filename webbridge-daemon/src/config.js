@@ -24,7 +24,7 @@ export const config = Object.freeze({
   host: '127.0.0.1',
   port: integer('IRIS_WEBBRIDGE_PORT', 19223, 1, 65535),
   token: requiredSecret(),
-  protocolVersion: 1,
+  protocolVersion: 2,
   browserPath: process.env.IRIS_WEBBRIDGE_BROWSER_PATH?.trim() || undefined,
   userDataDir: process.env.IRIS_WEBBRIDGE_USER_DATA_DIR?.trim()
     || path.join(localData, 'Iris', 'BrowserProfiles', 'default'),

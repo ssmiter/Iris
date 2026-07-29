@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.time.Clock;
 
 @Service
@@ -111,15 +112,36 @@ public class ModelContextAssembler {
                 definitions,
                 seed.budget()
         );
+        List<String> requiredUserFactIds =
+                facts.requiredUserFactIdsBeforeRound(
+                        run.turnId(),
+                        round.roundId()
+                );
+        LinkedHashSet<String> requiredObservationIds =
+                new LinkedHashSet<>(
+                        facts.currentTurnObservationIdsBeforeRound(
+                                run.turnId(),
+                                round.roundId()
+                        )
+                );
+        requiredObservationIds.retainAll(
+                microCompactor.pinnedObservationIds(
+                        observationProjection.items()
+                )
+        );
         WindowPlan window = windows.plan(
                 seed.systemInstruction(),
                 observationProjection.items(),
                 definitions,
-                seed.budget()
+                seed.budget(),
+                new LinkedHashSet<>(requiredUserFactIds),
+                requiredObservationIds
         );
         SnapshotPayload payload = new SnapshotPayload(
                 seed.systemInstruction(),
                 window.items(),
+                requiredUserFactIds,
+                List.copyOf(requiredObservationIds),
                 definitions,
                 leaseHash,
                 window.estimatedInputTokens(),
@@ -238,6 +260,8 @@ public class ModelContextAssembler {
     private record SnapshotPayload(
             String systemInstruction,
             List<ModelInputItem> items,
+            List<String> requiredUserFactIds,
+            List<String> requiredObservationIds,
             List<ModelRequest.ToolDefinition> tools,
             String capabilityLeaseHash,
             int estimatedInputTokens,

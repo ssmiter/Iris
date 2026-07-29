@@ -64,6 +64,7 @@ tools/finance/express/QueryExpressTool.java   → /finance/express/query_express
 tools/travel/train/QueryTicketTool.java       → /travel/train/query_ticket
 tools/job/resume/FillFormTool.java            → /job/resume/fill_form
 tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
+tools/industry/mes/_02mixing/_02plan/...     → /industry/mes/_02mixing/_02plan/...
 ```
 
 路径由命名空间/包名推断（`tools.finance.express` → `/finance/express`），推断规则集中在 `DomainCatalog` 一个静态类中：
@@ -114,7 +115,46 @@ class 文件目录当持久化数据库。Capability Catalog 是独立的语义�
 因为 Tool output 的规范身份属于对话执行历史，而不是用户文件。
 这让“结果可找回”与“工作区不被系统缓存污染”同时成立。
 
-### 4.2 `/system/math`：客观计算原语
+### 4.2 `/industry`：脱敏工业能力样例
+
+工业业务能力沿用同一 Capability Catalog 和 Tool Runtime，不另造一套“业务插件”
+协议。首批样例从真实 MES 的组织经验中提炼，但只保留通用制造语义：
+
+```text
+/industry
+  /mes
+    /_01raw/inventory             原材料与库存
+    /_02mixing
+      /_02plan                    密炼计划及执行进度
+      /_06equipment               停机与故障事件
+      /_07quality                 胶料检验与质量汇总
+    /_03semifinished              半制品
+    /_04forming                   成型
+    /_05curing                    硫化
+    /_06quality                   成品质量
+    /_07warehouse                 仓储
+    /_11equipment/status          设备当前状态
+    /_12technology                工艺与配方
+    /_13mould                     模具
+  /mens                           密炼执行系统目录骨架，暂不注册具体工具
+```
+
+- 路径表达“业务域 → 工序 → 业务对象”，序号只稳定展示顺序，Capability 的身份仍是
+  `capabilityId + definitionVersion`；
+- `CapabilityDirectoryCatalog` 允许语义目录先于具体 Tool 存在；空目录必须带人话说明并
+  返回 `capabilityCount=0`，它只是地图，不产生 schema lease，也不能被调用；
+- 样例中的企业、数据库、表、存储过程、物料、设备、人员和真实质量口径全部被替换；
+  SQLite 只保存可公开理解的模拟制造数据，不能反推出参考系统；
+- 全部样例能力共用一套数据模型、参数归一化、查询网关和只读工具生命周期；薄的领域
+  Tool 只负责固定域、准确描述用户意图与声明 schema，禁止复制 SQL 与边界判断；
+- 领域查询只读、可并行、结果可重取。它们不进入基础 schema lease，只有目录列举、
+  搜索或精确读取 Definition 后才进入当前 Run Working Set；
+- `query_sql` 仍是结构化数据的客观缺口出口；口径稳定、用户高频表达的业务问题才沉淀
+  为领域 Capability。领域工具不是把每个页面或每张表机械映射成一个函数；
+- 当前个人模式可观察全部目录。以后登录选域只收窄 Catalog 可见性和 Runtime 执行授权，
+  不改变工具路径、Agent Loop 或模拟数据契约。
+
+### 4.3 `/system/math`：客观计算原语
 
 `calculate` 使用确定性的十进制表达式求值器处理 `+ - * / % ^`、括号与一元正负号，
 由输入声明有效数字精度和固定舍入规则。金额、比例、工时和产量等计算不交给语言模型
@@ -168,7 +208,11 @@ projection。基础 lease 不再等同于“只给模型一张工具目录”：
 schema token budget，只有实际进入 Exposure 的工具才允许调用。基础原语是
 不可逐出的 required 集合；其余候选来自当前 Run 已发生的有界搜索命中、成功 inspect，
 以及本 Run 实际调用过的能力。首版以 Run 作为 Working Set 的稳定作用域：新候选按首次
-激活顺序追加，Run 内不因几个快速 Round 没有使用就抖动或重排，Run 结束后整体释放。
+激活顺序追加；上一 Round 已形成的不可变 Exposure 是下一轮的 Working Set 基线，
+Run 内不因几个快速 Round 没有使用就抖动或重排，Run 结束后整体释放。
+新 Run 只把同一分支上一 Run 真正调用过的能力及其叶目录作为一次有界暖启动；若本 Run
+没有继续使用，该能力组不会再传给下一 Run。这样“继续刚才的任务”无需重新发现，也不会
+把整个对话曾经出现过的 schema 永久累积到后续上下文。
 浏览器 Session、待审批操作和 outcome_unknown 等活对象另有资源生命周期，后续可用显式
 pin 续接到下一 Run，不能与 schema lease 的释放混为一谈。若上一 Round
 的工作区写入形成 `outcome_unknown` 且确有 Checkpoint，策略会直接激活

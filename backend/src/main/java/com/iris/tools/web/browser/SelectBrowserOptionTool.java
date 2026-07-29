@@ -13,7 +13,6 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
 import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
@@ -25,24 +24,21 @@ import java.util.List;
 public class SelectBrowserOptionTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
     private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public SelectBrowserOptionTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
             BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
         this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.select_browser_option",
-                "1",
+                "2",
                 "select_browser_option",
                 "选择当前页面观察中原生下拉框的一个可用 option，并返回重读后的页面观察；使用 observation 提供的 option value",
                 inputSchema(),
@@ -66,9 +62,9 @@ public class SelectBrowserOptionTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(input, "runtime_id");
-        runtimes.require(runtimeId);
-        runtimeService.requireAvailable(runtimeId);
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
+        );
         String sessionId = BrowserToolSupport.requiredId(input, "session_id");
         String pageId = BrowserToolSupport.requiredId(input, "page_id");
         String observationRef = BrowserToolSupport.optionalObservationRef(
@@ -221,7 +217,7 @@ public class SelectBrowserOptionTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "当前短期 BrowserSession ID");
         properties.putObject("page_id").put("type", "string")
@@ -233,7 +229,7 @@ public class SelectBrowserOptionTool implements Tool {
         properties.putObject("value").put("type", "string")
                 .put("description", "该元素 options 数组中的精确 value，不要猜 label");
         schema.putArray("required")
-                .add("runtime_id").add("session_id").add("page_id")
+                .add("session_id").add("page_id")
                 .add("observation_ref").add("element_ref").add("value");
         return schema;
     }

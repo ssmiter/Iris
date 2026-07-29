@@ -146,6 +146,27 @@ public class ToolObservationMicroCompactor {
         );
     }
 
+    /**
+     * Returns observations that cannot be safely replaced by a stable result
+     * reference under the exact Definition visible in this process.
+     */
+    public Set<String> pinnedObservationIds(
+            List<ModelInputItem> items
+    ) {
+        Map<String, String> names = callNames(items);
+        Set<String> pinned = new HashSet<>();
+        for (ModelInputItem item : items) {
+            if (item instanceof ModelInputItem.ToolResult result
+                    && !refetchable(
+                    result,
+                    names.get(result.toolCallId())
+            )) {
+                pinned.add(result.observationId());
+            }
+        }
+        return Set.copyOf(pinned);
+    }
+
     private boolean refetchable(
             ModelInputItem.ToolResult result,
             String toolName

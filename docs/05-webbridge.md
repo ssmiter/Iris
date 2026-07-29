@@ -30,25 +30,28 @@ BrowserRuntime（可配置、可失效）
 → 新 Observation + Evidence
 ```
 
-这些对象主要用于内核保持身份、生命周期和恢复语义。模型常规操作只需要记住
-`runtime_id / session_id / page_id`，以及最近一次观察返回的短期元素引用；不要求理解
-CDP target、WebSocket、进程 handle 或凭据。元素引用只在对应 Observation revision
+这些对象主要用于内核保持身份、生命周期和恢复语义。普通单机任务由 Backend 在
+`open_browser_session` 的 preflight 中确定默认可用 Runtime；模型通常只需记住
+`session_id / page_id`，以及结果中用于证据和恢复的 `runtime_id` 与最近一次观察返回的
+短期元素引用，不要求理解 CDP target、WebSocket、进程 handle 或凭据。元素引用只在对应 Observation revision
 内有效，页面变化后重新观察，不把脆弱 CSS selector 当作长期对象身份。
+同一默认 Runtime 上的后续页面工具也可省略 `runtime_id`；只有会话被显式创建在非默认
+Runtime 或多环境间切换时才继续携带它，避免把基础设施路由变成每一步的模型负担。
 
-首个纵切提供运行时发现、会话创建、页面观察、导航和基于 Observation 元素引用的点击、
-非敏感文本填写。
-观察返回页面事实与一组有界的交互元素；动作成功后自动附带新观察，使模型的自然循环
-保持为“看见 → 操作 → 确认”。填写、截图与接管在这条链真实跑通后逐步加入，不以动作
-数量衡量完成度。
+首个纵切提供运行时发现、会话创建、页面观察、导航、视口滚动和基于 Observation
+元素引用的点击、非敏感文本填写。观察同时返回页面事实、当前视口以及一组有界的交互
+元素；视口内元素优先进入预算。动作成功后自动附带新观察，使模型的自然循环保持为
+“看见 → 操作 → 确认”，不以动作数量衡量完成度。
 
 ### 2.1 原语设计（webbridge_* 工具族）
 
 | 原语 | 说明 |
 |---|---|
 | `list_browser_runtimes()` | 发现已配置 Runtime 及其当前可用性，不暴露地址或令牌 |
-| `open_browser_session(runtimeId, url?)` | 创建短期浏览器会话和页面；改变本机 Application 状态，默认审批 |
+| `open_browser_session(url?, runtimeId?)` | 创建短期浏览器会话和页面；通常自动选择默认 Runtime，多 Runtime 定向时才显式传入 |
 | `observe_browser_page(sessionId, pageId?)` | **页面状态**：有界正文、交互元素与 revision，这是模型的“眼睛” |
 | `navigate_browser_page(sessionId, pageId, url, expectedObservationRef?)` | 导航并返回新页面状态；同一 idempotency key 不重复执行 |
+| `scroll_browser_page(sessionId, pageId, observationRef, direction, amount?)` | 从当前观察向上/向下或到达顶部/底部，返回新的视口观察；不改变远端业务数据 |
 | `click_browser_element(sessionId, pageId, observationRef, elementRef)` | 点击当前观察中的元素；准备时解析人类描述，页面变化则不执行 |
 | `fill_browser_field(sessionId, pageId, observationRef, elementRef, value)` | 填写普通文本字段并重读确认；首版拒绝 password/file 等敏感类型 |
 | `select_browser_option(sessionId, pageId, observationRef, elementRef, value)` | 使用观察中真实 option value 选择原生下拉项，不让模型猜 label |
@@ -116,6 +119,13 @@ observe_browser_page` 续接。这个方案不是最终状态，但已经允许�
 - 结束后：舞台收拢为一枚 chip（"操作了 3 个页面 · 42s"），点击可回看；
 - 失败：断点截图 + 模型自诊断（"在'上传附件'步骤找不到文件选择器"）。
 
+第一步不引入一条绕过对话内核的实时画面通道。截图仍先经过 Tool Runtime 写入
+Managed Object Store，再由后端把安全的预览地址和少量 metadata 投影到对应 ToolNode。
+Frontend 只有在用户展开该节点时才请求、解码图像；折叠状态与历史轮次只保留引用。
+预览接口必须用 `conversationId + toolExecutionId` 校验归属，不向前端暴露对象仓物理路径
+或可任意读取的 `objectRef`。这样视觉证据、历史回放和懒加载共用一套持久语义，同时不让
+Frontend 成为第二个浏览器执行器。
+
 ## 7. 技术选型权衡
 
 | 方案 | 优 | 劣 |
@@ -133,6 +143,9 @@ observe_browser_page` 续接。这个方案不是最终状态，但已经允许�
 
 - Runtime Definition 来自本机配置，稳定 `runtime_id` 进入 Capability observation，地址与
   bearer token 永不进入模型上下文；
+- 单一可用 Runtime 自动成为默认；多 Runtime 场景由本机配置声明默认对象。只有默认缺失、
+  用户要求定向或需要诊断时，模型才读取 Runtime 目录；健康检查始终由 Backend preflight
+  执行，不占用普通 Agentic Round；
 - daemon 进程、CDP client 与 BrowserSession 是 ephemeral runtime object；TTL、关闭或
   进程重启后可以失效，不伪装成永久业务对象；
 - Backend 持久化 ToolCall、Operation Snapshot、session/page 引用、Observation/Evidence
@@ -157,13 +170,14 @@ npm start
 # backend/src/main/resources/application-local.yml（不提交）
 iris:
   webbridge:
+    default-runtime-id: local_browser
     runtimes:
       local_browser:
         title: 本机浏览器
-        description: Iris 专用的可见 Chrome 会话，保留本机登录状态
+        description: Iris 专用的可见 Edge 会话，可由用户随时接管
         base-url: http://127.0.0.1:19223
         token: ${IRIS_BRIDGE_TOKEN}
-        protocol-version: 1
+        protocol-version: 2
 ```
 
 Backend 启动时还需激活 `local` profile。Windows 产品化后由 launcher 创建并向两个进程

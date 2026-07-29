@@ -32,9 +32,9 @@ public class ListCapabilitiesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.list",
-                "3",
+                "4",
                 "list_capabilities",
-                "列出能力目录的直接子目录、数量和当前层工具卡片；结构未知时浏览，词面明确时用 search_files 的 capabilities 命名空间",
+                "列出能力目录的直接子目录、语义说明、已实现数量和当前层工具卡片；结构未知时浏览，词面明确时搜索",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -90,7 +90,7 @@ public class ListCapabilitiesTool implements Tool {
                 new VerificationResult.Evidence(
                         "capability_registry",
                         null,
-                        "目录来自当前已校验的 Tool Registry"
+                        "目录来自语义目录地图与当前已校验的 Tool Registry"
                 )
         ));
     }
@@ -115,7 +115,10 @@ public class ListCapabilitiesTool implements Tool {
                 .put("description", "当前目录");
         properties.putObject("directories")
                 .put("type", "array")
-                .put("description", "直接子目录及能力数量");
+                .put(
+                        "description",
+                        "直接子目录、语义说明及已注册能力数量；数量为 0 表示只有目录地图"
+                );
         ObjectNode items = properties.putObject("items");
         items.put("type", "array");
         items.put(

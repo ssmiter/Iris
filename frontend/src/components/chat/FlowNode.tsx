@@ -18,6 +18,7 @@ import type {
 } from '@/domain/chat/models'
 import { Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { BrowserScreenshotPreview } from './BrowserScreenshotPreview'
 
 interface FlowNodeProps {
   node: RenderNode
@@ -103,8 +104,9 @@ function statusText(node: RenderNode) {
 
 function NodeBody({
   node,
+  expanded,
   onAttentionAction,
-}: Pick<FlowNodeProps, 'node' | 'onAttentionAction'>) {
+}: Pick<FlowNodeProps, 'node' | 'expanded' | 'onAttentionAction'>) {
   switch (node.type) {
     case 'thinking':
       return (
@@ -130,6 +132,9 @@ function NodeBody({
             <p className="font-mono text-caption text-ink-muted">
               result: {node.resultRef}
             </p>
+          )}
+          {expanded && node.preview?.kind === 'browser_screenshot' && (
+            <BrowserScreenshotPreview preview={node.preview} />
           )}
         </div>
       )
@@ -278,6 +283,7 @@ export function FlowNode({
             <div className="px-2 pb-3 pt-1 text-small text-ink-subtle">
               <NodeBody
                 node={node}
+                expanded={expanded}
                 onAttentionAction={onAttentionAction}
               />
             </div>

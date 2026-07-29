@@ -40,7 +40,7 @@ public class ListBrowserRuntimesTool implements Tool {
                 "iris.web.browser.list_browser_runtimes",
                 "1",
                 "list_browser_runtimes",
-                "列出 Iris 可连接的本机浏览器运行时及当前状态；需要开始网页操作或解释浏览器为何不可用时使用",
+                "列出本机浏览器运行时及健康状态；需要定向选择、多 Runtime 判断或故障解释时使用，普通任务无需先调用",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -101,7 +101,7 @@ public class ListBrowserRuntimesTool implements Tool {
                 "guidance",
                 items.isEmpty()
                         ? "当前没有配置 Browser Runtime；需要先在本机私有配置中绑定 daemon"
-                        : "选择 available=true 的 runtimeId；创建会话前无需知道 daemon 地址或凭据"
+                        : "普通任务由 Backend 选择默认 Runtime；仅在定向选择或故障诊断时使用这里的 runtimeId"
         );
         return ToolOutcome.succeeded(output);
     }

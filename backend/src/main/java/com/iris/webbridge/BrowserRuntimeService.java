@@ -72,6 +72,30 @@ public class BrowserRuntimeService {
         }
     }
 
+    public String resolveAvailable(String requestedRuntimeId) {
+        if (requestedRuntimeId != null
+                && !requestedRuntimeId.isBlank()) {
+            String normalized = requestedRuntimeId.trim();
+            runtimes.require(normalized);
+            requireAvailable(normalized);
+            return normalized;
+        }
+        if (!hasConfiguredRuntime()) {
+            throw new ToolRuntimeException(
+                    "browser_runtime_not_configured",
+                    "当前没有配置 Browser Runtime"
+            );
+        }
+        String defaultRuntimeId = runtimes.defaultRuntimeId()
+                .orElseThrow(() -> new ToolRuntimeException(
+                        "browser_runtime_choice_required",
+                        "配置了多个 Browser Runtime，但没有默认对象；"
+                                + "调用 list_browser_runtimes 后显式选择 runtime_id"
+                ));
+        requireAvailable(defaultRuntimeId);
+        return defaultRuntimeId;
+    }
+
     private RuntimeHealth check(String runtimeId, Instant checkedAt) {
         BrowserRuntimeCatalog.Binding binding = runtimes.find(runtimeId)
                 .orElse(null);

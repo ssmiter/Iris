@@ -10,6 +10,14 @@ const OBSERVATION_SCRIPT = `(limits => {
       && rect.height > 0
   }
 
+  const inViewport = element => {
+    const rect = element.getBoundingClientRect()
+    return rect.bottom > 0
+      && rect.right > 0
+      && rect.top < window.innerHeight
+      && rect.left < window.innerWidth
+  }
+
   const cssEscape = value => {
     if (globalThis.CSS?.escape) return CSS.escape(value)
     return String(value).replace(/[^a-zA-Z0-9_-]/g, char => '\\\\' + char)
@@ -57,9 +65,20 @@ const OBSERVATION_SCRIPT = `(limits => {
   const candidates = Array.from(document.querySelectorAll(
     'a[href],button,input,textarea,select,[role="button"],[role="link"],'
     + '[role="textbox"],[role="checkbox"],[role="radio"],[contenteditable="true"],[tabindex]'
-  )).filter(visible)
+  ))
+    .filter(visible)
+    .map((element, index) => ({
+      element,
+      index,
+      inViewport: inViewport(element),
+    }))
+    .sort((left, right) =>
+      Number(right.inViewport) - Number(left.inViewport)
+      || left.index - right.index
+    )
 
-  const elements = candidates.slice(0, limits.maxElements).map((element, index) => {
+  const elements = candidates.slice(0, limits.maxElements).map((candidate, index) => {
+    const element = candidate.element
     const tag = element.tagName.toLowerCase()
     const type = String(element.getAttribute('type') || '').toLowerCase()
     const password = tag === 'input' && type === 'password'
@@ -81,6 +100,8 @@ const OBSERVATION_SCRIPT = `(limits => {
       contentEditable: element.isContentEditable,
       disabled: Boolean(element.disabled) || element.getAttribute('aria-disabled') === 'true',
       checked: typeof element.checked === 'boolean' ? element.checked : undefined,
+      href: tag === 'a' ? element.href || undefined : undefined,
+      inViewport: candidate.inViewport,
       options,
       selector: selector(element),
     }
@@ -93,10 +114,32 @@ const OBSERVATION_SCRIPT = `(limits => {
   const rawText = String(document.body?.innerText || '')
     .replace(/\\u0000/g, '')
     .trim()
+  const viewportText = Array.from(document.querySelectorAll(
+    'h1,h2,h3,h4,p,li,dt,dd,td,th,label,button,a'
+  ))
+    .filter(element => visible(element) && inViewport(element))
+    .map(element => String(element.innerText || element.textContent || '')
+      .replace(/\\s+/g, ' ')
+      .trim())
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .join('\\n')
+    .slice(0, limits.maxViewportTextCharacters)
   return {
     url: location.href,
     title: document.title,
     readyState: document.readyState,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      pageHeight: Math.max(
+        document.body?.scrollHeight || 0,
+        document.documentElement?.scrollHeight || 0,
+      ),
+    },
+    viewportText,
     text: rawText.slice(0, limits.maxTextCharacters),
     textTruncated: rawText.length > limits.maxTextCharacters,
     elements,
@@ -113,25 +156,17 @@ export async function observePage(session, limits = {}) {
     80_000,
   )
   const maxElements = bound(limits.maxElements, 160, 1, 500)
-  const expression = `${OBSERVATION_SCRIPT}(${JSON.stringify({
+  const normalizedLimits = {
     maxTextCharacters,
     maxElements,
-  })})`
-  const evaluation = await session.client.Runtime.evaluate({
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  })
-  if (evaluation.exceptionDetails) {
-    throw new Error('Page observation script failed')
+    maxViewportTextCharacters: Math.min(8_000, maxTextCharacters),
   }
-  const state = evaluation.result?.value
-  if (!state || typeof state !== 'object') {
-    throw new Error('Page observation returned no state')
-  }
+  const state = await capturePageState(session, normalizedLimits)
 
   session.revision += 1
   session.lastUsedAt = new Date()
+  session.lastObservationLimits = normalizedLimits
+  session.lastActionFingerprint = actionFingerprint(state)
   session.elementSelectors = new Map(
     (state.elements || []).map(item => [item.ref, item.selector]),
   )
@@ -148,6 +183,8 @@ export async function observePage(session, limits = {}) {
         contentEditable: item.contentEditable,
         disabled: item.disabled,
         checked: item.checked,
+        href: item.href,
+        inViewport: item.inViewport,
         options: item.options,
       },
     ]),
@@ -176,6 +213,60 @@ export async function observePage(session, limits = {}) {
   }
   session.lastObservation = observation
   return observation
+}
+
+export async function observationIsCurrent(session) {
+  if (!session.lastObservation || !session.lastActionFingerprint) {
+    return false
+  }
+  const limits = session.lastObservationLimits || {
+    maxTextCharacters: 24_000,
+    maxElements: 160,
+    maxViewportTextCharacters: 8_000,
+  }
+  const state = await capturePageState(session, limits)
+  return actionFingerprint(state) === session.lastActionFingerprint
+}
+
+async function capturePageState(session, limits) {
+  const expression = `${OBSERVATION_SCRIPT}(${JSON.stringify(limits)})`
+  const evaluation = await session.client.Runtime.evaluate({
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  })
+  if (evaluation.exceptionDetails) {
+    throw new Error('Page observation script failed')
+  }
+  const state = evaluation.result?.value
+  if (!state || typeof state !== 'object') {
+    throw new Error('Page observation returned no state')
+  }
+  return state
+}
+
+function actionFingerprint(state) {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      url: state.url,
+      viewport: state.viewport,
+      elements: (state.elements || []).map(element => ({
+        selector: element.selector,
+        tag: element.tag,
+        role: element.role,
+        name: element.name,
+        type: element.type,
+        placeholder: element.placeholder,
+        contentEditable: element.contentEditable,
+        disabled: element.disabled,
+        checked: element.checked,
+        href: element.href,
+        inViewport: element.inViewport,
+        value: element.value,
+        options: element.options,
+      })),
+    }))
+    .digest('hex')
 }
 
 function bound(value, fallback, minimum, maximum) {

@@ -12,7 +12,6 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
 import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
@@ -24,24 +23,21 @@ import java.util.List;
 public class NavigateBrowserPageTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
     private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public NavigateBrowserPageTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
             BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
         this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.navigate_browser_page",
-                "1",
+                "2",
                 "navigate_browser_page",
                 "让指定 BrowserPage 导航到一个网页，并在同一结果中返回动作状态、新页面观察与证据；需要打开链接时使用",
                 inputSchema(),
@@ -65,12 +61,9 @@ public class NavigateBrowserPageTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
-        runtimeService.requireAvailable(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -189,7 +182,7 @@ public class NavigateBrowserPageTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "当前短期 BrowserSession ID");
         properties.putObject("page_id").put("type", "string")
@@ -200,7 +193,7 @@ public class NavigateBrowserPageTool implements Tool {
                 .put("type", "string")
                 .put("description", "建议传入最近一次页面观察 ref；页面变化时动作会安全地 not_applied");
         schema.putArray("required")
-                .add("runtime_id").add("session_id")
+                .add("session_id")
                 .add("page_id").add("url");
         return schema;
     }

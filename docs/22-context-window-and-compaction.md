@@ -42,7 +42,14 @@ Planner 从最新事实向前选择原子组：
 - 普通 user/assistant text 是单独一组；
 - ToolCall 与它唯一的 ToolResult 是同一组；
 - 缺结果、孤立结果、重复结果是协议错误，不参与猜测；
-- 最新用户请求是硬保留项，单独就超预算时显式返回 `prompt_too_large`。
+- 当前 Turn 的原始用户请求和已经注入的全部用户补充都是硬保留项；它们共同构成这次
+  Agentic Run 的任务约束，不能因为某条补充更新而静默淘汰最初目标。
+- 当前 Turn 中不可安全重取的 Tool Observation 及其 assistant ToolCall 轨迹也是硬保留
+  项，包括写操作、审批、失败、`outcome_unknown` 和当前 Definition 已无法核验的结果；
+  Planner 不能先拒绝 micro compact、随后又按普通旧事实把整组淘汰。
+- 最新用户请求仍是兜底硬保留项。硬保留的当前 Turn 指令单独就超预算时显式返回
+  `prompt_too_large`；当前 Turn 指令与不可重取证据共同超限时也一样，不能让模型在遗忘
+  约束或外部影响的情况下继续执行。
 
 被裁掉的事实仍保留在 canonical history。存在 CompactBoundary 时，后续将由经过验证
 的 summary artifact 替代它覆盖的旧视野；边界本身不复制或删除原始历史。

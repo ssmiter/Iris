@@ -49,11 +49,33 @@ public final class DomainCatalog {
             Map.entry("data", "数据"), Map.entry("sql", "SQL"),
             Map.entry("web", "网页"), Map.entry("browser", "浏览器"),
             Map.entry("files", "工作区文件"),
-            Map.entry("context", "上下文"), Map.entry("math", "计算")
+            Map.entry("context", "上下文"), Map.entry("math", "计算"),
+            Map.entry("industry", "工业"), Map.entry("mes", "制造执行"),
+            Map.entry("materials", "原材料"),
+            Map.entry("inventory", "库存"),
+            Map.entry("mixing", "密炼"), Map.entry("plan", "计划与执行"),
+            Map.entry("equipment", "设备"), Map.entry("status", "状态"),
+            Map.entry("quality", "质量")
     );
 
     public static String segmentLabel(String segment) {
-        return SEGMENT_LABELS.getOrDefault(segment, segment);
+        String semantic = stripOrdinalPrefix(segment);
+        return SEGMENT_LABELS.getOrDefault(semantic, semantic);
+    }
+
+    private static String stripOrdinalPrefix(String segment) {
+        String value = segment.startsWith("_")
+                ? segment.substring(1)
+                : segment;
+        int index = 0;
+        while (index < value.length()
+                && Character.isDigit(value.charAt(index))) {
+            index++;
+        }
+        if (index > 0 && index < value.length()) {
+            return value.substring(index);
+        }
+        return segment;
     }
 
     /** 域过滤：某身份是否可见某路径。未知身份 fail-close（只见通用工具）。 */

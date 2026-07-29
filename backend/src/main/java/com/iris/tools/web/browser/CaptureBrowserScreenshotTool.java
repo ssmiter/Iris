@@ -15,7 +15,7 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
+import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import com.iris.webbridge.WebBridgeClient.ScreenshotPayload;
 import org.springframework.stereotype.Component;
@@ -28,24 +28,24 @@ import java.util.List;
 public class CaptureBrowserScreenshotTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
+    private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ManagedObjectStore objects;
     private final ToolManifest manifest;
 
     public CaptureBrowserScreenshotTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
+            BrowserRuntimeService runtimeService,
             WebBridgeClient client,
             ManagedObjectStore objects
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
+        this.runtimeService = runtimeService;
         this.client = client;
         this.objects = objects;
         this.manifest = new ToolManifest(
                 "iris.web.browser.capture_browser_screenshot",
-                "1",
+                "2",
                 "capture_browser_screenshot",
                 "截取当前 BrowserPage 并保存为不可变图像对象，只返回对象引用和图像 metadata；需要视觉证据时使用",
                 inputSchema(),
@@ -69,11 +69,9 @@ public class CaptureBrowserScreenshotTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -190,7 +188,7 @@ public class CaptureBrowserScreenshotTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "当前短期 BrowserSession ID");
         properties.putObject("page_id").put("type", "string")
@@ -204,7 +202,7 @@ public class CaptureBrowserScreenshotTool implements Tool {
         properties.putObject("full_page").put("type", "boolean")
                 .put("description", "false 截当前视口；true 尝试截完整页面");
         schema.putArray("required")
-                .add("runtime_id").add("session_id").add("page_id");
+                .add("session_id").add("page_id");
         return schema;
     }
 

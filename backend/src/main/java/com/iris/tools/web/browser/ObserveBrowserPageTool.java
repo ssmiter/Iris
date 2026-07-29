@@ -12,7 +12,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
+import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
 
@@ -28,21 +28,21 @@ public class ObserveBrowserPageTool implements Tool {
     private static final int MAX_ELEMENTS = 500;
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
+    private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public ObserveBrowserPageTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
+            BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
+        this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.observe_browser_page",
-                "1",
+                "2",
                 "observe_browser_page",
                 "观察存活浏览器页面的标题、正文与可交互元素，返回本 revision 内可用的短期元素引用；操作前或页面变化后使用",
                 inputSchema(),
@@ -66,11 +66,9 @@ public class ObserveBrowserPageTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -151,7 +149,7 @@ public class ObserveBrowserPageTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "稳定 Browser Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "open/list_browser_sessions 返回的短期 Session ID");
         properties.putObject("page_id").put("type", "string")
@@ -165,7 +163,7 @@ public class ObserveBrowserPageTool implements Tool {
                 .put("maximum", MAX_ELEMENTS)
                 .put("description", "交互元素预算，默认 160");
         schema.putArray("required")
-                .add("runtime_id").add("session_id");
+                .add("session_id");
         return schema;
     }
 

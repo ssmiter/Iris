@@ -12,7 +12,6 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
 import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
@@ -24,26 +23,23 @@ import java.util.List;
 public class OpenBrowserSessionTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
     private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public OpenBrowserSessionTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
             BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
         this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.open_browser_session",
-                "1",
+                "2",
                 "open_browser_session",
-                "在本机 Browser Runtime 中创建一个可见、短期的浏览器会话并返回首份页面观察；需要开始新的网页任务时使用",
+                "创建一个可见、短期的本机浏览器会话并返回首份页面观察；普通任务自动选择默认 Runtime",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.STANDARD,
@@ -65,12 +61,13 @@ public class OpenBrowserSessionTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
+        String requestedRuntimeId = BrowserToolSupport.optionalId(
                 input,
                 "runtime_id"
         );
-        runtimes.require(runtimeId);
-        runtimeService.requireAvailable(runtimeId);
+        String runtimeId = runtimeService.resolveAvailable(
+                requestedRuntimeId
+        );
         String url = BrowserToolSupport.optionalUrl(input, "url");
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("runtime_id", runtimeId);
@@ -105,10 +102,12 @@ public class OpenBrowserSessionTool implements Tool {
             );
         }
         JsonNode input = operation.normalizedInput();
-        JsonNode output = client.openSession(
+        JsonNode daemonOutput = client.openSession(
                 input.path("runtime_id").asText(),
                 input.path("url").asText(null)
         );
+        ObjectNode output = daemonOutput.deepCopy();
+        output.put("runtimeId", input.path("runtime_id").asText());
         return ToolOutcome.succeeded(output);
     }
 
@@ -139,16 +138,17 @@ public class OpenBrowserSessionTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回且 available=true 的 Runtime ID");
+                .put("description", "可选定向 Runtime ID；普通单机任务省略，由 Backend 选择默认可用对象");
         properties.putObject("url").put("type", "string")
                 .put("description", "可选初始 http/https URL；省略时打开 about:blank");
-        schema.putArray("required").add("runtime_id");
         return schema;
     }
 
     private JsonNode outputSchema() {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
+        properties.putObject("runtimeId").put("type", "string")
+                .put("description", "Backend 实际选择的稳定 Browser Runtime ID");
         properties.putObject("sessionId").put("type", "string")
                 .put("description", "新建短期 BrowserSession ID");
         properties.putObject("pageId").put("type", "string")
@@ -160,7 +160,7 @@ public class OpenBrowserSessionTool implements Tool {
                 BrowserToolSupport.browserObservationSchema(objectMapper)
         );
         schema.putArray("required")
-                .add("sessionId").add("pageId")
+                .add("runtimeId").add("sessionId").add("pageId")
                 .add("createdAt").add("observation");
         return schema;
     }

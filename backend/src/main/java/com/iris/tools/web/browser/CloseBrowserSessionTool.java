@@ -13,7 +13,6 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
 import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
@@ -25,24 +24,21 @@ import java.util.List;
 public class CloseBrowserSessionTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
     private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public CloseBrowserSessionTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
             BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
         this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.close_browser_session",
-                "1",
+                "2",
                 "close_browser_session",
                 "关闭一个短期 BrowserSession 并释放其页面与 CDP handle；网页任务完成且不再需要人工接管时使用",
                 inputSchema(),
@@ -66,12 +62,9 @@ public class CloseBrowserSessionTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
-        runtimeService.requireAvailable(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -133,11 +126,11 @@ public class CloseBrowserSessionTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "要关闭的短期 BrowserSession ID");
         schema.putArray("required")
-                .add("runtime_id").add("session_id");
+                .add("session_id");
         return schema;
     }
 

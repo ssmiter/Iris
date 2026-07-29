@@ -13,7 +13,6 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
 import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
@@ -28,24 +27,21 @@ import java.util.List;
 public class ClickBrowserElementTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
     private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public ClickBrowserElementTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
             BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
         this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.click_browser_element",
-                "1",
+                "2",
                 "click_browser_element",
                 "点击最近页面观察中的一个可交互元素，并返回动作后页面观察与证据；只使用同一 observation 的 element_ref",
                 inputSchema(),
@@ -69,12 +65,9 @@ public class ClickBrowserElementTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
-        runtimeService.requireAvailable(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -237,7 +230,7 @@ public class ClickBrowserElementTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "当前短期 BrowserSession ID");
         properties.putObject("page_id").put("type", "string")
@@ -247,7 +240,7 @@ public class ClickBrowserElementTool implements Tool {
         properties.putObject("element_ref").put("type", "string")
                 .put("description", "同一 observation.elements 中的短期 ref，如 e3");
         schema.putArray("required")
-                .add("runtime_id").add("session_id").add("page_id")
+                .add("session_id").add("page_id")
                 .add("observation_ref").add("element_ref");
         return schema;
     }

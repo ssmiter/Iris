@@ -5,6 +5,7 @@ import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.CapabilityAvailabilityService;
+import com.iris.tools.catalog.CapabilityDirectoryCatalog.DirectoryDefinition;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -37,14 +38,17 @@ public class CapabilityService {
 
     private final ToolRegistry registry;
     private final CapabilityAvailabilityService availability;
+    private final CapabilityDirectoryCatalog directoryCatalog;
     private final List<CatalogDocument> searchDocuments;
 
     public CapabilityService(
             ToolRegistry registry,
-            CapabilityAvailabilityService availability
+            CapabilityAvailabilityService availability,
+            CapabilityDirectoryCatalog directoryCatalog
     ) {
         this.registry = registry;
         this.availability = availability;
+        this.directoryCatalog = directoryCatalog;
         this.searchDocuments = registry.all().stream()
                 .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
                         binding.manifest().name()
@@ -75,6 +79,12 @@ public class CapabilityService {
                 counts.merge(cur.toString(), 1, Integer::sum);
             }
         }
+        for (DirectoryDefinition directory : directoryCatalog.all()) {
+            if (!DomainCatalog.visible(systemCode, directory.path())) {
+                continue;
+            }
+            addDirectoryPath(counts, directory.path());
+        }
         return buildNode("", counts);
     }
 
@@ -103,15 +113,16 @@ public class CapabilityService {
                 items.add(card(binding));
             }
         }
+        for (DirectoryDefinition directory : directoryCatalog.all()) {
+            if (DomainCatalog.visible(systemCode, directory.path())
+                    && isDirectChild(parent, directory.path())) {
+                directories.putIfAbsent(directory.path(), 0);
+            }
+        }
         List<DirectoryCard> directoryCards = directories.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
-                .map(entry -> new DirectoryCard(
+                .map(entry -> directoryCard(
                         entry.getKey(),
-                        DomainCatalog.segmentLabel(
-                                entry.getKey().substring(
-                                        entry.getKey().lastIndexOf('/') + 1
-                                )
-                        ),
                         entry.getValue()
                 ))
                 .toList();
@@ -378,6 +389,43 @@ public class CapabilityService {
         );
     }
 
+    private DirectoryCard directoryCard(String path, int count) {
+        Optional<DirectoryDefinition> definition =
+                directoryCatalog.find(path);
+        String segment = path.substring(path.lastIndexOf('/') + 1);
+        return new DirectoryCard(
+                path,
+                definition.map(DirectoryDefinition::title)
+                        .orElseGet(() ->
+                                DomainCatalog.segmentLabel(segment)
+                        ),
+                definition.map(DirectoryDefinition::description)
+                        .orElse("按目录组织的能力集合"),
+                count
+        );
+    }
+
+    private boolean isDirectChild(String parent, String candidate) {
+        String prefix = "/".equals(parent) ? "/" : parent + "/";
+        if (!candidate.startsWith(prefix)) {
+            return false;
+        }
+        String remainder = candidate.substring(prefix.length());
+        return !remainder.isBlank() && !remainder.contains("/");
+    }
+
+    private void addDirectoryPath(
+            Map<String, Integer> counts,
+            String path
+    ) {
+        String[] segments = path.substring(1).split("/");
+        StringBuilder current = new StringBuilder();
+        for (String segment : segments) {
+            current.append('/').append(segment);
+            counts.putIfAbsent(current.toString(), 0);
+        }
+    }
+
     public String normalizePath(String path) {
         if (path == null || path.isBlank() || "/".equals(path.trim())) {
             return "/";
@@ -410,6 +458,7 @@ public class CapabilityService {
     public record DirectoryCard(
             String path,
             String title,
+            String description,
             int capabilityCount
     ) {
     }

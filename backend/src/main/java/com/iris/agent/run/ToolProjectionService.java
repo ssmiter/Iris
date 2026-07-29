@@ -9,21 +9,29 @@ import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Service
 public class ToolProjectionService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(
+            ToolProjectionService.class
+    );
+
     private final JdbcClient jdbc;
     private final RunRoundRepository runs;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final ConversationEventAppender events;
+    private final List<ToolProjectionEnricher> enrichers;
     private final Clock clock = Clock.systemUTC();
 
     public ToolProjectionService(
@@ -31,13 +39,15 @@ public class ToolProjectionService {
             RunRoundRepository runs,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
-            ConversationEventAppender events
+            ConversationEventAppender events,
+            List<ToolProjectionEnricher> enrichers
     ) {
         this.jdbc = jdbc;
         this.runs = runs;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.events = events;
+        this.enrichers = List.copyOf(enrichers);
     }
 
     public void project(
@@ -201,6 +211,12 @@ public class ToolProjectionService {
         if (result.message() != null && !result.message().isBlank()) {
             projection.put("evidenceSummary", result.message());
         }
+        enrichToolProjection(
+                projection,
+                run.conversationId(),
+                call,
+                result
+        );
 
         if (existing == null) {
             insertNode(
@@ -417,7 +433,7 @@ public class ToolProjectionService {
                 ) VALUES (
                     :nodeId, :conversationId, :branchId, :turnId, :runId,
                     :roundId, NULL, :type, :status,
-                    NULL, :ordinal, 'default', :version,
+                    NULL, :ordinal, :rendererKey, :version,
                     NULL, :projection, :now, :now
                 )
                 """)
@@ -430,6 +446,10 @@ public class ToolProjectionService {
                 .param("type", type)
                 .param("status", status)
                 .param("ordinal", ordinal)
+                .param(
+                        "rendererKey",
+                        projection.path("rendererKey").asText("default")
+                )
                 .param("version", version)
                 .param("projection", projection.toString())
                 .param("now", now.toString())
@@ -446,11 +466,16 @@ public class ToolProjectionService {
         int updated = jdbc.sql("""
                 UPDATE render_node_projection
                 SET node_status = :status, version = :version,
+                    renderer_key = :rendererKey,
                     projection_json = :projection, updated_at = :now
                 WHERE node_id = :nodeId AND version = :expectedVersion
                 """)
                 .param("status", status)
                 .param("version", version)
+                .param(
+                        "rendererKey",
+                        projection.path("rendererKey").asText("default")
+                )
                 .param("projection", projection.toString())
                 .param("now", now.toString())
                 .param("nodeId", nodeId)
@@ -530,6 +555,31 @@ public class ToolProjectionService {
             case "outcome_unknown" -> "结果未知，需要先核验";
             default -> "工具正在处理";
         };
+    }
+
+    private void enrichToolProjection(
+            ObjectNode projection,
+            String conversationId,
+            RoundToolCall call,
+            RuntimeResult result
+    ) {
+        for (ToolProjectionEnricher enricher : enrichers) {
+            if (!enricher.supports(call.toolName())) {
+                continue;
+            }
+            try {
+                enricher.enrich(projection, conversationId, result);
+            } catch (RuntimeException exception) {
+                LOGGER.warn(
+                        "Tool presentation enrichment failed for {} ({})",
+                        call.toolName(),
+                        result.executionId(),
+                        exception
+                );
+                projection.put("rendererKey", "default");
+                projection.put("presentationUnavailable", true);
+            }
+        }
     }
 
     private void action(

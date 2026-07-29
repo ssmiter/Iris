@@ -107,6 +107,23 @@ public class ToolRuntimeRepository {
                 .optional();
     }
 
+    public Optional<RuntimeResult> findByExecutionId(
+            String conversationId,
+            String executionId
+    ) {
+        return jdbc.sql("""
+                SELECT e.*, s.snapshot_hash, s.impact_statement
+                FROM tool_execution e
+                LEFT JOIN operation_snapshot s ON s.execution_id = e.execution_id
+                WHERE e.conversation_id = :conversationId
+                  AND e.execution_id = :executionId
+                """)
+                .param("conversationId", conversationId)
+                .param("executionId", executionId)
+                .query(this::mapResult)
+                .optional();
+    }
+
     public String inputHash(String executionId) {
         return jdbc.sql("""
                 SELECT input_hash FROM tool_execution

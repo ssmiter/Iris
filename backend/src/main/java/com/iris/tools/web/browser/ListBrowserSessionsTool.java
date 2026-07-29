@@ -12,7 +12,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
+import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
 
@@ -23,21 +23,21 @@ import java.util.List;
 public class ListBrowserSessionsTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
+    private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public ListBrowserSessionsTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
+            BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
+        this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.list_browser_sessions",
-                "1",
+                "2",
                 "list_browser_sessions",
                 "列出指定浏览器运行时仍存活的短期会话与页面；需要继续已有网页任务或判断会话是否失效时使用",
                 inputSchema(),
@@ -61,11 +61,9 @@ public class ListBrowserSessionsTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("runtime_id", runtimeId);
         return new PreparedOperation(
@@ -122,8 +120,7 @@ public class ListBrowserSessionsTool implements Tool {
         ((ObjectNode) schema.path("properties"))
                 .putObject("runtime_id")
                 .put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
-        schema.putArray("required").add("runtime_id");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         return schema;
     }
 

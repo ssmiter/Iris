@@ -139,6 +139,17 @@ export interface ToolNode extends RenderNodeBase {
   summary: string
   resultRef?: string
   evidenceSummary?: string
+  preview?: BrowserScreenshotPreview
+}
+
+export interface BrowserScreenshotPreview {
+  kind: 'browser_screenshot'
+  url: string
+  mediaType: 'image/jpeg' | 'image/png'
+  contentHash: string
+  byteCount: number
+  pageId: string
+  observationRef: string
 }
 
 export interface AttentionAction {

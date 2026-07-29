@@ -13,7 +13,7 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
+import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
 
@@ -28,21 +28,21 @@ public class WaitBrowserPageTool implements Tool {
             Set.of("change", "ready", "text");
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
+    private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public WaitBrowserPageTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
+            BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
+        this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.wait_browser_page",
-                "1",
+                "2",
                 "wait_browser_page",
                 "等待页面变化、加载完成或出现指定文本，并只返回最终页面观察；动作触发异步 UI 时使用",
                 inputSchema(),
@@ -66,8 +66,9 @@ public class WaitBrowserPageTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(input, "runtime_id");
-        runtimes.require(runtimeId);
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
+        );
         String sessionId = BrowserToolSupport.requiredId(input, "session_id");
         String pageId = BrowserToolSupport.requiredId(input, "page_id");
         String baseline = BrowserToolSupport.optionalObservationRef(
@@ -173,7 +174,7 @@ public class WaitBrowserPageTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "当前短期 BrowserSession ID");
         properties.putObject("page_id").put("type", "string")
@@ -188,7 +189,7 @@ public class WaitBrowserPageTool implements Tool {
                 .put("minimum", 250).put("maximum", 15_000)
                 .put("description", "等待预算，默认 5000ms");
         schema.putArray("required")
-                .add("runtime_id").add("session_id").add("page_id")
+                .add("session_id").add("page_id")
                 .add("after_observation_ref");
         return schema;
     }

@@ -21,6 +21,7 @@ public class BrowserRuntimeCatalog {
             Pattern.compile("[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*");
 
     private final Map<String, Binding> bindings;
+    private final String defaultRuntimeId;
 
     public BrowserRuntimeCatalog(IrisWebBridgeProperties properties) {
         Map<String, Binding> accepted = new LinkedHashMap<>();
@@ -34,6 +35,21 @@ public class BrowserRuntimeCatalog {
                     accepted.put(id, binding);
                 });
         this.bindings = Map.copyOf(accepted);
+        String configuredDefault = properties.getDefaultRuntimeId();
+        if (configuredDefault != null && !configuredDefault.isBlank()) {
+            String normalizedDefault = configuredDefault.trim();
+            if (!accepted.containsKey(normalizedDefault)) {
+                throw new IllegalStateException(
+                        "Default Browser Runtime is not configured: "
+                                + normalizedDefault
+                );
+            }
+            this.defaultRuntimeId = normalizedDefault;
+        } else if (accepted.size() == 1) {
+            this.defaultRuntimeId = accepted.keySet().iterator().next();
+        } else {
+            this.defaultRuntimeId = null;
+        }
     }
 
     public List<Definition> definitions() {
@@ -45,6 +61,10 @@ public class BrowserRuntimeCatalog {
 
     public Optional<Binding> find(String runtimeId) {
         return Optional.ofNullable(bindings.get(runtimeId));
+    }
+
+    public Optional<String> defaultRuntimeId() {
+        return Optional.ofNullable(defaultRuntimeId);
     }
 
     public Binding require(String runtimeId) {

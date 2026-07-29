@@ -297,6 +297,86 @@ public class ModelContextRepository {
                 .list();
     }
 
+    /**
+     * Returns the user facts that define the currently executing Turn as they
+     * were visible to the target Round. These facts are task constraints, not
+     * ordinary recency-ranked history.
+     */
+    public List<String> requiredUserFactIdsBeforeRound(
+            String turnId,
+            String roundId
+    ) {
+        return jdbc.sql("""
+                WITH target AS (
+                    SELECT ar.created_at AS target_time,
+                           ar.run_id AS target_run_id,
+                           ar.round_index AS target_round_index
+                    FROM agent_round ar
+                    WHERE ar.round_id = :roundId
+                )
+                SELECT m.message_id
+                FROM message m
+                JOIN target t
+                WHERE m.turn_id = :turnId
+                  AND m.role = 'user'
+                  AND (
+                      m.created_at <= t.target_time
+                      OR EXISTS (
+                          SELECT 1
+                          FROM turn_supplement s
+                          LEFT JOIN agent_round previous_round
+                            ON previous_round.round_id =
+                               s.injected_after_round_id
+                          WHERE s.message_id = m.message_id
+                            AND s.phase = 'injected'
+                            AND (
+                                (
+                                    s.injected_after_round_id IS NULL
+                                    AND t.target_round_index = 0
+                                )
+                                OR (
+                                    previous_round.run_id =
+                                        t.target_run_id
+                                    AND previous_round.round_index <
+                                        t.target_round_index
+                                )
+                            )
+                      )
+                  )
+                ORDER BY m.created_at, m.message_id
+                """)
+                .param("turnId", turnId)
+                .param("roundId", roundId)
+                .query(String.class)
+                .list();
+    }
+
+    public List<String> currentTurnObservationIdsBeforeRound(
+            String turnId,
+            String roundId
+    ) {
+        return jdbc.sql("""
+                SELECT observation.observation_id
+                FROM tool_observation observation
+                JOIN model_tool_call call
+                  ON call.tool_call_id = observation.tool_call_id
+                JOIN model_attempt attempt
+                  ON attempt.attempt_id = call.attempt_id
+                JOIN agent_round source_round
+                  ON source_round.round_id = attempt.round_id
+                JOIN agent_round target_round
+                  ON target_round.round_id = :roundId
+                WHERE attempt.turn_id = :turnId
+                  AND source_round.created_at < target_round.created_at
+                  AND observation.created_at < target_round.created_at
+                ORDER BY observation.created_at, observation.observation_id
+                """)
+                .param("turnId", turnId)
+                .param("roundId", roundId)
+                .query(String.class)
+                .list();
+    }
+
     private JsonNode read(String value) {
         try {
             return objectMapper.readTree(value);

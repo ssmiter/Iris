@@ -12,7 +12,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
-import com.iris.webbridge.BrowserRuntimeCatalog;
+import com.iris.webbridge.BrowserRuntimeService;
 import com.iris.webbridge.WebBridgeClient;
 import org.springframework.stereotype.Component;
 
@@ -27,21 +27,21 @@ import java.util.List;
 public class InspectBrowserActionTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private final BrowserRuntimeCatalog runtimes;
+    private final BrowserRuntimeService runtimeService;
     private final WebBridgeClient client;
     private final ToolManifest manifest;
 
     public InspectBrowserActionTool(
             ObjectMapper objectMapper,
-            BrowserRuntimeCatalog runtimes,
+            BrowserRuntimeService runtimeService,
             WebBridgeClient client
     ) {
         this.objectMapper = objectMapper;
-        this.runtimes = runtimes;
+        this.runtimeService = runtimeService;
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.inspect_browser_action",
-                "1",
+                "2",
                 "inspect_browser_action",
                 "按原 Tool execution ID 读取 daemon 已保存的浏览器动作结果，不再次执行动作；上次动作 outcome_unknown 时使用",
                 inputSchema(),
@@ -65,11 +65,9 @@ public class InspectBrowserActionTool implements Tool {
 
     @Override
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
-        String runtimeId = BrowserToolSupport.requiredId(
-                input,
-                "runtime_id"
+        String runtimeId = runtimeService.resolveAvailable(
+                BrowserToolSupport.optionalId(input, "runtime_id")
         );
-        runtimes.require(runtimeId);
         String sessionId = BrowserToolSupport.requiredId(
                 input,
                 "session_id"
@@ -129,14 +127,14 @@ public class InspectBrowserActionTool implements Tool {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("runtime_id").put("type", "string")
-                .put("description", "list_browser_runtimes 返回的稳定 Runtime ID");
+                .put("description", "可选定向 Runtime ID；默认 Runtime 会由 Backend 自动解析");
         properties.putObject("session_id").put("type", "string")
                 .put("description", "原动作所在的短期 BrowserSession ID");
         properties.putObject("tool_execution_id")
                 .put("type", "string")
                 .put("description", "outcome_unknown Tool observation 中的 executionId；也是原动作 idempotency key");
         schema.putArray("required")
-                .add("runtime_id").add("session_id")
+                .add("session_id")
                 .add("tool_execution_id");
         return schema;
     }

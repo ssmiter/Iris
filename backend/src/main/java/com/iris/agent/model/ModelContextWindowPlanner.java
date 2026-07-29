@@ -25,7 +25,48 @@ public class ModelContextWindowPlanner {
             List<ModelRequest.ToolDefinition> tools,
             ContextBudget budget
     ) {
+        return plan(
+                systemInstruction,
+                facts,
+                tools,
+                budget,
+                Set.of(),
+                Set.of()
+        );
+    }
+
+    public WindowPlan plan(
+            String systemInstruction,
+            List<ModelInputItem> facts,
+            List<ModelRequest.ToolDefinition> tools,
+            ContextBudget budget,
+            Set<String> requiredUserFactIds
+    ) {
+        return plan(
+                systemInstruction,
+                facts,
+                tools,
+                budget,
+                requiredUserFactIds,
+                Set.of()
+        );
+    }
+
+    public WindowPlan plan(
+            String systemInstruction,
+            List<ModelInputItem> facts,
+            List<ModelRequest.ToolDefinition> tools,
+            ContextBudget budget,
+            Set<String> requiredUserFactIds,
+            Set<String> requiredObservationIds
+    ) {
         validateBudget(budget);
+        Set<String> requiredUsers = requiredUserFactIds == null
+                ? Set.of()
+                : Set.copyOf(requiredUserFactIds);
+        Set<String> requiredObservations = requiredObservationIds == null
+                ? Set.of()
+                : Set.copyOf(requiredObservationIds);
         int fixed = tokens.estimateText(systemInstruction)
                 + tokens.estimate(tools)
                 + budget.reservedOutputTokens()
@@ -58,6 +99,14 @@ public class ModelContextWindowPlanner {
             boolean required = index == latestUserIndex
                     || groups.get(index).items().stream().anyMatch(
                     ModelInputItem.HistorySummary.class::isInstance
+            )
+                    || containsRequiredUser(
+                    groups.get(index),
+                    requiredUsers
+            )
+                    || containsRequiredObservation(
+                    groups.get(index),
+                    requiredObservations
             );
             if (!required) {
                 continue;
@@ -65,7 +114,7 @@ public class ModelContextWindowPlanner {
             int cost = tokens.estimate(groups.get(index).items());
             if (used + cost > available) {
                 throw new PromptTooLargeException(
-                        "Required user request and compact summary exceed the input budget"
+                        "Current Turn instructions, non-refetchable tool evidence and compact summary exceed the input budget"
                 );
             }
             included[index] = true;
@@ -97,6 +146,28 @@ public class ModelContextWindowPlanner {
                 fixed + used - budget.reservedOutputTokens(),
                 dropped,
                 budget
+        );
+    }
+
+    private boolean containsRequiredUser(
+            AtomicGroup group,
+            Set<String> requiredUserFactIds
+    ) {
+        return group.items().stream().anyMatch(item ->
+                item instanceof ModelInputItem.UserText user
+                        && requiredUserFactIds.contains(user.messageId())
+        );
+    }
+
+    private boolean containsRequiredObservation(
+            AtomicGroup group,
+            Set<String> requiredObservationIds
+    ) {
+        return group.items().stream().anyMatch(item ->
+                item instanceof ModelInputItem.ToolResult result
+                        && requiredObservationIds.contains(
+                        result.observationId()
+                )
         );
     }
 

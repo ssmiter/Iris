@@ -252,6 +252,34 @@ public class WebBridgeClient {
         );
     }
 
+    public JsonNode scroll(
+            String runtimeId,
+            String sessionId,
+            String pageId,
+            String observationRef,
+            String direction,
+            int amount,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":scroll");
+        body.put("idempotencyKey", executionId);
+        body.put("expectedObservationRef", observationRef);
+        body.put("primitive", "scroll");
+        ObjectNode arguments = body.putObject("normalizedArgs");
+        arguments.put("pageId", pageId);
+        arguments.put("direction", direction);
+        arguments.put("amount", amount);
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/actions",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
     public ScreenshotPayload captureScreenshot(
             String runtimeId,
             String sessionId,

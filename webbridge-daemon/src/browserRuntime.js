@@ -5,7 +5,10 @@ import path from 'node:path'
 import * as chromeLauncher from 'chrome-launcher'
 import CDP from 'chrome-remote-interface'
 import { config } from './config.js'
-import { observePage } from './observation.js'
+import {
+  observationIsCurrent,
+  observePage,
+} from './observation.js'
 
 const sessions = new Map()
 let chrome = null
@@ -98,6 +101,8 @@ export async function createSession(initialUrl = 'about:blank') {
     lastUsedAt: new Date(),
     revision: 0,
     lastObservation: null,
+    lastObservationLimits: null,
+    lastActionFingerprint: null,
     elementSelectors: new Map(),
     elements: new Map(),
     actionResults: new Map(),
@@ -243,7 +248,9 @@ export async function applyAction(sessionId, request) {
     request.actionAttemptId,
     'actionAttemptId',
   )
-  if (!['navigate', 'click', 'fill', 'select'].includes(request.primitive)) {
+  if (!['navigate', 'click', 'fill', 'select', 'scroll'].includes(
+    request.primitive,
+  )) {
     throw protocolError(
       'unsupported_browser_primitive',
       `Unsupported primitive: ${request.primitive}`,
@@ -252,11 +259,11 @@ export async function applyAction(sessionId, request) {
   }
   const pageId = requiredText(request.normalizedArgs?.pageId, 'pageId')
   requirePage(session, pageId)
-  if (['click', 'fill', 'select'].includes(request.primitive)
+  if (['click', 'fill', 'select', 'scroll'].includes(request.primitive)
       && !request.expectedObservationRef) {
     throw protocolError(
       'browser_observation_required',
-      'Element actions require an expected observation reference',
+      'Page actions require an expected observation reference',
       400,
     )
   }
@@ -280,6 +287,24 @@ export async function applyAction(sessionId, request) {
     )
     return result
   }
+  if (
+    request.expectedObservationRef
+    && !await observationIsCurrent(session)
+  ) {
+    const result = {
+      status: 'not_applied',
+      actionAttemptId,
+      idempotencyKey: key,
+      message: 'The page changed after the expected observation; observe again',
+    }
+    storeActionResult(
+      session,
+      key,
+      requestFingerprint,
+      result,
+    )
+    return result
+  }
 
   const before = session.lastObservation
   const pageIdsBefore = request.primitive === 'click'
@@ -287,17 +312,30 @@ export async function applyAction(sessionId, request) {
     : null
   let result
   try {
-    const target = request.primitive === 'navigate'
-      ? requireWebUrl(request.normalizedArgs?.url)
-      : request.primitive === 'click'
-        ? requiredText(request.normalizedArgs?.elementRef, 'elementRef')
-        : {
-            elementRef: requiredText(
-              request.normalizedArgs?.elementRef,
-              'elementRef',
-            ),
-            value: requireFillValue(request.normalizedArgs?.value),
-          }
+    let target
+    if (request.primitive === 'navigate') {
+      target = requireWebUrl(request.normalizedArgs?.url)
+    } else if (request.primitive === 'click') {
+      target = requiredText(
+        request.normalizedArgs?.elementRef,
+        'elementRef',
+      )
+    } else if (request.primitive === 'scroll') {
+      target = {
+        direction: requireScrollDirection(
+          request.normalizedArgs?.direction,
+        ),
+        amount: boundScrollAmount(request.normalizedArgs?.amount),
+      }
+    } else {
+      target = {
+        elementRef: requiredText(
+          request.normalizedArgs?.elementRef,
+          'elementRef',
+        ),
+        value: requireFillValue(request.normalizedArgs?.value),
+      }
+    }
     if (request.primitive === 'navigate') {
       await navigateAndSettle(session, target)
     } else if (request.primitive === 'click') {
@@ -305,8 +343,10 @@ export async function applyAction(sessionId, request) {
       await adoptNewPage(session, pageIdsBefore)
     } else if (request.primitive === 'fill') {
       await fillElement(session, target.elementRef, target.value)
-    } else {
+    } else if (request.primitive === 'select') {
       await selectOption(session, target.elementRef, target.value)
+    } else {
+      await scrollPage(session, target.direction, target.amount)
     }
     const observation = await observePage(session)
     const applied = request.primitive === 'navigate'
@@ -547,6 +587,38 @@ async function clickElement(session, elementRef) {
   await waitForDocument(session.client.Runtime, 5_000).catch(() => undefined)
 }
 
+async function scrollPage(session, direction, amount) {
+  const expression = `(() => {
+    const direction = ${JSON.stringify(direction)}
+    const amount = ${JSON.stringify(amount)}
+    if (direction === 'top') {
+      window.scrollTo({ top: 0, left: window.scrollX, behavior: 'instant' })
+    } else if (direction === 'bottom') {
+      window.scrollTo({
+        top: Math.max(
+          document.body?.scrollHeight || 0,
+          document.documentElement?.scrollHeight || 0,
+        ),
+        left: window.scrollX,
+        behavior: 'instant',
+      })
+    } else {
+      window.scrollBy({
+        top: direction === 'up' ? -amount : amount,
+        left: 0,
+        behavior: 'instant',
+      })
+    }
+    return { scrollX: window.scrollX, scrollY: window.scrollY }
+  })()`
+  await session.client.Runtime.evaluate({
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  })
+  await delay(250)
+}
+
 async function pageTargetIds() {
   if (!chrome) return new Set()
   const targets = await CDP.List({ port: chrome.port })
@@ -579,6 +651,8 @@ async function adoptNewPage(session, previousIds) {
       session.pageId = created.id
       session.revision = 0
       session.lastObservation = null
+      session.lastObservationLimits = null
+      session.lastActionFingerprint = null
       session.elementSelectors = new Map()
       session.elements = new Map()
       await waitForDocument(nextClient.Runtime, 10_000)
@@ -805,9 +879,39 @@ function actionSummary(primitive, target, before, observation) {
       changed ? 'changed' : 'did not otherwise change'
     }`
   }
+  if (primitive === 'scroll') {
+    const beforeY = before?.viewport?.scrollY ?? 0
+    const afterY = observation.viewport?.scrollY ?? beforeY
+    return `Viewport scrolled from ${beforeY}px to ${afterY}px; page state ${
+      changed ? 'changed' : 'did not otherwise change'
+    }`
+  }
   return `Click dispatched to ${target}; page state ${
     changed ? 'changed' : 'did not visibly change'
   }`
+}
+
+function requireScrollDirection(value) {
+  if (!['up', 'down', 'top', 'bottom'].includes(value)) {
+    throw protocolError(
+      'invalid_browser_scroll_direction',
+      'Scroll direction must be up, down, top, or bottom',
+      400,
+    )
+  }
+  return value
+}
+
+function boundScrollAmount(value) {
+  if (value === undefined || value === null) return 800
+  if (!Number.isInteger(value) || value < 100 || value > 5_000) {
+    throw protocolError(
+      'invalid_browser_scroll_amount',
+      'Scroll amount must be an integer between 100 and 5000',
+      400,
+    )
+  }
+  return value
 }
 
 function storeActionResult(

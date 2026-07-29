@@ -14,6 +14,7 @@ import java.util.Map;
 public class IrisWebBridgeProperties {
 
     private Duration healthCacheTtl = Duration.ofSeconds(3);
+    private String defaultRuntimeId;
     private Map<String, RuntimeSettings> runtimes =
             new LinkedHashMap<>();
 
@@ -25,6 +26,14 @@ public class IrisWebBridgeProperties {
         this.healthCacheTtl = healthCacheTtl == null
                 ? Duration.ofSeconds(3)
                 : healthCacheTtl;
+    }
+
+    public String getDefaultRuntimeId() {
+        return defaultRuntimeId;
+    }
+
+    public void setDefaultRuntimeId(String defaultRuntimeId) {
+        this.defaultRuntimeId = defaultRuntimeId;
     }
 
     public Map<String, RuntimeSettings> getRuntimes() {
@@ -42,7 +51,7 @@ public class IrisWebBridgeProperties {
         private String description;
         private String baseUrl;
         private String token;
-        private int protocolVersion = 1;
+        private int protocolVersion = 2;
 
         public String getTitle() {
             return title;
