@@ -38,7 +38,7 @@ public class ListBrowserRuntimesTool implements Tool {
         this.runtimeService = runtimeService;
         this.manifest = new ToolManifest(
                 "iris.web.browser.list_browser_runtimes",
-                "1",
+                "2",
                 "list_browser_runtimes",
                 "列出本机浏览器运行时及健康状态；需要定向选择、多 Runtime 判断或故障解释时使用，普通任务无需先调用",
                 inputSchema(),
