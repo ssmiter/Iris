@@ -168,6 +168,37 @@ cancellation: cooperative | commit_boundary
 Capability Definition 的一部分。首版最大只读并发数有界，避免模型一次生成大量调用
 压垮 SQLite、磁盘或 provider。
 
+### 5.2 人工接管不是长时间阻塞的 execute
+
+浏览器登录、验证码、密码输入和人工核验需要暂停某一次 ToolExecution，但不能让 Java
+线程、HTTP 请求或 daemon action 一直等待。它们使用通用持久 Attention：
+
+```text
+execute 到达明确暂停点
+→ Runtime 持久化 suspended operation + Attention(pending)
+→ ToolExecution phase=awaiting_attention（非终态）
+→ Round 保持 awaiting_tools，Run launcher 退出当前推进
+→ 用户提交类型化 Attention response
+→ Runtime 以同一 execution/snapshot 恢复
+→ 重新检查 Runtime/Session/Page 与 expected Observation
+→ resume/verify
+→ succeeded | failed | outcome_unknown
+```
+
+约束：
+
+- Tool 不能自己创建任意 UI JSON；它只返回版本化 `AttentionRequest`，Runtime 负责身份、
+  状态和投影；
+- `AttentionRequest` 包含 subtype、impact、允许的 response kinds、安全 payload、期限和
+  resume contract，不包含密码、验证码或 daemon token；
+- response 使用 expectedVersion + Idempotency-Key；通用 `/runs/{id}/resume` 仍不存在；
+- takeover 的“已完成”只是用户声明，不是动作成功证据。恢复后必须重新观察页面；旧
+  Observation/element ref 一律失效；
+- 等待期间 Session 可以过期或 daemon 可以重启。恢复时明确返回 session expired 并让
+  Agent 重新规划，不能重造旧 handle；
+- Approval 与 Takeover 都投影为 Attention，但状态机不同：批准允许进入 Commit Gate，
+  takeover response 允许同一 execution 从暂停点继续，二者不能共用一个 approved 布尔值。
+
 ## 6. 风险与审批不变量
 
 - `read_only + sideEffect=none` 才能自动执行；

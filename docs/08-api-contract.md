@@ -1359,12 +1359,24 @@ projection_version_unsupported
 
 ```text
 GET  /health
+GET  /sessions
 POST /sessions
 POST /sessions/{sessionId}/observe
+POST /sessions/{sessionId}/elements/resolve
+POST /sessions/{sessionId}/screenshot
 POST /sessions/{sessionId}/actions
+GET  /sessions/{sessionId}/actions/{idempotencyKey}
 POST /sessions/{sessionId}/takeover
 DELETE /sessions/{sessionId}
 ```
+
+`elements/resolve` 是 Backend `prepare` 阶段使用的只读协议：输入当前
+`observationRef + elementRef`，只返回审批影响陈述所需的 tag/role/name/disabled 等安全
+metadata，不返回 daemon 内部 selector。`GET .../actions/{idempotencyKey}` 只读回已落在
+当前 Session 幂等日志中的结果；不存在时明确 `not_found`，不得隐式执行。
+`screenshot` 返回 `image/jpeg` 或 `image/png` 原始字节，并通过响应 header 关联当前
+Page/Observation；禁止把图像包装成 Base64 JSON。Backend 收到后直接写 Managed Object
+Store，daemon 与 Frontend 都不创建第二份持久化缓存。
 
 `actions` 只接受单个或明确批次的浏览器原语，并冻结：
 

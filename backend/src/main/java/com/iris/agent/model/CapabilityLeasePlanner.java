@@ -3,6 +3,7 @@ package com.iris.agent.model;
 import com.iris.agent.model.ModelRequest.ToolDefinition;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.CapabilityAvailabilityService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -21,13 +22,16 @@ import java.util.List;
 public class CapabilityLeasePlanner {
     private final ToolRegistry tools;
     private final ModelTokenEstimator tokens;
+    private final CapabilityAvailabilityService availability;
 
     public CapabilityLeasePlanner(
             ToolRegistry tools,
-            ModelTokenEstimator tokens
+            ModelTokenEstimator tokens,
+            CapabilityAvailabilityService availability
     ) {
         this.tools = tools;
         this.tokens = tokens;
+        this.availability = availability;
     }
 
     public LeasePlan plan(
@@ -49,7 +53,9 @@ public class CapabilityLeasePlanner {
                         "Required capability lease contains duplicates"
                 );
             }
-            selectedDefinitions.add(definition(requireBinding(name)));
+            ToolBinding binding = requireBinding(name);
+            availability.requireExecutable(binding);
+            selectedDefinitions.add(definition(binding));
         }
 
         int estimatedTokens = tokens.estimate(selectedDefinitions);
@@ -67,6 +73,10 @@ public class CapabilityLeasePlanner {
             }
             ToolBinding binding = tools.find(name).orElse(null);
             if (binding == null) {
+                omittedCount++;
+                continue;
+            }
+            if (!availability.current(binding).executable()) {
                 omittedCount++;
                 continue;
             }

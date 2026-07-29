@@ -1,11 +1,17 @@
 {
   "name": "iris-webbridge-daemon",
   "private": true,
-  "version": "0.1.0",
-  "description": "Iris browser automation daemon (CDP/Playwright, 127.0.0.1 only)",
+  "version": "0.2.0",
+  "description": "Iris browser runtime: short-lived sessions, bounded observations, and idempotent CDP actions",
   "type": "module",
   "scripts": {
     "start": "node src/index.js"
   },
-  "dependencies": {}
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chrome-launcher": "^0.15.2",
+    "chrome-remote-interface": "^0.33.2"
+  }
 }

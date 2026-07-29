@@ -33,7 +33,7 @@ cd frontend && npm install && npm run dev        # :15173，/api 代理 :15001
 cd backend && ./mvnw spring-boot:run             # :15001
 
 # WebBridge daemon
-cd webbridge-daemon && npm install && npm start  # :9223
+cd webbridge-daemon && npm install && npm start  # :19223
 ```
 
 ## 编码约定

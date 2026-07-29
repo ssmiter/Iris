@@ -93,7 +93,7 @@ Agentic 探索出的成功轨迹，经识别前置条件、抽离偶然数据、
 |---|---|---|
 | 面向 | 编码任务 | 日常生活 / 工作琐事 |
 | 交互 | 终端文本 | 瀑布流可视化对话（自研前端） |
-| 浏览器 | 无 | 独立 WebBridge + 人工接管（建设中） |
+| 浏览器 | 无 | 后端驱动的独立 WebBridge（首个对象/观察/动作纵切已实现） |
 | 工具规模 | 内建小型工具集 | 按目录发现的能力平台（首版已运行） |
 | 工作区 | 代码仓库 | 个人文件空间 + 检查点回滚 |
 | 执行环境 | shell | 工作区 + 受控执行环境（继续建设） |
@@ -105,7 +105,7 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 - **瀑布流对话前端**（Vite + React + TS）：轮次 = N ×（过程 + 回答），过程默认折叠、答案逐字揭示；运行中可补充、可停止，历史可分支、可压缩。
 - **Agentic 后端**（Java 21 + Spring Boot 3 + WebFlux + SQLite）：Loop 在后端——Turn / Run / Round 持久化状态机、模型协议装配、上下文预算与压缩、唯一 Tool Runtime（claim → prepare → approval → execute → verify），SSE 是唯一流式通道。
 - **能力平台**：工具按"域 → 目录 → 工具"组织，**文件目录即能力树路径**；每个工具声明一句话描述、风险等级和参数 schema，经能力目录被模型发现，而不是被记住。
-- **WebBridge 浏览器自动化**（规划中）：借出一个真实 Chrome 窗口（带你的登录态），模型看页面、做动作，你随时接管；录制一次示范，沉淀为可重放的工作流。
+- **WebBridge 浏览器自动化**（建设中）：后端连接独立 daemon，已具备 Runtime/Session/Page、页面观察、幂等导航和观察内元素点击；人工接管、填写、截图与录制按证据链逐步补齐。
 
 ## 项目现状
 
@@ -116,7 +116,8 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 - [x] 能力平台首版：目录发现三原语、Capability Lease、Tool Runtime 与工作区路径围栏
 - [x] 分支与压缩首版：Context Frame、Compact Boundary、水位线和分支位置语义
 - [ ] 长对话组合验证：补充 × 工具 × 分支 × 压缩 × 恢复仍需通过真实体验持续校准
-- [ ] 足够闭环的文件/文档原语、WebBridge 集成、具体业务板块与 Windows exe 产品化
+- [x] WebBridge 首个纵切：运行时可用性、短期会话、有界页面观察、幂等导航/点击与动作读回
+- [ ] 足够闭环的文件/文档原语、WebBridge 高阶交互、具体业务板块与 Windows exe 产品化
 
 更细的完成度和验收边界见 [docs/09](docs/09-roadmap.md)。勾选表示已有可运行实现，
 不表示已经达到最终产品质量。
@@ -140,6 +141,7 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 | [docs/14–17](docs/14-waterfall-layout.md) | 前端系列：瀑布流布局、输入系统、状态管理、主题响应式 |
 | [docs/18–24](docs/18-turn-command-and-sse.md) | 后端与体验系列：Turn/SSE、历史、Tool Runtime、模型协议、上下文压缩、运行时投影与丝滑交互 |
 | [docs/25](docs/25-agent-system-prompt.md) | Agent System Prompt：事实观、能力发现、平台组合、恢复止损与持续评估 |
+| [docs/26](docs/26-application-object-capabilities.md) | 探索假设：Application 对象、能力语义目录与 Agentic 求解怎样协作 |
 
 ## 技术栈
 

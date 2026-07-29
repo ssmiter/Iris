@@ -23,6 +23,11 @@ iris:
     approval-mode: ${IRIS_TOOL_APPROVAL_MODE:required}
   storage:
     object-root: ${IRIS_OBJECT_STORE_PATH:${user.home}/Iris/data/objects}
+  sql:
+    connections: {}
+  webbridge:
+    health-cache-ttl: 3s
+    runtimes: {}
   sandbox:
     timeout-sec: 120
     output-limit-kb: 64

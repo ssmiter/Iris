@@ -51,6 +51,10 @@ public class AgentContextPolicy {
         LinkedHashSet<String> candidates = new LinkedHashSet<>();
         candidates.addAll(recoveryToolNames(runId, currentRoundId));
         candidates.addAll(previouslyUsedToolNames(runId, currentRoundId));
+        candidates.addAll(previouslyDiscoveredToolNames(
+                runId,
+                currentRoundId
+        ));
         for (String path : previouslyInspectedPaths(
                 runId,
                 currentRoundId
@@ -116,8 +120,74 @@ public class AgentContextPolicy {
                   ON current.round_id = :currentRoundId
                 WHERE source.run_id = :runId
                   AND current.run_id = :runId
-                  AND source.round_index = current.round_index - 1
-                ORDER BY tc.ordinal
+                  AND source.round_index < current.round_index
+                GROUP BY tc.tool_name
+                ORDER BY MIN(source.round_index), MIN(tc.ordinal)
+                LIMIT :limit
+                """)
+                .param("runId", runId)
+                .param("currentRoundId", currentRoundId)
+                .param("limit", RECENT_ACTIVATION_CANDIDATE_LIMIT)
+                .query(String.class)
+                .list();
+    }
+
+    private List<String> previouslyDiscoveredToolNames(
+            String runId,
+            String currentRoundId
+    ) {
+        return jdbc.sql("""
+                WITH discovered AS (
+                  SELECT
+                    json_extract(candidate.value, '$.name') AS tool_name,
+                    source.round_index AS round_index,
+                    CAST(candidate.key AS INTEGER) AS ordinal
+                  FROM tool_observation o
+                  JOIN model_tool_call tc
+                    ON tc.tool_call_id = o.tool_call_id
+                  JOIN model_attempt ma ON ma.attempt_id = tc.attempt_id
+                  JOIN agent_round source ON source.round_id = ma.round_id
+                  JOIN agent_round current
+                    ON current.round_id = :currentRoundId
+                  JOIN json_each(
+                    CASE tc.tool_name
+                      WHEN 'search_files' THEN json_extract(
+                        o.content_json,
+                        '$.output.matches'
+                      )
+                      WHEN 'list_capabilities' THEN json_extract(
+                        o.content_json,
+                        '$.output.items'
+                      )
+                    END
+                  ) AS candidate
+                  WHERE source.run_id = :runId
+                    AND current.run_id = :runId
+                    AND source.round_index < current.round_index
+                    AND o.outcome_kind = 'succeeded'
+                    AND json_extract(
+                      candidate.value,
+                      '$.availability'
+                    ) = 'available'
+                    AND (
+                      tc.tool_name = 'list_capabilities'
+                      OR (
+                        tc.tool_name = 'search_files'
+                        AND json_extract(
+                          tc.arguments_json,
+                          '$.namespace'
+                        ) = 'capabilities'
+                        AND json_extract(
+                          candidate.value,
+                          '$.kind'
+                        ) = 'capability'
+                      )
+                    )
+                )
+                SELECT tool_name
+                FROM discovered
+                GROUP BY tool_name
+                ORDER BY MIN(round_index), MIN(ordinal)
                 LIMIT :limit
                 """)
                 .param("runId", runId)
@@ -141,10 +211,11 @@ public class AgentContextPolicy {
                 JOIN tool_observation o ON o.tool_call_id = tc.tool_call_id
                 WHERE source.run_id = :runId
                   AND current.run_id = :runId
-                  AND source.round_index = current.round_index - 1
+                  AND source.round_index < current.round_index
                   AND tc.tool_name = 'read_capability'
                   AND o.outcome_kind = 'succeeded'
-                ORDER BY o.created_at DESC
+                GROUP BY path
+                ORDER BY MIN(source.round_index), MIN(o.created_at)
                 LIMIT :limit
                 """)
                 .param("runId", runId)

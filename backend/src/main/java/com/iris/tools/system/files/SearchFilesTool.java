@@ -54,7 +54,7 @@ public class SearchFilesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.files.search_files",
-                "3",
+                "4",
                 "search_files",
                 "搜索工作区文本或能力目录描述；不知道事实或能力位于何处时按命名空间定位",
                 inputSchema(),
@@ -184,6 +184,11 @@ public class SearchFilesTool implements Tool {
             item.put("name", match.name());
             item.put("matchedField", match.matchedField());
             item.put("riskLevel", match.riskLevel());
+            item.put("availability", match.availability());
+            item.put(
+                    "availabilityReason",
+                    match.availabilityReason()
+            );
         }
         output.put("candidateFiles", result.candidateFiles());
         output.put("searchedFiles", result.candidateFiles());
@@ -243,7 +248,12 @@ public class SearchFilesTool implements Tool {
             return "已实际搜索 " + result.candidateFiles()
                     + " 个能力描述且无命中；可改搜对象、动作或目录段";
         }
-        return "每个 path 都是精确能力地址；对确定候选调用 read_capability 后再执行";
+        if (result.matches().stream().allMatch(match ->
+                "unavailable".equals(match.availability()))) {
+            return "找到相关 Definition，但当前 binding 均不可用；读取卡片中的 availabilityReason，先补齐对应 Application 或 Environment";
+        }
+        return "每个 path 都是精确能力地址；available 命中会在下一轮按预算预激活，"
+                + "工具进入 lease 后可直接调用；仍有歧义时再 read_capability";
     }
 
     private String normalizeNamespace(String value) {
@@ -317,6 +327,8 @@ public class SearchFilesTool implements Tool {
         itemProperties.putObject("name").put("type", "string");
         itemProperties.putObject("matchedField").put("type", "string");
         itemProperties.putObject("riskLevel").put("type", "string");
+        itemProperties.putObject("availability").put("type", "string");
+        itemProperties.putObject("availabilityReason").put("type", "string");
         properties.putObject("candidateFiles").put("type", "integer")
                 .put("description", "通过路径和 glob 筛选的候选文件数");
         properties.putObject("searchedFiles").put("type", "integer")

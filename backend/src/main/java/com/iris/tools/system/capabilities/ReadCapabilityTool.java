@@ -12,6 +12,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.VerificationResult;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -33,9 +34,9 @@ public class ReadCapabilityTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.read",
-                "2",
+                "3",
                 "read_capability",
-                "读取一个精确能力路径的完整版本化定义与参数 schema；决定调用前使用",
+                "读取一个精确能力路径的版本化定义、参数 schema 与当前运行可用性；决定调用前使用",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -86,6 +87,16 @@ public class ReadCapabilityTool implements Tool {
         output.put("kind", "tool");
         output.put("path", binding.capabilityPath());
         output.put("manifestHash", binding.manifestHash());
+        CapabilityAvailability availability =
+                capabilities.getObject().availability(binding);
+        ObjectNode availabilityNode =
+                output.putObject("availability");
+        availabilityNode.put("status", availability.value());
+        availabilityNode.put("reason", availability.reason());
+        availabilityNode.put(
+                "checkedAt",
+                availability.checkedAt().toString()
+        );
         output.set("manifest", objectMapper.valueToTree(binding.manifest()));
         return ToolOutcome.succeeded(output);
     }
@@ -131,6 +142,9 @@ public class ReadCapabilityTool implements Tool {
         properties.putObject("manifestHash")
                 .put("type", "string")
                 .put("description", "本次读取的不可变 Manifest hash");
+        properties.putObject("availability")
+                .put("type", "object")
+                .put("description", "当前 binding 可用状态、原因与检查时间");
         properties.putObject("manifest")
                 .put("type", "object")
                 .put("description", "完整版本化 Tool Manifest 与参数 schema");

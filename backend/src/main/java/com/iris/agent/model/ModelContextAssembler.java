@@ -9,6 +9,7 @@ import com.iris.agent.model.ModelContextWindowPlanner.WindowPlan;
 import com.iris.agent.model.ToolObservationMicroCompactor.Projection;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.CapabilityAvailabilityService;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -24,6 +25,7 @@ import java.time.Clock;
 public class ModelContextAssembler {
     private final ModelContextRepository facts;
     private final ToolRegistry tools;
+    private final CapabilityAvailabilityService availability;
     private final ObjectMapper objectMapper;
     private final ModelContextWindowPlanner windows;
     private final ToolObservationMicroCompactor microCompactor;
@@ -34,6 +36,7 @@ public class ModelContextAssembler {
     public ModelContextAssembler(
             ModelContextRepository facts,
             ToolRegistry tools,
+            CapabilityAvailabilityService availability,
             ObjectMapper objectMapper,
             ModelContextWindowPlanner windows,
             ToolObservationMicroCompactor microCompactor,
@@ -42,6 +45,7 @@ public class ModelContextAssembler {
     ) {
         this.facts = facts;
         this.tools = tools;
+        this.availability = availability;
         this.objectMapper = objectMapper;
         this.windows = windows;
         this.microCompactor = microCompactor;
@@ -73,6 +77,7 @@ public class ModelContextAssembler {
                             "Capability lease references an unknown tool: " + name
                     )
             );
+            availability.requireExecutable(binding);
             definitions.add(new ModelRequest.ToolDefinition(
                     binding.manifest().name(),
                     binding.manifest().description(),

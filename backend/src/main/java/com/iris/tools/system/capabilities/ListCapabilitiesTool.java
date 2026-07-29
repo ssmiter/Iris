@@ -32,7 +32,7 @@ public class ListCapabilitiesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.list",
-                "2",
+                "3",
                 "list_capabilities",
                 "列出能力目录的直接子目录、数量和当前层工具卡片；结构未知时浏览，词面明确时用 search_files 的 capabilities 命名空间",
                 inputSchema(),
@@ -116,9 +116,24 @@ public class ListCapabilitiesTool implements Tool {
         properties.putObject("directories")
                 .put("type", "array")
                 .put("description", "直接子目录及能力数量");
-        properties.putObject("items")
-                .put("type", "array")
-                .put("description", "当前目录下不含 schema 的能力卡片");
+        ObjectNode items = properties.putObject("items");
+        items.put("type", "array");
+        items.put(
+                "description",
+                "当前目录下不含 schema、带实时 availability 的能力卡片"
+        );
+        ObjectNode item = items.putObject("items");
+        item.put("type", "object");
+        ObjectNode itemProperties = item.putObject("properties");
+        itemProperties.putObject("id").put("type", "string");
+        itemProperties.putObject("version").put("type", "string");
+        itemProperties.putObject("name").put("type", "string");
+        itemProperties.putObject("path").put("type", "string");
+        itemProperties.putObject("description").put("type", "string");
+        itemProperties.putObject("riskLevel").put("type", "string");
+        itemProperties.putObject("availability").put("type", "string");
+        itemProperties.putObject("availabilityReason")
+                .put("type", "string");
         return schema;
     }
 }

@@ -36,6 +36,7 @@ public class ToolRuntime {
     private static final int LOCK_COUNT = 64;
 
     private final ToolRegistry registry;
+    private final CapabilityAvailabilityService availability;
     private final ToolInputValidator validator;
     private final ToolRuntimeRepository repository;
     private final ToolOutputPayloadService outputPayloads;
@@ -47,6 +48,7 @@ public class ToolRuntime {
 
     public ToolRuntime(
             ToolRegistry registry,
+            CapabilityAvailabilityService availability,
             ToolInputValidator validator,
             ToolRuntimeRepository repository,
             ToolOutputPayloadService outputPayloads,
@@ -56,6 +58,7 @@ public class ToolRuntime {
             String approvalMode
     ) {
         this.registry = registry;
+        this.availability = availability;
         this.validator = validator;
         this.repository = repository;
         this.outputPayloads = outputPayloads;
@@ -107,6 +110,20 @@ public class ToolRuntime {
                     inputHash,
                     now
             ));
+            CapabilityAvailability currentAvailability =
+                    availability.current(binding);
+            if (!currentAvailability.executable()) {
+                completeFailure(
+                        executionId,
+                        ToolOutcome.Kind.FAILED,
+                        "capability_unavailable",
+                        "能力 " + binding.manifest().name()
+                                + " 当前不可用："
+                                + currentAvailability.reason(),
+                        List.of()
+                );
+                return result(executionId);
+            }
             if (boundedContext.cancelled()) {
                 completeCancellation(
                         executionId,
@@ -348,6 +365,20 @@ public class ToolRuntime {
             completeCancellation(executionId, context, "execution");
             return result(executionId);
         }
+        CapabilityAvailability currentAvailability =
+                availability.current(binding);
+        if (!currentAvailability.executable()) {
+            completeFailure(
+                    executionId,
+                    ToolOutcome.Kind.FAILED,
+                    "capability_unavailable",
+                    "能力 " + binding.manifest().name()
+                            + " 当前不可用："
+                            + currentAvailability.reason(),
+                    List.of()
+            );
+            return result(executionId);
+        }
         ToolRuntimeRepository.SnapshotRow snapshot =
                 repository.snapshot(executionId);
         Instant now = clock.instant();
@@ -462,6 +493,10 @@ public class ToolRuntime {
         ToolOutcome.Kind persistedKind;
         String errorCode = null;
         String message = verification.message();
+        if ((message == null || message.isBlank())
+                && !verification.evidence().isEmpty()) {
+            message = verification.evidence().getFirst().summary();
+        }
         if (verification.status() == VerificationResult.Status.CONFIRMED) {
             phase = "succeeded";
             persistedKind = ToolOutcome.Kind.SUCCEEDED;
@@ -504,6 +539,7 @@ public class ToolRuntime {
                 );
         Instant completedAt = clock.instant();
         String finalErrorCode = errorCode;
+        String finalMessage = message;
         PendingPayload finalPayload = pendingPayload;
         transactions.executeWithoutResult(status -> {
             if (finalPayload != null) {
@@ -519,7 +555,7 @@ public class ToolRuntime {
                     persistedKind,
                     outputJson,
                     finalErrorCode,
-                    message,
+                    finalMessage,
                     verification.evidence(),
                     completedAt
             );

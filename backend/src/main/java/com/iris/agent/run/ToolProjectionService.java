@@ -512,6 +512,11 @@ public class ToolProjectionService {
     }
 
     private String toolSummary(RuntimeResult result) {
+        if (result.terminal()
+                && result.message() != null
+                && !result.message().isBlank()) {
+            return result.message();
+        }
         if (result.impactStatement() != null
                 && !result.impactStatement().isBlank()) {
             return result.impactStatement();

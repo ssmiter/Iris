@@ -161,11 +161,16 @@ projection。基础 lease 不再等同于“只给模型一张工具目录”：
 后者必须与 Context micro-compaction 同时可用，否则系统虽然能把旧结果收敛成引用，模型却
 不能立刻读回。常见的观察、创建与局部编辑因此可以直接开始；复制、移动、删除、恢复等
 低频或影响更大的操作仍按需发现。系统不再注册语义重复的 `tool_search`。
-`read_capability` 成功 observation 会成为下一 Model Step 扩展 schema lease 的唯一
-依据；仅搜索或列目录不会激活目标 schema。基础原语是不可逐出的 required 集合；
-其余候选来自紧邻上一 Round 成功 inspect 的 Definition，以及上一 Round 实际调用过的
-能力，并在独立的 schema token budget 内逐个准入。已调用能力以滚动方式续租；只 inspect
-却没有使用的能力在下一 Round 后自然逐出，不因长对话曾经见过就永久驻留。若上一 Round
+一次有界的 Capability 搜索会把其 `available` 命中作为下一 Model Step 的预激活候选；
+列举到叶目录时，当前目录直接返回的 `available` items 也形成同一短期候选组，但上层目录
+不会递归激活后代。`read_capability` 的成功 observation 则把精确 Definition 作为更高
+确定性的候选。三者都不直接等于 active lease：候选仍须通过当前 availability 与独立
+schema token budget，只有实际进入 Exposure 的工具才允许调用。基础原语是
+不可逐出的 required 集合；其余候选来自当前 Run 已发生的有界搜索命中、成功 inspect，
+以及本 Run 实际调用过的能力。首版以 Run 作为 Working Set 的稳定作用域：新候选按首次
+激活顺序追加，Run 内不因几个快速 Round 没有使用就抖动或重排，Run 结束后整体释放。
+浏览器 Session、待审批操作和 outcome_unknown 等活对象另有资源生命周期，后续可用显式
+pin 续接到下一 Run，不能与 schema lease 的释放混为一谈。若上一 Round
 的工作区写入形成 `outcome_unknown` 且确有 Checkpoint，策略会直接激活
 `inspect_workspace_change`，使安全恢复不再额外经过一次目录发现。
 超出预算的 Definition 不进入本轮 Exposure，但不会从目录或历史中删除；后续 Round
@@ -210,11 +215,19 @@ Capability Card → inspected Manifest → active schema lease
 - active schema 先受独立 schema token budget 限制，再与历史事实共同接受整个
   Context Window 预算；预算决策和遗漏数量进入不可变 Context snapshot；
 - 下一 Model Step 重新计算相关性，未继续使用的 schema 逐出；
+- 首版不使用“连续 N 个 Round 未调用”作为淘汰条件；一个 Run 内保持有界且顺序稳定，
+  只在发现边界成批追加，以免多步 Agentic Loop 和 provider 前缀缓存因每轮抖动受损；
 - canonical ToolCall/Exposure 永久保存 provenance；CompactBoundary 只带 source range、summary/fact refs 和明确需要的少量 capability hints，不复制全部历史 ID 或 schema；
 - Pipeline pin 精确 Definition snapshot/hash 和依赖 Manifest version，不依赖模型工作集里“碰巧还留着”；
 - Pipeline 的固定 Tool 依赖不占模型 Working Set；只有某个 model node 实际收到 Tool schema 时才创建 Exposure，每个 tool node 独立创建 ToolCall + ToolExecution。
 
 Definition status 只有 `active / deprecated / retired`；注册校验是一次性的 `accepted / rejected` 结果；当前 binding availability 是独立的 `available / degraded / unavailable + checkedAt / lastSeenAt`。`CapabilityExposure` 又是某个 Context/attempt 实际看到精确 schema 的不可变事实，ToolExecution 则是一次调用状态。历史引用永远可读；客户端重启时重建 Registry/Catalog 和 binding availability，不删除缺席 provider 的历史。
+
+Availability 由当前 Application/Environment probe 产生，并贯穿 Card、Definition、
+active lease 与 Runtime 提交前核对。`unavailable` Definition 仍可发现和读取，以便模型
+解释缺少的连接、进程或会话，但不能进入可调用 lease；`degraded` 可以进入 lease，同时
+必须把限制原因暴露给模型。Registry 中存在 Java class 只证明 executor binding 已注册，
+不等于它依赖的数据库连接、浏览器 daemon 或编程环境当前可用。
 
 ### 系统提示中的元认知注入
 
@@ -266,6 +279,24 @@ normalize → validate → durable claim → prepare → snapshot
 个人版默认用 SQLite；若接入外部数据库，SQL 环境分为连接目录、语句分析、执行与结果
 证据四层：
 
+| capability path | name | 作用 |
+|---|---|---|
+| `/data/sql/list_sql_connections` | `list_sql_connections` | 返回模型可用的安全连接 metadata，不暴露 URL 与凭据 |
+| `/data/sql/inspect_sql_schema` | `inspect_sql_schema` | 有界观察表、视图、列、主键与外键，把结构化对象映射给模型 |
+| `/data/sql/query_sql` | `query_sql` | 在声明为只读的连接上执行一条被分析器确认为只读的参数化 SQL |
+| `/web/browser/list_browser_runtimes` | `list_browser_runtimes` | 发现本机浏览器 Runtime 及可用性，不暴露 daemon 地址与令牌 |
+| `/web/browser/list_browser_sessions` | `list_browser_sessions` | 读取仍存活的短期 Session/Page 引用，明确识别失效对象 |
+| `/web/browser/open_browser_session` | `open_browser_session` | 创建短期 BrowserSession/Page；改变本机 Application 状态并默认审批 |
+| `/web/browser/observe_browser_page` | `observe_browser_page` | 读取有界 Page Observation 与当前 revision 的短期元素引用 |
+| `/web/browser/wait_browser_page` | `wait_browser_page` | 在 daemon 内等待变化/ready/文本，只向上下文回流最终 Observation |
+| `/web/browser/navigate_browser_page` | `navigate_browser_page` | 在期望 Observation 上执行幂等导航，并返回新 Observation 与证据 |
+| `/web/browser/click_browser_element` | `click_browser_element` | 消费当前 Observation 的短期元素 ref；准备时生成可读影响，提交时拒绝过期页面 |
+| `/web/browser/fill_browser_field` | `fill_browser_field` | 填写可安全持久化并重读的普通文本字段；敏感类型 fail-close |
+| `/web/browser/select_browser_option` | `select_browser_option` | 使用 Observation 给出的 option value 修改原生下拉框并重读 |
+| `/web/browser/capture_browser_screenshot` | `capture_browser_screenshot` | 图像字节直接进入 Managed Object Store，模型只接收稳定对象引用与 metadata |
+| `/web/browser/inspect_browser_action` | `inspect_browser_action` | 按原 execution/idempotency identity 读取 daemon 动作日志，不产生第二次动作 |
+| `/web/browser/close_browser_session` | `close_browser_session` | 显式释放短期 Session/Page handle；历史 Observation 与 ToolCall 仍保留 |
+
 - 按连接标识路由到对应数据源（demo SQLite / 个人 PostgreSQL）；
 - 只读账号连接外部库（数据库层兜底，不只靠应用层）。
 - Connection Definition 只暴露稳定 ID、方言、说明和读写能力，不暴露 JDBC URL、账号
@@ -278,8 +309,29 @@ normalize → validate → durable claim → prepare → snapshot
 - 参数和值必须走 JDBC bind，连接 ID、标识符和 SQL 文本不能相互替代；查询设置超时、
   行列与单元格预算，规范完整结果仍由 Tool Runtime 落 Managed Object Store，并通过
   `query_tool_result / read_tool_result` 按需取回。
+- `query_sql.parameters` 首版采用与 `?` 占位符顺序一致的标量数组；列 metadata 与行值
+  分离返回，避免重复列名覆盖，超预算单元格明确标记截断。
 - 业务口径明确时优先领域 Capability；SQL 是结构化数据的客观原语和缺口出口，不在
   System Prompt 中预设某家工厂的表名或查询 SOP。
+
+本地 adapter 在被忽略的 `application-local.yml` 中配置；连接 ID 是模型可见的稳定对象
+身份，URL 与凭据不是：
+
+```yaml
+iris:
+  sql:
+    connections:
+      mes_read:
+        title: MES 只读库
+        description: 生产、工单与设备的只读分析连接
+        dialect: SQLITE
+        access-mode: READ_ONLY
+        url: jdbc:sqlite:file:E:/data/mes.db?mode=ro
+```
+
+账号密码若暂时通过配置注入，只能放在本机忽略文件或环境变量；它们不进入 Manifest、
+Capability snapshot、Tool observation 或日志。最终 Windows 产品仍应切换到经过验证的
+凭据存储 adapter，不能把本地 YAML 当作终态秘密方案。
 
 ## 10. 扩展路线：1000 → 10000
 

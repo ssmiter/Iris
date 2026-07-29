@@ -3,6 +3,8 @@ package com.iris.tools.catalog;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.ToolRuntimeException;
+import com.iris.tools.core.CapabilityAvailability;
+import com.iris.tools.core.CapabilityAvailabilityService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -34,10 +36,15 @@ public class CapabilityService {
     );
 
     private final ToolRegistry registry;
+    private final CapabilityAvailabilityService availability;
     private final List<CatalogDocument> searchDocuments;
 
-    public CapabilityService(ToolRegistry registry) {
+    public CapabilityService(
+            ToolRegistry registry,
+            CapabilityAvailabilityService availability
+    ) {
         this.registry = registry;
+        this.availability = availability;
         this.searchDocuments = registry.all().stream()
                 .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
                         binding.manifest().name()
@@ -203,6 +210,10 @@ public class CapabilityService {
                 .findFirst();
     }
 
+    public CapabilityAvailability availability(ToolBinding binding) {
+        return availability.current(binding);
+    }
+
     private RankedDocument rank(
             CatalogDocument document,
             Pattern pattern
@@ -234,13 +245,17 @@ public class CapabilityService {
 
     private CapabilityFileMatch fileMatch(RankedDocument ranked) {
         CatalogDocument document = ranked.document();
+        CapabilityAvailability current =
+                availability.current(document.binding());
         return new CapabilityFileMatch(
                 document.path(),
                 document.name(),
                 document.description(),
                 ranked.matchedField(),
                 document.binding().manifest().riskLevel()
-                        .name().toLowerCase(Locale.ROOT)
+                        .name().toLowerCase(Locale.ROOT),
+                current.value(),
+                current.reason()
         );
     }
 
@@ -350,6 +365,7 @@ public class CapabilityService {
     }
 
     private CapabilityCard card(ToolBinding binding) {
+        CapabilityAvailability current = availability.current(binding);
         return new CapabilityCard(
                 binding.manifest().id(),
                 binding.manifest().version(),
@@ -357,7 +373,8 @@ public class CapabilityService {
                 binding.capabilityPath(),
                 binding.manifest().description(),
                 binding.manifest().riskLevel().name().toLowerCase(),
-                "available"
+                current.value(),
+                current.reason()
         );
     }
 
@@ -404,7 +421,8 @@ public class CapabilityService {
             String path,
             String description,
             String riskLevel,
-            String availability
+            String availability,
+            String availabilityReason
     ) {
     }
 
@@ -431,7 +449,9 @@ public class CapabilityService {
             String name,
             String preview,
             String matchedField,
-            String riskLevel
+            String riskLevel,
+            String availability,
+            String availabilityReason
     ) {
     }
 

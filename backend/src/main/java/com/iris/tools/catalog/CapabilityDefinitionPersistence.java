@@ -7,6 +7,8 @@ import com.iris.storage.ManagedObjectStore;
 import com.iris.storage.ManagedObjectStore.StoredObject;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.CapabilityAvailability;
+import com.iris.tools.core.CapabilityAvailabilityService;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -31,6 +33,7 @@ public class CapabilityDefinitionPersistence
     private static final String PROVIDER_KEY = "local-java";
 
     private final ToolRegistry registry;
+    private final CapabilityAvailabilityService availability;
     private final ObjectMapper objectMapper;
     private final ManagedObjectStore objects;
     private final JdbcClient jdbc;
@@ -39,12 +42,14 @@ public class CapabilityDefinitionPersistence
 
     public CapabilityDefinitionPersistence(
             ToolRegistry registry,
+            CapabilityAvailabilityService availability,
             ObjectMapper objectMapper,
             ManagedObjectStore objects,
             JdbcClient jdbc,
             TransactionTemplate transactions
     ) {
         this.registry = registry;
+        this.availability = availability;
         this.objectMapper = objectMapper;
         this.objects = objects;
         this.jdbc = jdbc;
@@ -86,6 +91,7 @@ public class CapabilityDefinitionPersistence
             );
         }
         StoredObject stored = objects.putUtf8(json);
+        CapabilityAvailability current = availability.current(binding);
         return new DefinitionSnapshot(
                 binding.manifest().id(),
                 binding.manifest().version(),
@@ -95,7 +101,8 @@ public class CapabilityDefinitionPersistence
                 binding.manifest().riskLevel().name().toLowerCase(),
                 binding.manifestHash(),
                 stored.objectRef(),
-                stored.contentHash()
+                stored.contentHash(),
+                current.value()
         );
     }
 
@@ -182,20 +189,27 @@ public class CapabilityDefinitionPersistence
                     availability, checked_at, last_seen_at
                 ) VALUES (
                     :id, :version, :providerKey,
-                    'available', :now, :now
+                    :availability, :now,
+                    CASE WHEN :availability = 'unavailable'
+                         THEN NULL ELSE :now END
                 )
                 ON CONFLICT(
                     capability_id,
                     definition_version,
                     provider_key
                 ) DO UPDATE SET
-                    availability = 'available',
+                    availability = excluded.availability,
                     checked_at = excluded.checked_at,
-                    last_seen_at = excluded.last_seen_at
+                    last_seen_at = CASE
+                        WHEN excluded.availability = 'unavailable'
+                        THEN capability_binding_state.last_seen_at
+                        ELSE excluded.last_seen_at
+                    END
                 """)
                 .param("id", definition.id())
                 .param("version", definition.version())
                 .param("providerKey", PROVIDER_KEY)
+                .param("availability", definition.availability())
                 .param("now", now.toString())
                 .update();
     }
@@ -209,7 +223,8 @@ public class CapabilityDefinitionPersistence
             String riskLevel,
             String manifestHash,
             String objectRef,
-            String contentHash
+            String contentHash,
+            String availability
     ) {
     }
 }

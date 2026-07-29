@@ -110,6 +110,10 @@ public class SqlStatementAnalyzer {
             if (main < 0) {
                 return ambiguous("with", "WITH 语句缺少可识别的主操作");
             }
+            Operation cteWrite = writeInsideCte(tokens, first + 1, main);
+            if (cteWrite != null) {
+                return cteWrite;
+            }
             return classifyKeyword(
                     tokens,
                     main,
@@ -118,10 +122,32 @@ public class SqlStatementAnalyzer {
             );
         }
         if ("EXPLAIN".equals(keyword)) {
+            if (containsTopLevelWord(tokens, first + 1, "ANALYZE")) {
+                return ambiguous(
+                        "explain_analyze",
+                        "EXPLAIN ANALYZE 可能实际执行被分析语句"
+                );
+            }
+            int explained = firstOperation(tokens, first + 1);
+            if (explained < 0) {
+                return ambiguous(
+                        "explain",
+                        "EXPLAIN 后缺少可识别的只读语句"
+                );
+            }
+            Operation nested = classifyKeyword(
+                    tokens,
+                    explained,
+                    tokens.get(explained).upper(),
+                    dialect
+            );
+            if (nested.kind() != Kind.READ) {
+                return nested;
+            }
             return new Operation(
                     Kind.READ,
                     "explain",
-                    "EXPLAIN 只返回执行计划"
+                    "EXPLAIN 的目标语句已被确认只读"
             );
         }
         return classifyKeyword(tokens, first, keyword, dialect);
@@ -135,6 +161,9 @@ public class SqlStatementAnalyzer {
     ) {
         if ("PRAGMA".equals(keyword)) {
             return classifyPragma(tokens, index, dialect);
+        }
+        if ("SELECT".equals(keyword)) {
+            return classifySelect(tokens, index);
         }
         if (READ_OPERATIONS.contains(keyword)) {
             return new Operation(
@@ -154,6 +183,75 @@ public class SqlStatementAnalyzer {
                 keyword.toLowerCase(Locale.ROOT),
                 "当前分析器无法证明该操作只读"
         );
+    }
+
+    private Operation classifySelect(List<Token> tokens, int selectIndex) {
+        if (containsTopLevelWord(tokens, selectIndex + 1, "INTO")) {
+            return new Operation(
+                    Kind.WRITE,
+                    "select_into",
+                    "SELECT INTO 可能创建表或写入文件"
+            );
+        }
+        for (int index = selectIndex + 1;
+                index + 1 < tokens.size();
+                index++) {
+            Token first = tokens.get(index);
+            Token second = tokens.get(index + 1);
+            if (first.depth() == 0
+                    && second.depth() == 0
+                    && first.type() == TokenType.WORD
+                    && second.type() == TokenType.WORD
+                    && "FOR".equals(first.upper())
+                    && ("UPDATE".equals(second.upper())
+                    || "SHARE".equals(second.upper()))) {
+                return ambiguous(
+                        "locking_select",
+                        "锁定式 SELECT 会改变数据库会话中的锁状态"
+                );
+            }
+        }
+        return new Operation(
+                Kind.READ,
+                "select",
+                "SELECT 已排除已知写入和锁定结构"
+        );
+    }
+
+    private Operation writeInsideCte(
+            List<Token> tokens,
+            int start,
+            int mainOperation
+    ) {
+        for (int index = start; index < mainOperation; index++) {
+            Token token = tokens.get(index);
+            if (token.type() == TokenType.WORD
+                    && WRITE_OPERATIONS.contains(token.upper())) {
+                return new Operation(
+                        Kind.WRITE,
+                        "write_cte",
+                        "WITH 子句包含可能改变数据库状态的 "
+                                + token.upper()
+                );
+            }
+        }
+        return null;
+    }
+
+    private boolean containsTopLevelWord(
+            List<Token> tokens,
+            int start,
+            String word
+    ) {
+        for (int index = start; index < tokens.size(); index++) {
+            Token token = tokens.get(index);
+            if (token.depth() == 0
+                    && token.type() == TokenType.WORD
+                    && word.equals(token.upper())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Operation classifyPragma(

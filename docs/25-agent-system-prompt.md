@@ -137,8 +137,9 @@ Iris 与用户共同把真实目标落实为可核验结果。它不为展示 Ag
 4. 词面明确时 `search_files(namespace="capabilities")`，结构未知或需要上下游时
    `list_capabilities`；
 5. 对真实候选调用 `read_capability`，不凭名字猜参数；
-6. 工具进入下一轮 active lease 后调用；
-7. 用 observation 验证口径，不匹配则带新事实返回发现。
+6. 核对 availability；unavailable 时处理 Application/Environment 缺口，degraded 时遵守限制；
+7. 工具进入下一轮 active lease 后调用；
+8. 用 observation 验证口径，不匹配则带新事实返回发现。
 
 “优先领域能力”是降低口径理解成本的偏好，不是禁止使用底层原语。领域能力缺失、
 粒度不符或组合原语更客观直接时，Agent 可以自主选择后者。
@@ -151,11 +152,14 @@ Catalog 发现。这个集合只覆盖高频、跨任务且足以形成最小闭
 
 ### 4.4 平台组合
 
-当前 Prompt 只声明已经存在的四类平台对象：
+当前 Prompt 只声明已经存在且可由 availability 如实降级的六类平台对象：
 
 - Workspace logical files：用户工作区内的文件和目录；
 - Tool result store：同一对话内完整、不可变、可再次读取的执行结果；
 - Decimal calculation：确定性的十进制计算；
+- Structured data connections：安全 metadata 可发现、只允许已确认只读的参数化 SQL；
+- Browser runtime/session/page：由 Backend Connector 连接本机 daemon；当前闭环只包含
+  Runtime 发现、短期 Session、页面观察、幂等导航和 Observation 内元素点击，不提前承诺填写；
 - Capability Catalog：可搜索、可分层读取的能力空间。
 
 组合规则：
@@ -166,9 +170,21 @@ Catalog 发现。这个集合只覆盖高频、跨任务且足以形成最小闭
 - 大 JSON 用 `query_tool_result` 精确选择和分页；
 - 非结构化大结果用 `read_tool_result` 按字符窗口读取；
 - 不因 preview 有限而重复执行原始昂贵查询。
+- SQL 先选择 Connection 对象，不知道内部对象结构时观察 schema，再以 JDBC bind 传值；
+  已有领域口径能力时不以 raw SQL 猜口径。
+- 浏览器先选择 available Runtime，再继续 Session 或创建新 Session；Observation ref 是
+  页面动作的短期水位线，元素 ref 不跨 revision；动作直接回流新 Observation 与 Evidence。
+- 普通文本填写绑定同一 Observation 并重读确认；password/file 等敏感字段在 secret handle
+  或人工接管闭环前 fail-close。截图进入二进制对象仓，只把 objectRef 放入文本上下文。
+- 浏览器 `not_applied` 可以重新观察，`outcome_unknown` 必须先核验当前页面，不能换一个
+  action attempt 盲目重放。
+- 异步 UI 用一次有界 `wait_browser_page` 在 daemon 内等待，只回流最终 Observation；
+  点击打开新标签时采用动作结果的新 pageId，不继续操作旧页面身份。
+- 当前轻量接管通过普通对话边界完成：保留 Session，告诉用户在可见窗口操作并在完成后
+  回复；下一 Turn 先列出存活 Session 并重新观察，不把旧 element ref 或等待过程带入上下文。
 
-以后 SQL、Sandbox 和 WebBridge 只有在各自 observation、取消、证据与恢复链闭合后，才
-进入这一节。
+浏览器更高阶的定位、点击、填写、截图和接管只有在各自 observation、风险、证据与
+恢复链闭合后才进入本节；“daemon 已连接”不等于所有网页动作都已经存在。
 
 ### 4.5 写入与权限
 
