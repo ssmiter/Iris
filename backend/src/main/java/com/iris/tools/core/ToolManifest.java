@@ -92,6 +92,8 @@ public record ToolManifest(
 
     public enum SideEffect {
         NONE,
+        /** Iris 私有控制平面中的版本化状态，不改变用户工作区或外部系统。 */
+        INTERNAL_STATE,
         WORKSPACE_WRITE,
         EXTERNAL_WRITE,
         DESTRUCTIVE

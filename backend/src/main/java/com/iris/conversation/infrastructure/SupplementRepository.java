@@ -113,6 +113,17 @@ public class SupplementRepository {
                 .list();
     }
 
+    public boolean hasPending(String turnId) {
+        return jdbc.sql("""
+                SELECT COUNT(*)
+                FROM turn_supplement
+                WHERE turn_id = :turnId AND phase = 'pending'
+                """)
+                .param("turnId", turnId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
     public List<SupplementView> viewsForTurn(String turnId) {
         return jdbc.sql("""
                 SELECT * FROM turn_supplement

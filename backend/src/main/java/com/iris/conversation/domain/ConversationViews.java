@@ -49,6 +49,7 @@ public final class ConversationViews {
             RunDefinition definition,
             String purpose,
             String phase,
+            RunClosureView closure,
             List<Object> blockers,
             List<String> roundIds,
             List<String> childRunIds,
@@ -76,6 +77,34 @@ public final class ConversationViews {
             int toolCallsLimit,
             long elapsedMs,
             long timeLimitMs
+    ) {
+    }
+
+    public record RunClosureView(
+            String executionStatus,
+            String taskOutcome,
+            String terminalReason,
+            String finalStopReason,
+            RunClosureCounts counts,
+            boolean hasFinalAnswer,
+            Instant recordedAt
+    ) {
+    }
+
+    public record RunClosureCounts(
+            int rounds,
+            int modelAttempts,
+            int toolCalls,
+            int toolExecutions,
+            int toolObservations,
+            int toolSucceeded,
+            int toolFailed,
+            int toolOutcomeUnknown,
+            int toolRejected,
+            int toolExpired,
+            int unresolvedProtocolFacts,
+            int evidence,
+            int artifacts
     ) {
     }
 

@@ -62,12 +62,19 @@ public class ToolProjectionService {
             if (result.approvalId() != null) {
                 projectAttention(run, round, result);
             }
+            ObjectNode artifactNode = projectPublishedArtifact(
+                    run,
+                    round,
+                    call,
+                    result
+            );
             return new ProjectionEmission(
                     run,
                     projectionForTool(call.toolCallId()),
                     result.approvalId() == null
                             ? null
-                            : projectionForApproval(result.approvalId())
+                            : projectionForApproval(result.approvalId()),
+                    artifactNode
             );
         });
         if (emission == null) {
@@ -79,6 +86,132 @@ public class ToolProjectionService {
         if (emission.attentionNode() != null) {
             emitAttention(emission.run(), emission.attentionNode());
         }
+        if (emission.artifactNode() != null) {
+            emitRenderNode(emission.run(), emission.artifactNode());
+        }
+    }
+
+    private ObjectNode projectPublishedArtifact(
+            RunRow run,
+            RoundRow round,
+            RoundToolCall call,
+            RuntimeResult result
+    ) {
+        if (!"publish_artifact".equals(call.toolName())
+                || !"succeeded".equals(result.phase())) {
+            return null;
+        }
+        PublishedArtifact artifact = jdbc.sql("""
+                SELECT a.artifact_id, v.artifact_version,
+                       a.title, a.kind, v.byte_count
+                FROM artifact_publication publication
+                JOIN artifact a
+                  ON a.artifact_id = publication.artifact_id
+                JOIN artifact_version v
+                  ON v.artifact_id = publication.artifact_id
+                 AND v.artifact_version = publication.artifact_version
+                WHERE publication.publication_execution_id = :executionId
+                  AND publication.visibility = 'user_timeline'
+                """)
+                .param("executionId", result.executionId())
+                .query((rs, row) -> new PublishedArtifact(
+                        rs.getString("artifact_id"),
+                        rs.getInt("artifact_version"),
+                        rs.getString("title"),
+                        rs.getString("kind"),
+                        rs.getLong("byte_count")
+                ))
+                .optional()
+                .orElse(null);
+        if (artifact == null) {
+            return null;
+        }
+        String existing = jdbc.sql("""
+                SELECT node_id
+                FROM artifact_render_link
+                WHERE artifact_id = :artifactId
+                  AND artifact_version = :version
+                  AND visibility = 'user_timeline'
+                """)
+                .param("artifactId", artifact.artifactId())
+                .param("version", artifact.version())
+                .query(String.class)
+                .optional()
+                .orElse(null);
+        if (existing != null) {
+            return null;
+        }
+
+        Instant now = clock.instant();
+        String nodeId = id("node");
+        int ordinal = nextOrdinal(run.turnId());
+        ObjectNode projection = base(
+                nodeId,
+                run,
+                round,
+                ordinal,
+                1,
+                now.toString(),
+                now
+        );
+        projection.put("type", "artifact");
+        projection.put("status", "available");
+        projection.put("artifactId", artifact.artifactId());
+        projection.put(
+                "artifactRef",
+                "artifact://" + artifact.artifactId()
+                        + "@" + artifact.version()
+        );
+        projection.put("kind", visibleArtifactKind(artifact.kind()));
+        projection.put("title", artifact.title());
+        projection.put("byteCount", artifact.byteCount());
+        projection.put(
+                "previewRef",
+                "/api/v1/artifacts/" + artifact.artifactId()
+                        + "/versions/" + artifact.version() + "/preview"
+        );
+        projection.put(
+                "downloadRef",
+                "/api/v1/artifacts/" + artifact.artifactId()
+                        + "/versions/" + artifact.version() + "/content"
+        );
+        projection.put("sourceToolCallId", call.toolCallId());
+        insertNode(
+                nodeId,
+                run,
+                round,
+                "artifact",
+                "available",
+                ordinal,
+                1,
+                projection,
+                now
+        );
+        jdbc.sql("""
+                INSERT INTO artifact_render_link (
+                  artifact_id, artifact_version, visibility,
+                  publication_execution_id, node_id
+                ) VALUES (
+                  :artifactId, :version, 'user_timeline',
+                  :executionId, :nodeId
+                )
+                """)
+                .param("artifactId", artifact.artifactId())
+                .param("version", artifact.version())
+                .param("executionId", result.executionId())
+                .param("nodeId", nodeId)
+                .update();
+        return projection;
+    }
+
+    private String visibleArtifactKind(String kind) {
+        return switch (kind) {
+            case "document", "pdf", "html", "code" -> "document";
+            case "spreadsheet", "data" -> "spreadsheet";
+            case "image" -> "image";
+            case "archive" -> "archive";
+            default -> "other";
+        };
     }
 
     private ObjectNode projectionForTool(String toolCallId) {
@@ -622,7 +755,17 @@ public class ToolProjectionService {
     private record ProjectionEmission(
             RunRow run,
             ObjectNode toolNode,
-            ObjectNode attentionNode
+            ObjectNode attentionNode,
+            ObjectNode artifactNode
+    ) {
+    }
+
+    private record PublishedArtifact(
+            String artifactId,
+            int version,
+            String title,
+            String kind,
+            long byteCount
     ) {
     }
 }

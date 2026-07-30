@@ -68,6 +68,9 @@ export interface ArtifactNode extends NodeBase {
   artifactId: string
   path: string
   kind: 'document' | 'image' | 'table' | 'other'
+  previewRef?: string
+  downloadRef?: string
+  byteCount?: number
   sourceToolCallId?: string
 }
 

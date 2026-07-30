@@ -78,6 +78,7 @@ export interface RunView {
   kind: RunKind
   purpose: string
   phase: RunPhase
+  closure?: RunClosureView | null
   roundIds: string[]
   childRunIds: string[]
   progressSummary?: string
@@ -85,6 +86,30 @@ export interface RunView {
   startedAt: string
   endedAt: string | null
   version: number
+}
+
+export interface RunClosureView {
+  executionStatus: 'closed' | 'interrupted' | 'uncertain'
+  taskOutcome: 'not_assessed' | 'fulfilled' | 'blocked' | 'uncertain'
+  terminalReason: string
+  finalStopReason: string | null
+  counts: {
+    rounds: number
+    modelAttempts: number
+    toolCalls: number
+    toolExecutions: number
+    toolObservations: number
+    toolSucceeded: number
+    toolFailed: number
+    toolOutcomeUnknown: number
+    toolRejected: number
+    toolExpired: number
+    unresolvedProtocolFacts: number
+    evidence: number
+    artifacts: number
+  }
+  hasFinalAnswer: boolean
+  recordedAt: string
 }
 
 export interface RoundView {
@@ -187,6 +212,8 @@ export interface ArtifactNode extends RenderNodeBase {
   kind: 'document' | 'spreadsheet' | 'image' | 'archive' | 'other'
   title: string
   previewRef: string
+  downloadRef?: string
+  byteCount?: number
   sourceToolCallId?: string
 }
 

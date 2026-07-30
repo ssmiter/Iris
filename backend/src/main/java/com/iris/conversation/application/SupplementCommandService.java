@@ -3,6 +3,7 @@ package com.iris.conversation.application;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.iris.artifact.ArtifactService;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationEvent;
 import com.iris.conversation.domain.SupplementCommands.CreateSupplementRequest;
@@ -23,6 +24,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.HashSet;
 import java.util.UUID;
 
 @Service
@@ -38,6 +40,7 @@ public class SupplementCommandService {
     private final ConversationLocks locks;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
+    private final ArtifactService artifacts;
     private final Clock clock = Clock.systemUTC();
 
     public SupplementCommandService(
@@ -46,7 +49,8 @@ public class SupplementCommandService {
             ConversationEventHub eventHub,
             ConversationLocks locks,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ArtifactService artifacts
     ) {
         this.supplements = supplements;
         this.conversations = conversations;
@@ -54,6 +58,7 @@ public class SupplementCommandService {
         this.locks = locks;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.artifacts = artifacts;
     }
 
     public SupplementView create(
@@ -64,6 +69,10 @@ public class SupplementCommandService {
         requireKey(idempotencyKey);
         String requestHash = hash(request);
         TurnContext turn = requireTurn(turnId);
+        requireAttachments(
+                turn.conversationId(),
+                request.attachmentRefs()
+        );
         CommandResult result = locks.withLock(turn.conversationId(), () ->
                 transactions.execute(status -> conversations
                         .findIdempotency(turnId, CREATE_ENDPOINT, idempotencyKey)
@@ -114,7 +123,9 @@ public class SupplementCommandService {
             String requestHash,
             CreateSupplementRequest request
     ) {
-        if (!"active".equals(turn.phase()) && !"queued".equals(turn.phase())) {
+        TurnContext current = requireTurn(turn.turnId());
+        if (!"active".equals(current.phase())
+                && !"queued".equals(current.phase())) {
             throw new ApiProblemException(
                     HttpStatus.CONFLICT, "turn_not_active", "precondition",
                     "这个轮次已经结束，不能再排入补充内容。"
@@ -124,20 +135,49 @@ public class SupplementCommandService {
         String supplementId = id("supplement");
         supplements.insertPending(
                 supplementId,
-                turn,
+                current,
                 request.text().trim(),
                 request.attachmentRefs(),
                 now
         );
         SupplementView view = supplements.find(supplementId).orElseThrow().view();
-        ConversationEvent event = event(turn, view, now);
+        ConversationEvent event = event(current, view, now);
         conversations.insertEvent(event);
-        conversations.incrementConversationVersion(turn.conversationId(), now);
+        conversations.incrementConversationVersion(
+                current.conversationId(),
+                now
+        );
         conversations.insertIdempotency(
                 turn.turnId(), CREATE_ENDPOINT, idempotencyKey, requestHash,
                 HttpStatus.ACCEPTED.value(), write(view), now
         );
         return new CommandResult(view, event);
+    }
+
+    private void requireAttachments(
+            String conversationId,
+            List<String> references
+    ) {
+        if (references.size() > 16
+                || new HashSet<>(references).size() != references.size()) {
+            throw new ApiProblemException(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_attachments",
+                    "validation",
+                    "每条补充最多附加 16 个不重复的文件。"
+            );
+        }
+        try {
+            references.forEach(reference ->
+                    artifacts.require(reference, conversationId));
+        } catch (RuntimeException exception) {
+            throw new ApiProblemException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "attachment_unavailable",
+                    "precondition",
+                    "附件不属于当前对话，或其精确版本已不可用。"
+            );
+        }
     }
 
     private CommandResult cancelOnce(

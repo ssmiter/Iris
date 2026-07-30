@@ -1083,32 +1083,80 @@ GET /api/v1/workspace/content?path=reports/week.md&startLine=1&lineCount=200
 
 该 endpoint 是用户 UI 的只读浏览能力。模型读取仍通过 Tool Runtime 的 read-only Tool，以保留预算、审计和 Context shaping。
 
-### 9.3 Artifact metadata
+### 9.3 用户文件进入数据平面
 
 ```http
-GET /api/v1/artifacts/{artifactId}
+POST /api/v1/conversations/{conversationId}/branches/{branchId}/artifacts
+Content-Type: multipart/form-data
+```
+
+表单字段 `file` 经大小与作用域校验后冻结到 Managed Object Store，返回
+`artifact://...@1`。该动作只建立不可变输入，不创建 Message、Turn 或伪造 ToolExecution；
+前端随后把引用写入 `attachmentRefs`。上传本身不把正文加入模型上下文。
+
+### 9.4 Artifact metadata
+
+```http
+GET /api/v1/artifacts/{artifactId}/versions/{version}
 ```
 
 ```json
 {
   "artifactId": "artifact_opaque",
+  "artifactRef": "artifact://artifact_opaque@1",
+  "version": 1,
   "name": "网申整理.xlsx",
+  "title": "秋招岗位与申请入口汇总",
   "kind": "spreadsheet",
-  "size": 28421,
-  "version": 2,
-  "source": {
-    "runId": "run_opaque",
-    "toolExecutionId": "execution_opaque"
-  },
+  "mediaType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "byteCount": 28421,
+  "contentHash": "sha256-opaque",
   "visibility": ["user_timeline"],
-  "previewRef": "/api/v1/artifacts/artifact_opaque/preview",
-  "downloadRef": "/api/v1/artifacts/artifact_opaque/content"
+  "workspacePath": "reports/网申整理.xlsx",
+  "workspaceVersion": "sha256-opaque",
+  "originExecutionId": "execution_opaque",
+  "createdAt": "2026-07-30T10:00:00Z"
 }
 ```
 
-Artifact 由 Runtime 验证并登记。Sandbox output 在导入 Workspace 前不是正式 Artifact。
+二进制内容按需下载：
 
-### 9.4 写操作
+```http
+GET /api/v1/artifacts/{artifactId}/versions/{version}/content
+```
+
+安全预览按需读取：
+
+```http
+GET /api/v1/artifacts/{artifactId}/versions/{version}/preview
+```
+
+文本示例：
+
+```json
+{
+  "artifactId": "artifact_opaque",
+  "artifactRef": "artifact://artifact_opaque@1",
+  "title": "秋招岗位与申请入口汇总",
+  "mode": "text",
+  "format": "markdown",
+  "content": "# 当前进度\n\n...",
+  "truncated": false,
+  "byteCount": 28421
+}
+```
+
+图片预览返回 `mode=image` 和同源 `contentRef`；不适合安全内联的格式返回
+`mode=download_only` 与人话原因。该 endpoint 只在用户展开成果时调用，不进入正常
+Conversation 水合，也不是模型读取 Artifact 正文的旁路。
+
+响应强制使用 attachment disposition 与 `nosniff`；HTML 等模型生成内容不会直接以内联
+页面执行。Artifact 由 Runtime 验证并登记；只有发布到 `user_timeline` 才产生
+`render_node.added(type=artifact)`。重复发布不会生成第二张成果卡，但每次发布事实都会
+独立持久化，投影可在进程恢复后重建。Sandbox output 在导入 Workspace 前不是正式
+Artifact。
+
+### 9.5 写操作
 
 首版不公开通用 `POST /workspace/write`。用户或 Agent 都通过 Capability/Turn 提交写意图，以得到 Checkpoint、差异预览、审批和 evidence。
 
@@ -1194,7 +1242,6 @@ data: {...}
 | `render_node.delta` | §10.4 的唯一增量格式 |
 | `attention.requested / attention.updated` | `{ "attention": AttentionView, "node": RenderNode }`；approval subtype 内嵌 `ApprovalView` |
 | `supplement.updated` | `{ "supplement": SupplementView }` |
-| `artifact.published` | `{ "artifact": ArtifactView }` |
 | `branch.created` | `{ "branch": BranchSummary, "acceptance": TurnAcceptance }` |
 | `compaction.started / completed / failed / cancelled` | `{ "compaction": CompactionView, "boundary": CompactBoundaryView? }` |
 | `projection.invalidated` | `{ "reasonCode", "requiredProjectionVersion" }` |
@@ -1262,7 +1309,7 @@ run.updated(blockers=[approval])
 attention.updated(status=approved)
 render_node.updated(type=tool,status=running)
 render_node.updated(type=tool,status=verifying)
-artifact.published
+render_node.added(type=artifact,status=available)
 render_node.updated(type=tool,status=succeeded)
 run.settled(kind=pipeline,phase=succeeded)
 round.updated(phase=settled)

@@ -161,11 +161,11 @@ export function WaterfallPreview() {
             description: '待送入的补充仍被保留，不会自动重发。',
           })
         }}
-        onAttachmentRequest={() =>
+        onAttachmentRequest={() => {
           notify.info('附件入口尚未接入', {
             description: '节点 1.3 只保留视觉入口，不读取本地文件。',
           })
-        }
+        }}
       />
   )
 

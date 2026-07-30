@@ -81,6 +81,11 @@ Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座�
 
 完整 Tool schema 不属于永久系统提示。每个 Model attempt 只激活 Capability Working Set 中有预算、绑定 `contextFrameId + modelStepId + modelAttemptId + capabilityId/version + schemaHash` 的短期 schema lease；Agentic ToolCall 必须链接对应 Exposure。CompactBoundary 只保留 source range、summary/fact refs 和少量未来求解 hints，不会让曾读过的 schema 跨长对话永久驻留。
 
+用户附件属于 User Message 的 canonical fact，但附件正文不常驻模型上下文。上下文只携带
+稳定 Artifact 引用、名称、类型、大小和哈希；Agent 需要观察时分窗读取，需要批处理时把
+引用直接传给对应 Runtime。分支和压缩保存引用而不是复制内容，因此同一事实可以贯穿
+对话、工具执行、工作区检查点、成果发布与后续轮次。
+
 稳定的工具元认知提示只负责四件事：建立“结果必须来自客观 observation”的事实观，
 说明目录/搜索/读取 Definition 的发现循环，说明工作区、结果对象与计算等平台如何组合，
 以及根据结构化 `effect + recovery.action` 处理失败和止损。它不罗列全量工具，不写某个
@@ -92,6 +97,7 @@ Definition hash 与顶层目录计数；Definition 未变化时，系统提示�
 | 数据 | 位置 | 说明 |
 |---|---|---|
 | Message / Turn / Run / Round / ToolCall | 后端 SQLite | canonical facts，结构完整 |
+| Task Definition / Task Work State | 后端 SQLite | 任务目标与中间状态分别版本化；压缩只改变视野，不改写二者 |
 | RenderNode / ConversationView | 后端 SQLite | 可迁移重建的持久化投影 |
 | 分支 / 压缩边界 / Context Frame | 后端 SQLite | 只改变历史或模型视野，不删除原事实 |
 | 检查点 | Managed Object Store + SQLite | 不可变原文对象 + 结构化 metadata |
@@ -99,7 +105,70 @@ Definition hash 与顶层目录计数；Definition 未变化时，系统提示�
 
 SQLite 事务先提交事实和事件，再由 SSE 投影。前端刷新从 ConversationView 的 event cursor 续传；IndexedDB/localStorage 不能成为分支、压缩或审批的唯一来源。
 
-## 8. 防死循环红线
+## 8. 长程任务的 harness 工作记忆
+
+长程任务不能依赖模型在回答里不断复述最初要求，也不能把 HTML、脚本或 TODO 文本当作
+任务真相。首版把四层对象明确分开：
+
+```text
+Task Definition   用户目标、稳定约束、完成标准；不可变版本
+Task Work State   阶段、步骤、阻塞项、Evidence/Artifact 引用；不可变版本
+Model Narrative   思考说明和中间回复；属于对话历史，不驱动状态机
+User Artifact     HTML、Excel、脚本、报告；属于工作区，可由事实重新生成
+```
+
+每个对话分支的 `task_head` 只指向该分支当前可见的 Definition 和 Work State 版本。模型
+通过有界的任务状态原语创建、读取和提交新状态；更新必须携带
+`expected_state_version`，并发或过期上下文不能覆盖新事实。分叉时，Backend 按 fork
+event 水位线复制当时可见的状态头；两个分支随后独立推进，不能读到对方的“未来进度”。
+旧版本永久保留，因此暂停、恢复、Compact 和后续多 Agent 协作都不依赖某一段模型文本。
+
+### 动态工作状态不是聊天历史
+
+每次 `ModelContextAssembler` 在规范分支事实之后追加三个有界、代码维护的状态对象：
+
+- active Task work state：目标、步骤、阻塞项和 Evidence/Artifact 引用；
+- explicitly published Artifact context index：只含冻结成果的元数据与 `artifact://`
+  引用，不含正文；
+- Runtime pulse：当前 Run 的轮次、工具调用和时间预算水位。
+
+它们都位于动态区，不污染稳定 System Prompt；Window Planner 把它们视为当前决策所需
+状态。工具大结果仍以 `tool-result://executionId` 留在不可变对象仓，模型按窗口观察，
+Python 等 Backend runtime 可以按引用直接消费完整字节。这样上下文裁剪改变“当前看见
+什么”，不会改变事实、成果或工作状态本身。
+
+任务状态是 harness 的控制平面，不是外部世界写操作：它无需用户审批，但仍经过 Tool
+Runtime、Operation Snapshot、版本前置条件和 verify。浏览器 Observation、数据库查询和
+用户文件仍是数据平面；账本只保存稳定引用与有界摘要，不复制网页全文、长脚本或 Artifact
+payload。Python 或其他受限计算环境以后只消费显式输入、产出 staged Artifact，不能成为
+任务状态的唯一存储。
+
+单 Agent、双 Agent 和 Pipeline 都只是 harness 的执行拓扑。若某个场景适合把偏好归纳与
+行动决策隔离，两个角色读取同一版本化 Task Definition，并通过 Work State/Evidence 交换
+结构化结果；它们不共享隐式“记忆”，也不能各自改写一份目标。
+
+### 8.1 Runtime Pulse 不是任务状态
+
+每个 Round 在模型上下文末端加入一条由 Backend 计算的有界 Runtime Pulse：
+
+```text
+round index
+tool calls used / limit
+elapsed time / time limit
+observed time / local time zone / host platform
+active capability schemas
+omitted capability candidates
+recent tool calls / failures / outcome unknown
+maximum identical-input calls and latest error code
+```
+
+最近工具活动按最后执行时间有界选择，不把整个 Catalog 统计塞入上下文。它回答“这一轮
+执行已经走了多远、哪条路径正在重复碰壁、还剩多少客观预算”，不保存任务语义，也不由模型维护。
+Task Work State 记录目标推进；Runtime Pulse 记录执行水位。两者分开可以避免模型为了
+更新计数反复改写账本，也避免把动态计数放进稳定 System Prompt 破坏前缀缓存。Pulse
+固定在该 Model Attempt snapshot 中；它提供节奏感，但不把预算耗尽机械等同于任务完成。
+
+## 9. 防死循环红线
 
 - 手动停止不触发任何自动发送；
 - 自动压缩失败后退避，不立即重试；

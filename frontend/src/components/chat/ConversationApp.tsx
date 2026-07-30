@@ -12,7 +12,9 @@ import {
   listConversations,
   streamConversationEvents,
   stopTurn,
+  uploadArtifact,
   type ConversationView,
+  type UploadedArtifact,
 } from '@/api/irisApi'
 import { ConversationShell } from '@/components/layout'
 import { Badge, Button, ToastHost, notify } from '@/components/ui'
@@ -58,6 +60,12 @@ export function ConversationApp() {
   const draft = viewState.draftsByConversationId[draftKey] ?? ''
   const [replacementTarget, setReplacementTarget] =
     useState<TurnView | null>(null)
+  const [pendingAttachments, setPendingAttachments] =
+    useState<UploadedArtifact[]>([])
+
+  useEffect(() => {
+    setPendingAttachments([])
+  }, [draftKey])
 
   const hydrateView = useCallback((view: ConversationView) => {
     useChatStore.getState().hydrateView(view)
@@ -255,7 +263,10 @@ export function ConversationApp() {
         compaction.phase === 'running'),
   )
 
-  const sendTurn = async (text: string) => {
+  const sendTurn = async (
+    text: string,
+    attachmentRefs: string[] = [],
+  ) => {
     if (
       replacementTarget &&
       currentConversationId &&
@@ -272,8 +283,10 @@ export function ConversationApp() {
         replacementTarget.requestMessageId,
         text,
         version,
+        attachmentRefs,
       )
       setReplacementTarget(null)
+      setPendingAttachments([])
       conversations.setCurrentConversation(
         currentConversationId,
         created.branchId,
@@ -302,8 +315,44 @@ export function ConversationApp() {
       })
       conversations.setCurrentConversation(conversationId, branchId)
     }
-    await createTurn(conversationId, branchId, text)
+    await createTurn(conversationId, branchId, text, attachmentRefs)
+    setPendingAttachments([])
     hydrateView(await getConversationView(conversationId, branchId))
+  }
+
+  const addAttachments = async (files: File[]) => {
+    let conversationId = currentConversationId
+    let branchId = currentBranchId
+    if (!conversationId || !branchId) {
+      const created = await createConversation('新对话')
+      conversationId = created.conversationId
+      branchId = created.rootBranchId
+      conversations.upsertConversation({
+        conversationId,
+        title: '新对话',
+        updatedAt: new Date().toISOString(),
+        activeTurnCount: 0,
+        version: created.version,
+      })
+      viewState.setDraft(`${conversationId}:${branchId}`, draft)
+      conversations.setCurrentConversation(conversationId, branchId)
+    }
+    const remaining = Math.max(0, 16 - pendingAttachments.length)
+    const selected = files.slice(0, remaining)
+    try {
+      for (const file of selected) {
+        const uploaded = await uploadArtifact(
+          conversationId,
+          branchId,
+          file,
+        )
+        setPendingAttachments((current) => [...current, uploaded])
+      }
+    } catch (error) {
+      notify.error('附件没有完成导入', {
+        description: (error as Error).message,
+      })
+    }
   }
 
   const handleAttentionAction = async (
@@ -338,6 +387,12 @@ export function ConversationApp() {
       permissionMode={viewState.permissionMode}
       onPermissionModeChange={viewState.setPermissionMode}
       pendingSupplements={chat.pendingSupplements}
+      attachments={pendingAttachments}
+      onRemoveAttachment={(artifactRef) =>
+        setPendingAttachments((current) =>
+          current.filter((item) => item.artifactRef !== artifactRef),
+        )
+      }
       replacementMode={
         replacementTarget
           ? {
@@ -364,14 +419,19 @@ export function ConversationApp() {
         }
       }}
       onSendTurn={sendTurn}
-      onSendSupplement={async (text) => {
+      onSendSupplement={async (text, attachmentRefs) => {
         if (!activeTurn) return
         const clientRequestId = chat.addPendingSupplement(
           activeTurn.turnId,
           text,
         )
         try {
-          const supplement = await createSupplement(activeTurn.turnId, text)
+          const supplement = await createSupplement(
+            activeTurn.turnId,
+            text,
+            attachmentRefs,
+          )
+          setPendingAttachments([])
           useChatStore.getState().confirmPendingSupplement(
             clientRequestId,
             supplement,
@@ -403,9 +463,7 @@ export function ConversationApp() {
           })
         }
       }}
-      onAttachmentRequest={() => {
-        notify.info('附件入口尚未接入工作区')
-      }}
+      onAttachmentRequest={addAttachments}
     />
   )
 

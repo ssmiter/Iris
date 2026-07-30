@@ -102,15 +102,54 @@ Managed Object Store 独占。普通 Workspace Tool 不得读取或枚举对象�
 ### 首版架构
 
 ```
-Agentic / Pipeline 提交 run_python Invocation
+Agentic / Pipeline 提交 execute_python_analysis Invocation
   → Tool Runtime 校验脚本来源、输入、预算与风险
   → 把声明输入复制或只读映射到 staged input
   → Trusted Runner 或未来 Sandbox Helper 在独立 run directory 执行
   → 只写 separate output
   → 捕获 stdout/stderr/生成文件清单并截断
   → Runtime 验证 output
-  → 导入 Workspace 作为新的受审批写动作
+  → 在同一次已批准 Operation 内建立整组 Checkpoint
+  → 原子导入 Workspace 并登记 internal Artifact
 ```
+
+首个可执行契约名为 `execute_python_analysis`，明确限定为数据分析、确定性计算、图表和
+文档产物生成，不提供 Shell。调用必须预先声明：
+
+```text
+inputs[]  = exactly one of workspace_path / artifact_ref / tool_execution_id
+            + mount_name
+outputs[] = output_name + workspace_path + kind + title
+```
+
+三种输入都先解析为不可变的 `content hash + byte count`，并受同一个 staged input 总预算
+约束：
+
+- `workspace_path` 表示用户当前可编辑文件，prepare 与 execute 之间重新核对内容版本；
+- `artifact_ref` 表示同一对话中已经冻结的精确成果版本；
+- `tool_execution_id` 表示同一对话中某次成功 ToolExecution 的完整规范 JSON payload。
+
+模型可以先用 `query_tool_result/read_tool_result` 只观察大结果的一小部分，再把
+`tool_execution_id` 直接交给 Python。完整数据由 Backend 在数据平面复制，不经过模型
+上下文，也不需要模型把几万条记录重新写进 Workspace。只有用户需要继续编辑或交付的内容
+才进入 Workspace；内部工具结果不因“可能以后会用”而污染用户目录。
+
+Backend 按输入版本复制到 staged input；Python 只通过 `IRIS_INPUT_DIR` 读取。脚本只能把
+交付件写到 `IRIS_OUTPUT_DIR`，且执行结果必须与声明的 output_name 集合精确一致。验证后，
+Backend 再逐个核对目标 Workspace version、建立 Checkpoint、原子写入并登记 internal
+Artifact。模型批准的是这次声明完整的输入、代码与目标资源，不会在 Python 完成后再弹
+第二次同义审批。脚本不能直接宣布成功、不能直接发布用户成果；Iris 不向进程传递工作区
+物理根或挂载整个工作区，但 `trusted_process` 仍不能阻止恶意代码自行探测宿主文件系统。
+
+Runtime mode 是 Application availability，而不是 Tool 参数：
+
+- `disabled`：Definition 可发现但 unavailable；
+- `trusted_process`：仅本机显式启用，标记 degraded；具备 staged I/O、输出预算、取消和
+  进程树终止，但不宣称能阻止恶意 Python 访问宿主资源；
+- `container`：未来默认产品模式；断网、只读根文件系统、只读 input、独立可写 output，
+  并限制 CPU、内存和 PID。
+
+模型不能选择较弱 mode，也不能在 container 不可用时静默降级到宿主 Python。
 
 进程层先提供内部 `WorkspaceProcessRunner`，但它本身不是模型 Tool：命令以 argv
 而不是拼接后的 shell 字符串提交，cwd 必须经 Workspace 围栏解析，环境继承必须显式，
@@ -130,18 +169,84 @@ I/O 与写入核验接通前，不把任意命令能力暴露给模型。
 
 ### 与工具的衔接
 
-- `run_python` 是一个 Tool（path `/code/python`）；任意模型代码在真正隔离前不开放，首版只运行内置或用户明确选择的受信脚本；
-- output 通过验证和导入后才转为**产物卡片**，执行进程不能自行宣布 Artifact；
-- 沙箱执行过程的 stdout 流式回显为过程节点（用户能看到"正在生成第 3 页"）。
+- `execute_python_analysis` 是 `/code/python` 下的 Tool；产品默认不开放宿主任意代码，
+  `trusted_process` 只用于用户本机显式选择的开发模式；
+- output 通过验证和导入后登记为 internal Artifact；模型确认适合交付并调用
+  `publish_artifact(user_timeline)` 后才转为用户产物卡片；
+- 当前 stdout/stderr 在执行结束后作为有界 Observation 返回。过程级 stdout SSE 是后续
+  增量，接入时复用 `WorkspaceProcessRunner.OutputListener`，不能另开轮询通道。
 
 ## 3. 产物（Artifacts）
 
-工具/沙箱产出的文件是一等公民：
+工具/沙箱产出的文件与用户上传的输入都是一等公民：
 
 - 统一产物模型：`{ id, path, version, name, kind, size, provenance, visibility, sourceToolExecutionId }`；
 - 对话里渲染为文件卡片（类型图标 + 名称 + 大小 + 预览）；
 - 产物索引按会话持久化（SQLite），切换会话水合还原；
 - 预览坞（右侧面板）集中展示当前会话全部产物。
+
+### 3.1 登记不等于发布
+
+Artifact 是数据平面的稳定交接对象，不等于“前端已经给用户展示了一张卡片”。生命周期
+至少分为：
+
+```text
+User upload / Workspace / Sandbox output
+  → register：冻结精确内容版本，登记 provenance，visibility=internal
+  → reference：任务账本、模型上下文或 child Run 只携带 artifact:// 引用
+  → publish：显式增加 model_context 或 user_timeline 可见性
+  → preview/download：前端按需读取，不把 payload 塞进 ConversationView
+```
+
+  `register` 不接受任意物理路径，只能读取围栏内工作区文件或 Runtime 已验证的 staged
+  output；登记时把精确字节复制到 Managed Object Store，后续工作区文件变化不会改写旧
+  Artifact。`publish` 只改变 Iris 内部可见性和投影，不修改工作区文件，也不向外部系统
+  发送内容。发布到 `user_timeline` 后才生成 ArtifactNode；内部 Artifact 和
+  `model_context` 引用默认不进入瀑布流。
+
+  模型使用 `read_artifact` 读取元数据，确认类型、来源和版本；只有确实需要正文时才调用
+  `read_artifact_text` 分窗读取 UTF-8 文本。二进制 Artifact 不伪装成文本塞进上下文，
+  应交给匹配的领域能力或仅作为用户交付件。`model_context` 表示该稳定引用允许用于任务
+  交接：Backend 在后续 ModelContext 的动态状态区投影一个有界的 Artifact 卡片索引
+  （reference/title/kind/mediaType/byteCount/contentHash），不自动注入正文。超出通用
+  索引预算的长期成果应进入 active Task 的 `artifactRefs`，不能让 model_context 成为
+  无限增长的另一段历史。
+
+  Artifact 不得暗含“必定来自 ToolExecution”的假设。来源显式区分 `tool` 与
+  `user_upload`，两者统一获得稳定的 `artifact://artifact_<id>@<version>` 引用。用户
+  Message 只保存引用；Provider 输入只投影有界元数据，正文仍按窗口读取或由工具通过
+  引用直接装载。这样简历、报表、日志和图纸只是不同输入数据，不会形成场景特判。
+
+  当前可见性是可重建的状态投影；每次 `publish` 另存不可变发布事实。这样重复发布不会
+  制造多张相同成果卡，崩溃恢复又能从本次 ToolExecution 找回尚未完成的前端投影。
+
+Artifact、Evidence 和文件各司其职：
+
+- Evidence 证明一个 claim，由工具 verify 产生；
+- Artifact 是可传递、可预览或可下载的不可变内容版本；
+- Workspace file 是用户可继续编辑的当前文件；
+- Task Work State 只保存 Evidence/Artifact 稳定引用，不复制正文。
+
+首版每次登记都创建新的 `artifactId@1`，即使逻辑文件名相同也不隐式覆盖。等真实场景
+证明“同一产物的新版本”语义后，再增加显式 version lineage，避免现在凭文件路径猜身份。
+
+### 3.2 预览是受信投影，不是执行产物
+
+用户看到 Artifact 卡片时，正文仍不进入 ConversationView。只有用户打开卡片，Frontend
+才按 `previewRef` 拉取一个有界的 `ArtifactPreviewView`。Backend 根据已登记的
+`mediaType + name` 选择受信任的展示模式：
+
+- Markdown、JSON、纯文本和 CSV 返回有界 UTF-8 文本，由 Iris 自有组件渲染；
+- PNG、JPEG、GIF、WebP 只通过专用只读图片端点展示；
+- HTML、SVG、Office、PDF、压缩包和未知二进制首版只提供元数据与下载。
+
+模型生成的 HTML 不在 Iris 主页面执行。未来需要“活文档/任务黑板”时，优先定义声明式
+Artifact View Model，由受信组件目录渲染筛选器、表格、进度与链接；任意 HTML 只能作为
+单独的隔离展示能力，并且不能拥有主应用身份、凭据或网络权限。
+
+这一边界服务于实际体验：用户不打开就不读取、不解析、不渲染；打开后直接查看结构化
+成果，不要求模型把大表或长报告重新复述一遍。Artifact 是下一程协作的稳定界面，
+Answer 只说明结论和下一步。
 
 ## 4. 设计规范提炼（通用）
 

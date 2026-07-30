@@ -103,6 +103,15 @@ public class ModelContextWindowPlanner {
                     || groups.get(index).items().stream().anyMatch(
                     ModelInputItem.ContinuationDirective.class::isInstance
             )
+                    || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.TaskWorkState.class::isInstance
+            )
+                    || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.ArtifactContextIndex.class::isInstance
+            )
+                    || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.RuntimePulse.class::isInstance
+            )
                     || containsRequiredUser(
                     groups.get(index),
                     requiredUsers

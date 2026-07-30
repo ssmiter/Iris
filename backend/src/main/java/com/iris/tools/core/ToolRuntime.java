@@ -695,7 +695,8 @@ public class ToolRuntime {
 
     private boolean requiresApproval(ToolManifest manifest) {
         return approvalMode == ApprovalMode.REQUIRED
-                && hasSideEffect(manifest);
+                && manifest.sideEffect() != SideEffect.NONE
+                && manifest.sideEffect() != SideEffect.INTERNAL_STATE;
     }
 
     private boolean hasSideEffect(ToolManifest manifest) {

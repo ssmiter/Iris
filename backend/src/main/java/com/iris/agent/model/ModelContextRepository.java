@@ -3,6 +3,7 @@ package com.iris.agent.model;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.artifact.ArtifactService;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -16,10 +17,16 @@ public class ModelContextRepository {
 
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
+    private final ArtifactService artifacts;
 
-    public ModelContextRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
+    public ModelContextRepository(
+            JdbcClient jdbc,
+            ObjectMapper objectMapper,
+            ArtifactService artifacts
+    ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.artifacts = artifacts;
     }
 
     public List<ModelInputItem> branchFactsBeforeRound(
@@ -27,7 +34,7 @@ public class ModelContextRepository {
             String branchId,
             String roundId
     ) {
-        return jdbc.sql("""
+        List<ModelInputItem> facts = jdbc.sql("""
                 WITH RECURSIVE target AS (
                     SELECT ar.created_at AS target_time,
                            ar.run_id AS target_run_id,
@@ -347,6 +354,44 @@ public class ModelContextRepository {
                     );
                 })
                 .list();
+        return facts.stream()
+                .map(item -> item instanceof ModelInputItem.UserText user
+                        ? withAttachments(user, conversationId)
+                        : item)
+                .toList();
+    }
+
+    private ModelInputItem.UserText withAttachments(
+            ModelInputItem.UserText user,
+            String conversationId
+    ) {
+        List<ModelInputItem.AttachmentContext> attachments = jdbc.sql("""
+                SELECT artifact_ref
+                FROM message_attachment
+                WHERE message_id = :messageId
+                ORDER BY ordinal
+                """)
+                .param("messageId", user.messageId())
+                .query(String.class)
+                .list()
+                .stream()
+                .map(reference -> artifacts.require(
+                        reference,
+                        conversationId
+                ))
+                .map(snapshot -> new ModelInputItem.AttachmentContext(
+                        snapshot.reference(),
+                        snapshot.name(),
+                        snapshot.mediaType(),
+                        snapshot.byteCount(),
+                        snapshot.contentHash()
+                ))
+                .toList();
+        return new ModelInputItem.UserText(
+                user.messageId(),
+                user.text(),
+                attachments
+        );
     }
 
     /**

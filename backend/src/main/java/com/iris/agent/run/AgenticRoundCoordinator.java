@@ -26,7 +26,9 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -35,6 +37,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class AgenticRoundCoordinator {
     private static final int MAX_ATTEMPTS_PER_ROUND = 3;
+    private static final long BASE_RETRY_DELAY_MILLIS = 250;
+    private static final long MAX_BACKOFF_MILLIS = 2_000;
+    private static final Duration MAX_PROVIDER_RETRY_AFTER =
+            Duration.ofSeconds(10);
 
     private final RunRoundRepository runFacts;
     private final ModelContextAssembler contexts;
@@ -293,7 +299,7 @@ public class AgenticRoundCoordinator {
                             false
                     ));
         }
-        if (retryable(cause)
+        if (retryableWithinInteractiveBudget(cause)
                 && started.attempt().attemptIndex() + 1
                 < MAX_ATTEMPTS_PER_ROUND) {
             return retryAttempt(
@@ -314,7 +320,27 @@ public class AgenticRoundCoordinator {
             boolean cancelled,
             Throwable error
     ) {
-        return Mono.fromCallable(() -> {
+        Duration delay = retryDelay(failed.attempt().attemptIndex(), error);
+        Mono<Boolean> wait = Mono.firstWithSignal(
+                Mono.delay(delay).thenReturn(true),
+                cancellations.whenCancelled(failed.run().runId())
+                        .thenReturn(false)
+        );
+        return wait.flatMap(elapsed -> {
+            boolean stopRequested = !elapsed
+                    || cancelled
+                    || cancellations.isCancelled(failed.run().runId())
+                    || stopRequests.requested(failed.run().turnId());
+            if (stopRequested) {
+                return cancelAttempt(failed.attempt())
+                        .map(round -> new RoundAdvance(
+                                round.roundId(),
+                                round.phase(),
+                                failed.attempt().attemptId(),
+                                false
+                        ));
+            }
+            return Mono.fromCallable(() -> {
                     AttemptRow successor = attempts.retry(
                             failed.attempt().attemptId(),
                             failed.attempt().version(),
@@ -342,6 +368,7 @@ public class AgenticRoundCoordinator {
                         workspaceRoot,
                         cancelled
                 ));
+        });
     }
 
     private Mono<RoundAdvance> failAttempt(
@@ -382,6 +409,33 @@ public class AgenticRoundCoordinator {
             return provider.retryable();
         }
         return error instanceof java.util.concurrent.TimeoutException;
+    }
+
+    private boolean retryableWithinInteractiveBudget(Throwable error) {
+        if (!retryable(error)) {
+            return false;
+        }
+        if (error instanceof ModelProviderException provider
+                && provider.retryAfter() != null) {
+            return provider.retryAfter().compareTo(
+                    MAX_PROVIDER_RETRY_AFTER
+            ) <= 0;
+        }
+        return true;
+    }
+
+    private Duration retryDelay(int failedAttemptIndex, Throwable error) {
+        if (error instanceof ModelProviderException provider
+                && provider.retryAfter() != null) {
+            return provider.retryAfter();
+        }
+        int exponent = Math.min(Math.max(failedAttemptIndex, 0), 3);
+        long backoff = Math.min(
+                MAX_BACKOFF_MILLIS,
+                BASE_RETRY_DELAY_MILLIS * (1L << exponent)
+        );
+        long jitter = ThreadLocalRandom.current().nextLong(0, 126);
+        return Duration.ofMillis(backoff + jitter);
     }
 
     private Mono<RoundRow> cancelAttempt(AttemptRow attempt) {

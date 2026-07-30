@@ -335,6 +335,175 @@ CREATE TABLE IF NOT EXISTS agent_run (
 CREATE INDEX IF NOT EXISTS idx_run_turn
     ON agent_run(conversation_id, turn_id);
 
+CREATE TABLE IF NOT EXISTS agent_task_definition (
+    task_id TEXT NOT NULL,
+    definition_version INTEGER NOT NULL,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    constraints_json TEXT NOT NULL,
+    completion_criteria_json TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, definition_version),
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (source_message_id) REFERENCES message(message_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_task_work_state (
+    task_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    steps_json TEXT NOT NULL,
+    blockers_json TEXT NOT NULL,
+    evidence_refs_json TEXT NOT NULL,
+    artifact_refs_json TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    source_round_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, branch_id, state_version),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (source_round_id) REFERENCES agent_round(round_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_task_head (
+    task_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    definition_version INTEGER NOT NULL,
+    state_version INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, branch_id),
+    FOREIGN KEY (task_id, definition_version)
+        REFERENCES agent_task_definition(task_id, definition_version),
+    FOREIGN KEY (task_id, branch_id, state_version)
+        REFERENCES agent_task_work_state(task_id, branch_id, state_version),
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_task_head_branch
+    ON agent_task_head(conversation_id, branch_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS artifact (
+    artifact_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    latest_version INTEGER NOT NULL,
+    source_run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_version (
+    artifact_id TEXT NOT NULL,
+    artifact_version INTEGER NOT NULL,
+    object_ref TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    byte_count INTEGER NOT NULL,
+    workspace_path TEXT,
+    workspace_version TEXT,
+    origin_execution_id TEXT,
+    registration_execution_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, artifact_version),
+    FOREIGN KEY (artifact_id) REFERENCES artifact(artifact_id),
+    FOREIGN KEY (origin_execution_id) REFERENCES tool_execution(execution_id),
+    FOREIGN KEY (registration_execution_id)
+        REFERENCES tool_execution(execution_id)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_visibility (
+    artifact_id TEXT NOT NULL,
+    artifact_version INTEGER NOT NULL,
+    visibility TEXT NOT NULL,
+    source_execution_id TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, artifact_version, visibility),
+    FOREIGN KEY (artifact_id, artifact_version)
+        REFERENCES artifact_version(artifact_id, artifact_version),
+    FOREIGN KEY (source_execution_id) REFERENCES tool_execution(execution_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_publication (
+    publication_execution_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    artifact_version INTEGER NOT NULL,
+    visibility TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (artifact_id, artifact_version)
+        REFERENCES artifact_version(artifact_id, artifact_version),
+    FOREIGN KEY (publication_execution_id)
+        REFERENCES tool_execution(execution_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_conversation
+    ON artifact(conversation_id, branch_id, created_at);
+
+-- User ingress is a provenance subtype, not a fabricated ToolExecution.
+-- It shares the artifact:// reference grammar and immutable object store.
+CREATE TABLE IF NOT EXISTS user_artifact (
+    artifact_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    latest_version INTEGER NOT NULL,
+    upload_id TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
+    FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_artifact_version (
+    artifact_id TEXT NOT NULL,
+    artifact_version INTEGER NOT NULL,
+    object_ref TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    byte_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, artifact_version),
+    FOREIGN KEY (artifact_id) REFERENCES user_artifact(artifact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_artifact_conversation
+    ON user_artifact(conversation_id, branch_id, created_at);
+
+CREATE TABLE IF NOT EXISTS artifact_render_link (
+    artifact_id TEXT NOT NULL,
+    artifact_version INTEGER NOT NULL,
+    visibility TEXT NOT NULL,
+    publication_execution_id TEXT NOT NULL UNIQUE,
+    node_id TEXT NOT NULL UNIQUE,
+    PRIMARY KEY (artifact_id, artifact_version, visibility),
+    FOREIGN KEY (artifact_id, artifact_version)
+        REFERENCES artifact_version(artifact_id, artifact_version),
+    FOREIGN KEY (publication_execution_id)
+        REFERENCES tool_execution(execution_id),
+    FOREIGN KEY (node_id) REFERENCES render_node_projection(node_id)
+);
+
 CREATE TABLE IF NOT EXISTS run_failure (
     failure_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL UNIQUE,
@@ -347,6 +516,33 @@ CREATE TABLE IF NOT EXISTS run_failure (
     side_effect_outcome TEXT NOT NULL,
     details_ref TEXT,
     created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS run_closure_ledger (
+    run_id TEXT PRIMARY KEY,
+    execution_status TEXT NOT NULL,
+    task_outcome TEXT NOT NULL,
+    terminal_reason TEXT NOT NULL,
+    final_stop_reason TEXT,
+    round_count INTEGER NOT NULL,
+    model_attempt_count INTEGER NOT NULL,
+    tool_call_count INTEGER NOT NULL,
+    tool_execution_count INTEGER NOT NULL,
+    tool_observation_count INTEGER NOT NULL,
+    tool_succeeded_count INTEGER NOT NULL,
+    tool_failed_count INTEGER NOT NULL,
+    tool_outcome_unknown_count INTEGER NOT NULL,
+    tool_rejected_count INTEGER NOT NULL,
+    tool_expired_count INTEGER NOT NULL,
+    unmatched_tool_call_count INTEGER NOT NULL,
+    orphan_tool_execution_count INTEGER NOT NULL,
+    non_terminal_execution_count INTEGER NOT NULL,
+    missing_observation_count INTEGER NOT NULL,
+    evidence_count INTEGER NOT NULL,
+    artifact_count INTEGER NOT NULL,
+    has_final_answer INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
 );
 

@@ -1,5 +1,7 @@
 package com.iris.agent.model.provider;
 
+import java.time.Duration;
+
 public class ModelProviderException extends RuntimeException {
     private final String category;
     private final boolean retryable;
@@ -7,6 +9,7 @@ public class ModelProviderException extends RuntimeException {
     private final String providerCode;
     private final String providerType;
     private final String diagnosticMessage;
+    private final Duration retryAfter;
 
     public ModelProviderException(
             String category,
@@ -17,6 +20,7 @@ public class ModelProviderException extends RuntimeException {
                 category,
                 retryable,
                 message,
+                null,
                 null,
                 null,
                 null,
@@ -33,6 +37,28 @@ public class ModelProviderException extends RuntimeException {
             String providerType,
             String diagnosticMessage
     ) {
+        this(
+                category,
+                retryable,
+                message,
+                httpStatus,
+                providerCode,
+                providerType,
+                diagnosticMessage,
+                null
+        );
+    }
+
+    public ModelProviderException(
+            String category,
+            boolean retryable,
+            String message,
+            Integer httpStatus,
+            String providerCode,
+            String providerType,
+            String diagnosticMessage,
+            Duration retryAfter
+    ) {
         super(message);
         this.category = category;
         this.retryable = retryable;
@@ -40,6 +66,7 @@ public class ModelProviderException extends RuntimeException {
         this.providerCode = providerCode;
         this.providerType = providerType;
         this.diagnosticMessage = diagnosticMessage;
+        this.retryAfter = retryAfter;
     }
 
     public String category() {
@@ -64,5 +91,9 @@ public class ModelProviderException extends RuntimeException {
 
     public String diagnosticMessage() {
         return diagnosticMessage;
+    }
+
+    public Duration retryAfter() {
+        return retryAfter;
     }
 }

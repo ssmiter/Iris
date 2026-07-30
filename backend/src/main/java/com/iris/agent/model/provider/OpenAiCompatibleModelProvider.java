@@ -30,6 +30,10 @@ import reactor.core.publisher.Mono;
 
 import java.net.URI;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -117,13 +121,19 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                     .retrieve()
                     .onStatus(
                             HttpStatusCode::isError,
-                            response -> response.bodyToMono(String.class)
+                            response -> {
+                                String retryAfter = response.headers()
+                                        .asHttpHeaders()
+                                        .getFirst(HttpHeaders.RETRY_AFTER);
+                                return response.bodyToMono(String.class)
                                     .defaultIfEmpty("")
                                     .onErrorReturn("")
                                     .map(responseBody -> providerHttpError(
                                             response.statusCode(),
-                                            responseBody
-                                    ))
+                                            responseBody,
+                                            retryAfter
+                                    ));
+                            }
                     )
                     .bodyToFlux(SSE_TYPE)
                     .flatMapIterable(event -> mapEvent(mapper, event.data()))
@@ -263,7 +273,8 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
 
     private ModelProviderException providerHttpError(
             HttpStatusCode status,
-            String responseBody
+            String responseBody,
+            String retryAfterHeader
     ) {
         int code = status.value();
         String category = switch (code) {
@@ -293,8 +304,31 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                 code,
                 detail.code(),
                 detail.type(),
-                detail.message()
+                detail.message(),
+                retryAfter(retryAfterHeader)
         );
+    }
+
+    private Duration retryAfter(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        String value = header.trim();
+        try {
+            long seconds = Long.parseLong(value);
+            return seconds < 0 ? null : Duration.ofSeconds(seconds);
+        } catch (NumberFormatException ignored) {
+            try {
+                Instant retryAt = ZonedDateTime.parse(
+                        value,
+                        DateTimeFormatter.RFC_1123_DATE_TIME
+                ).toInstant();
+                Duration wait = Duration.between(Instant.now(), retryAt);
+                return wait.isNegative() ? Duration.ZERO : wait;
+            } catch (DateTimeParseException invalidDate) {
+                return null;
+            }
+        }
     }
 
     private ProviderErrorDetail providerErrorDetail(String responseBody) {

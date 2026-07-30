@@ -47,6 +47,16 @@ accepted/running/suspended → cancelled
 终态不可回退。`outcome_unknown` 只能通过新的 reconciliation command 产生后续事实，
 不能静默改成 succeeded/failed。
 
+`verifying` 首先是协议闭合门，不是默认再调用一次 Reviewer 模型。Tool 的客观
+postcondition 已在各自 Runtime 内验证；Run 收尾只确认 ToolCall/Execution/Observation
+已经闭合，并与用户 Supplement 共用 conversation lock。若用户补充先到达，当前回答保留
+为一段已完成的 assistant 事实，Run 打开下一 Round 注入补充；若终止先提交，后到的补充
+明确拒绝并让前端作为新 Turn 发送。不得把 pending Supplement 留在已结束 Turn 上。
+
+开放任务是否真正满足用户目标不能由一个通用 `succeeded` 状态臆测。可机械验证的场景
+应把验证放在对应工具或领域环境内；内容质量需要独立模态时再按场景引入 Reviewer。
+Run succeeded 只表示本次 Harness 轨迹正常闭合，不等价于所有现实目标都客观达成。
+
 ### Round
 
 ```text
@@ -128,6 +138,13 @@ Provider 重试发生在 ModelAttempt 边界，不发生在字节流内部：
   `render_node.invalidated`，新 Attempt 使用新的节点，绝不拼接；
 - 重试复用旧 Attempt 已冻结的 `context_hash + capability_lease_hash + ModelRequest`
   内容，只替换 attempt identity，避免重试期间重新发现能力或改变用户视野；
+- 重试前由 Harness 执行短暂的指数退避与有界抖动；若 Provider 返回
+  `Retry-After`，在交互预算允许时优先采用该值。等待超过 10 秒不再藏在一次
+  对话里自动执行，而是尽快以可诊断失败结束，避免前端长时间假死；
+- 退避等待不是不可中断的 sleep：进程内取消信号或持久化 StopRequest 到达后，
+  当前 Attempt 直接闭合为 cancelled，不再创建后继 Attempt；
+- 中间失败只进入 Attempt 事实和运行状态投影，不作为一条新的模型 Observation，
+  也不要求模型决定是否重试；只有恢复预算耗尽后的错误才上升到 Run；
 - ToolCall 只有 Attempt 完整提交后才成为 canonical fact，因此流阶段失败不会启动工具；
   一旦 Attempt 已提交，任何后续投影或工具错误都不得走 Provider 重试；
 - 多 Provider fallback 以后也必须遵循同一 Attempt 隔离，但只有显式配置的 route
@@ -287,3 +304,52 @@ attempt，保留事实后再决定是否创建新 Round。进程丢失时，`str
 stage answer，无工具调用的是必需的 final answer。答案同时保存对应 assistant
 message；final answer 发布后才能把 Run/Turn 标成成功。投影可重入：崩溃恢复时若
 `answer_node_id` 已存在，只复用既有节点，不复制答案。
+
+## 12. Run 闭合账本与 Task Outcome
+
+`Run.phase` 只描述 Harness 是否正常推进到终态，不直接声明用户在现实世界中的目标
+已经达成。每个终态 Agentic Run 必须形成一条不可变的 `run_closure_ledger`，记录
+收尾时可由内核客观计算的事实：
+
+- Round、ModelAttempt、ToolCall、ToolExecution 与 ToolObservation 数量；
+- ToolExecution 中 succeeded、failed、outcome_unknown、rejected、expired 的数量；
+- 未配对 ToolCall、非终态 ToolExecution、缺少 Observation 的终态执行数量；
+- Tool evidence、Artifact、final Answer 是否存在；
+- 最后一轮模型 stop reason、Run 终止原因与记录时间。
+
+账本的 `execution_status` 只有三种语义：
+
+- `closed`：协议轨迹完整闭合，可以安全结束本次 Harness；
+- `interrupted`：用户停止、依赖失败或预算边界导致执行中断，已有事实仍保留；
+- `uncertain`：收尾时仍存在无法证明闭合的协议事实，不得伪装成 succeeded。
+
+`task_outcome` 首版保持 `not_assessed`。Task head 可以记录 `completed` 或 `blocked`
+工作状态，但不能直接升级为现实目标的 Outcome：步骤关闭且 Evidence/Artifact 引用
+真实存在，只能证明工作记录结构闭合，尚不能证明每条完成标准已经被相应验证器满足。
+后续只有建立“完成标准—领域验证器—Evidence”的明确绑定后，才能投影
+`fulfilled | blocked | uncertain`。不得用一次通用 Reviewer 调用猜测。
+
+正常收尾时，final Answer 先成为 canonical fact，然后 Run 在同一持久化事务内完成
+`running -> verifying -> succeeded | outcome_unknown` 和账本写入。只要存在未配对
+调用、非终态执行、缺失 Observation 或缺失 final Answer，闭合门就进入
+`outcome_unknown`。历史上已经失败、但随后被模型观察和处理过的工具执行不会阻止
+协议闭合，它们仍作为账本事实供后续 Task Outcome 判断。
+
+## 13. 代码维护的 RuntimePulse
+
+每轮模型请求末尾追加一个有界的 RuntimePulse。它不是对历史的替代，也不由模型
+总结，而是由 canonical ToolExecution 事实确定性计算：
+
+- Run/Round 水位、工具调用与时间预算；
+- 当前观测时间、本地时区和宿主平台；
+- 最近活跃工具的调用数、失败数、outcome_unknown 数；
+- 同一工具使用完全相同输入的最大重复次数；
+- 最近一次结构化 errorCode。
+
+RuntimePulse 只承担“仪表盘”职责：帮助模型立即看见重复碰壁、剩余预算和异常结果，
+原始 ToolCall/Observation 仍保留并可回溯。活动条目有固定上限，按最近执行时间选择，
+避免把全量工具统计变成新的上下文负担。
+
+稳定 System Prompt 负责解释读数对应的行动策略：相同输入重复失败时先重新观察或换
+路径，outcome_unknown 先核对真实状态，预算接近边界时优先交付已确认结果并明确缺口。
+动态 RuntimePulse 只追加当前读数，不修改稳定前缀，也不宣称任务已经完成。

@@ -234,6 +234,82 @@ public class RunRoundRepository {
                 .single();
     }
 
+    /**
+     * A bounded, deterministic status projection for model steering. The
+     * original calls and observations remain canonical and queryable.
+     */
+    public List<ToolActivity> recentToolActivity(
+            String runId,
+            int limit
+    ) {
+        return jdbc.sql("""
+                WITH input_groups AS (
+                    SELECT
+                        tool_name,
+                        input_hash,
+                        COUNT(*) AS identical_input_count
+                    FROM tool_execution
+                    WHERE run_id = :runId
+                    GROUP BY tool_name, input_hash
+                ),
+                tool_totals AS (
+                    SELECT
+                        tool_name,
+                        COUNT(*) AS call_count,
+                        SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END)
+                            AS failed_count,
+                        SUM(
+                            CASE WHEN phase = 'outcome_unknown'
+                                 THEN 1 ELSE 0 END
+                        ) AS unknown_count,
+                        MAX(updated_at) AS last_used_at
+                    FROM tool_execution
+                    WHERE run_id = :runId
+                    GROUP BY tool_name
+                ),
+                repeated AS (
+                    SELECT
+                        tool_name,
+                        MAX(identical_input_count)
+                            AS max_identical_input_count
+                    FROM input_groups
+                    GROUP BY tool_name
+                )
+                SELECT
+                    totals.tool_name,
+                    totals.call_count,
+                    totals.failed_count,
+                    totals.unknown_count,
+                    repeated.max_identical_input_count,
+                    (
+                        SELECT latest.error_code
+                        FROM tool_execution latest
+                        WHERE latest.run_id = :runId
+                          AND latest.tool_name = totals.tool_name
+                          AND latest.error_code IS NOT NULL
+                        ORDER BY latest.updated_at DESC,
+                                 latest.execution_id DESC
+                        LIMIT 1
+                    ) AS latest_error_code
+                FROM tool_totals totals
+                JOIN repeated
+                  ON repeated.tool_name = totals.tool_name
+                ORDER BY totals.last_used_at DESC, totals.tool_name
+                LIMIT :limit
+                """)
+                .param("runId", runId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> new ToolActivity(
+                        rs.getString("tool_name"),
+                        rs.getInt("call_count"),
+                        rs.getInt("failed_count"),
+                        rs.getInt("unknown_count"),
+                        rs.getInt("max_identical_input_count"),
+                        rs.getString("latest_error_code")
+                ))
+                .list();
+    }
+
     public void settleTurn(String turnId, String phase, Instant now) {
         int updated = jdbc.sql("""
                 UPDATE conversation_turn
@@ -371,5 +447,15 @@ public class RunRoundRepository {
             return toolCallsUsed >= toolCallsLimit
                     || elapsedMs >= timeLimitMs;
         }
+    }
+
+    public record ToolActivity(
+            String toolName,
+            int callCount,
+            int failedCount,
+            int outcomeUnknownCount,
+            int maxIdenticalInputCount,
+            String latestErrorCode
+    ) {
     }
 }

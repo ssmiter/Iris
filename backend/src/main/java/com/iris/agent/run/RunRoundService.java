@@ -19,6 +19,7 @@ public class RunRoundService {
     private final TransactionTemplate transactions;
     private final RunEventEmitter events;
     private final RunFailureRepository failures;
+    private final RunClosureRepository closures;
     private final Clock clock = Clock.systemUTC();
     private final ReentrantLock[] locks = new ReentrantLock[LOCK_COUNT];
 
@@ -26,12 +27,14 @@ public class RunRoundService {
             RunRoundRepository repository,
             TransactionTemplate transactions,
             RunEventEmitter events,
-            RunFailureRepository failures
+            RunFailureRepository failures,
+            RunClosureRepository closures
     ) {
         this.repository = repository;
         this.transactions = transactions;
         this.events = events;
         this.failures = failures;
+        this.closures = closures;
         for (int index = 0; index < LOCK_COUNT; index++) {
             locks[index] = new ReentrantLock();
         }
@@ -128,6 +131,132 @@ public class RunRoundService {
                         );
                     }
                     failures.insert(runId, failure, now);
+                    closures.insert(
+                            runId,
+                            "interrupted",
+                            failure.code(),
+                            closures.inspect(runId),
+                            now
+                    );
+                    return requireRun(runId);
+                })
+        );
+        events.runSettled(runId);
+        return transitioned;
+    }
+
+    public RunSettlement completeRun(
+            String runId,
+            long expectedVersion
+    ) {
+        RunSettlement settlement = withLock(
+                runId,
+                () -> transactions.execute(status -> {
+                    RunRow current = requireRun(runId);
+                    if (current.version() != expectedVersion) {
+                        throw new IllegalStateException(
+                                "Run version 已变化"
+                        );
+                    }
+                    RunStateMachine.requireTransition(
+                            current.phase(),
+                            RunPhase.VERIFYING
+                    );
+                    var now = clock.instant();
+                    if (!repository.transitionRun(
+                            runId,
+                            current.phase(),
+                            RunPhase.VERIFYING,
+                            expectedVersion,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Run verification transition 发生并发冲突"
+                        );
+                    }
+
+                    var facts = closures.inspect(runId);
+                    RunPhase terminal = facts.safelyClosed()
+                            ? RunPhase.SUCCEEDED
+                            : RunPhase.OUTCOME_UNKNOWN;
+                    String executionStatus = facts.safelyClosed()
+                            ? "closed"
+                            : "uncertain";
+                    String terminalReason = facts.safelyClosed()
+                            ? "model_completed"
+                            : "protocol_closure_incomplete";
+                    closures.insert(
+                            runId,
+                            executionStatus,
+                            terminalReason,
+                            facts,
+                            now
+                    );
+
+                    RunRow verifying = requireRun(runId);
+                    RunStateMachine.requireTransition(
+                            verifying.phase(),
+                            terminal
+                    );
+                    if (!repository.transitionRun(
+                            runId,
+                            verifying.phase(),
+                            terminal,
+                            verifying.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Run terminal transition 发生并发冲突"
+                        );
+                    }
+                    return new RunSettlement(
+                            requireRun(runId),
+                            terminalReason,
+                            facts.unresolvedProtocolFactCount()
+                    );
+                })
+        );
+        events.runSettled(runId);
+        return settlement;
+    }
+
+    public RunRow cancelRun(
+            String runId,
+            long expectedVersion,
+            String reason
+    ) {
+        RunRow transitioned = withLock(
+                runId,
+                () -> transactions.execute(status -> {
+                    RunRow current = requireRun(runId);
+                    if (current.version() != expectedVersion) {
+                        throw new IllegalStateException(
+                                "Run version 已变化"
+                        );
+                    }
+                    RunStateMachine.requireTransition(
+                            current.phase(),
+                            RunPhase.CANCELLED
+                    );
+                    var now = clock.instant();
+                    if (!repository.transitionRun(
+                            runId,
+                            current.phase(),
+                            RunPhase.CANCELLED,
+                            expectedVersion,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Run cancellation transition 发生并发冲突"
+                        );
+                    }
+                    closures.insert(
+                            runId,
+                            "interrupted",
+                            reason,
+                            closures.inspect(runId),
+                            now
+                    );
                     return requireRun(runId);
                 })
         );
@@ -192,5 +321,12 @@ public class RunRoundService {
 
     private String id(String prefix) {
         return prefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    public record RunSettlement(
+            RunRow run,
+            String terminalReason,
+            int unresolvedProtocolFactCount
+    ) {
     }
 }

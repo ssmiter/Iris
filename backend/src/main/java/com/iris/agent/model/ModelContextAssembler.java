@@ -2,7 +2,9 @@ package com.iris.agent.model;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
+import com.iris.agent.run.RunRoundRepository.RunBudget;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.agent.model.ModelContextWindowPlanner.WindowPlan;
@@ -10,6 +12,8 @@ import com.iris.agent.model.ToolObservationMicroCompactor.Projection;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.CapabilityAvailabilityService;
+import com.iris.task.TaskLedgerService;
+import com.iris.artifact.ArtifactService;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -24,6 +28,8 @@ import java.time.Clock;
 
 @Service
 public class ModelContextAssembler {
+    private static final int RUNTIME_ACTIVITY_LIMIT = 8;
+
     private final ModelContextRepository facts;
     private final ToolRegistry tools;
     private final CapabilityAvailabilityService availability;
@@ -32,6 +38,9 @@ public class ModelContextAssembler {
     private final ToolObservationMicroCompactor microCompactor;
     private final ModelContextSnapshotRepository snapshots;
     private final ModelTokenEstimator tokens;
+    private final TaskLedgerService taskLedger;
+    private final ArtifactService artifacts;
+    private final RunRoundRepository runs;
     private final Clock clock = Clock.systemUTC();
 
     public ModelContextAssembler(
@@ -42,7 +51,10 @@ public class ModelContextAssembler {
             ModelContextWindowPlanner windows,
             ToolObservationMicroCompactor microCompactor,
             ModelContextSnapshotRepository snapshots,
-            ModelTokenEstimator tokens
+            ModelTokenEstimator tokens,
+            TaskLedgerService taskLedger,
+            ArtifactService artifacts,
+            RunRoundRepository runs
     ) {
         this.facts = facts;
         this.tools = tools;
@@ -52,6 +64,9 @@ public class ModelContextAssembler {
         this.microCompactor = microCompactor;
         this.snapshots = snapshots;
         this.tokens = tokens;
+        this.taskLedger = taskLedger;
+        this.artifacts = artifacts;
+        this.runs = runs;
     }
 
     public ModelContext assemble(
@@ -99,11 +114,70 @@ public class ModelContextAssembler {
                     "Capability lease changed after planning"
             );
         }
-        List<ModelInputItem> allItems = facts.branchFactsBeforeRound(
+        List<ModelInputItem> allItems = new ArrayList<>(
+                facts.branchFactsBeforeRound(
+                        run.conversationId(),
+                        run.branchId(),
+                        round.roundId()
+                )
+        );
+        var artifactIndex = artifacts.modelContextIndex(
                 run.conversationId(),
                 run.branchId(),
-                round.roundId()
+                8
         );
+        if (!artifactIndex.isEmpty()) {
+            var index = objectMapper.createArrayNode();
+            artifactIndex.forEach(artifact -> index.addObject()
+                    .put("artifactRef", artifact.reference())
+                    .put("title", artifact.title())
+                    .put("kind", artifact.kind())
+                    .put("mediaType", artifact.mediaType())
+                    .put("byteCount", artifact.byteCount())
+                    .put("contentHash", artifact.contentHash()));
+            allItems.add(new ModelInputItem.ArtifactContextIndex(
+                    index.toString()
+            ));
+        }
+        taskLedger.activeForContext(
+                run.conversationId(),
+                run.branchId()
+        ).forEach(task -> allItems.add(new ModelInputItem.TaskWorkState(
+                task.taskId(),
+                task.stateVersion(),
+                taskLedger.toJson(task).toString()
+        )));
+        RunBudget runtimeBudget = runs.runBudget(run.runId());
+        allItems.add(new ModelInputItem.RuntimePulse(
+                run.runId(),
+                round.index(),
+                runtimeBudget.toolCallsUsed(),
+                runtimeBudget.toolCallsLimit(),
+                runtimeBudget.elapsedMs(),
+                runtimeBudget.timeLimitMs(),
+                clock.instant()
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toOffsetDateTime()
+                        .toString(),
+                java.time.ZoneId.systemDefault().getId(),
+                System.getProperty("os.name", "unknown"),
+                definitions.size(),
+                seed.omittedCapabilityCount(),
+                runs.recentToolActivity(
+                                run.runId(),
+                                RUNTIME_ACTIVITY_LIMIT
+                        )
+                        .stream()
+                        .map(activity -> new ModelInputItem.ToolActivity(
+                                activity.toolName(),
+                                activity.callCount(),
+                                activity.failedCount(),
+                                activity.outcomeUnknownCount(),
+                                activity.maxIdenticalInputCount(),
+                                activity.latestErrorCode()
+                        ))
+                        .toList()
+        ));
         String leaseHash = hash(definitions);
         Projection observationProjection = microCompactor.project(
                 run.conversationId(),

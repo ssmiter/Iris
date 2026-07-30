@@ -161,6 +161,10 @@ export async function waitForPage(sessionId, body) {
     : 5_000
   const baselineFingerprint = session.lastObservation?.fingerprint
   const deadline = Date.now() + timeoutMs
+  const observationLimits = {
+    ...body,
+    purpose: condition === 'text' ? 'read' : 'interact',
+  }
   let observation = session.lastObservation
   let conditionMet = matchesWait(
     condition,
@@ -170,7 +174,7 @@ export async function waitForPage(sessionId, body) {
   )
   while (!conditionMet && Date.now() < deadline) {
     await delay(250)
-    observation = await observePage(session, body)
+    observation = await observePage(session, observationLimits)
     conditionMet = matchesWait(
       condition,
       text,

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.iris.artifact.ArtifactService;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationRequest;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationResponse;
@@ -35,6 +36,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.HashSet;
 import java.util.UUID;
 
 @Service
@@ -50,6 +52,7 @@ public final class ConversationCommandService {
     private final ConversationLocks locks;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
+    private final ArtifactService artifacts;
     private final Clock clock;
 
     public ConversationCommandService(
@@ -57,13 +60,15 @@ public final class ConversationCommandService {
             ConversationEventHub eventHub,
             ConversationLocks locks,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ArtifactService artifacts
     ) {
         this.repository = repository;
         this.eventHub = eventHub;
         this.locks = locks;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.artifacts = artifacts;
         this.clock = Clock.systemUTC();
     }
 
@@ -95,6 +100,10 @@ public final class ConversationCommandService {
             CreateTurnRequest request
     ) {
         requireIdempotencyKey(idempotencyKey);
+        requireAttachments(
+                conversationId,
+                request.input().attachmentRefs()
+        );
         if (!"agentic".equals(request.entrypoint() == null
                 ? "agentic"
                 : request.entrypoint().normalizedKind())) {
@@ -134,6 +143,10 @@ public final class ConversationCommandService {
             CreateBranchRequest request
     ) {
         requireIdempotencyKey(idempotencyKey);
+        requireAttachments(
+                conversationId,
+                request.replacement().attachmentRefs()
+        );
         if (request.expectedConversationVersion() < 1) {
             throw new ApiProblemException(
                     HttpStatus.BAD_REQUEST,
@@ -337,6 +350,7 @@ public final class ConversationCommandService {
                 ),
                 request.input().text().trim(),
                 "running",
+                null,
                 List.of(),
                 List.of(),
                 List.of(),
@@ -652,6 +666,7 @@ public final class ConversationCommandService {
                 ),
                 request.replacement().text().trim(),
                 "running",
+                null,
                 List.of(),
                 List.of(),
                 List.of(),
@@ -842,6 +857,32 @@ public final class ConversationCommandService {
                     "invalid_request",
                     "validation",
                     "Idempotency-Key 过长。"
+            );
+        }
+    }
+
+    private void requireAttachments(
+            String conversationId,
+            List<String> references
+    ) {
+        if (references.size() > 16
+                || new HashSet<>(references).size() != references.size()) {
+            throw new ApiProblemException(
+                    HttpStatus.BAD_REQUEST,
+                    "invalid_attachments",
+                    "validation",
+                    "每条消息最多附加 16 个不重复的文件。"
+            );
+        }
+        try {
+            references.forEach(reference ->
+                    artifacts.require(reference, conversationId));
+        } catch (RuntimeException exception) {
+            throw new ApiProblemException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "attachment_unavailable",
+                    "precondition",
+                    "附件不属于当前对话，或其精确版本已不可用。"
             );
         }
     }

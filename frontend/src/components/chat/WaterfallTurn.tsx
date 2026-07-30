@@ -10,6 +10,7 @@ import type {
 import { Button } from '@/components/ui'
 import { RunSection } from './RunSection'
 import { cn } from '@/lib/cn'
+import { UserAttachmentList } from './UserAttachmentList'
 
 interface WaterfallTurnProps {
   turn: TurnView
@@ -30,9 +31,27 @@ interface WaterfallTurnProps {
 const phaseLabel: Record<TurnView['phase'], string> = {
   queued: '等待开始',
   active: '正在处理',
-  settled: '已完成',
+  settled: '本轮已结束',
   stopped: '已停止',
   failed: '失败',
+}
+
+function visiblePhaseLabel(turn: TurnView, run?: RunView) {
+  if (turn.phase === 'active' && turn.stop) {
+    return turn.stop.state === 'draining' ? '正在核验后停止' : '正在停止'
+  }
+  if (run?.closure?.executionStatus === 'uncertain') {
+    return '结果待核对'
+  }
+  if (turn.phase === 'settled') {
+    if (run?.closure?.taskOutcome === 'fulfilled') {
+      return '任务已完成'
+    }
+    if (run?.closure?.taskOutcome === 'blocked') {
+      return '任务有阻塞'
+    }
+  }
+  return phaseLabel[turn.phase]
 }
 
 function formatElapsed(turn: TurnView) {
@@ -58,11 +77,17 @@ export function WaterfallTurn({
 }: WaterfallTurnProps) {
   const rootRun = runsById[turn.rootRunId]
   const hasPendingAttention = turn.pendingAttentionIds.length > 0
+  const closureNeedsAttention =
+    rootRun?.closure?.executionStatus === 'uncertain' ||
+    rootRun?.closure?.taskOutcome === 'blocked'
 
   return (
     <article className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)] py-6">
       <div className="flex justify-end">
         <div className="group max-w-[92%] sm:max-w-[min(86%,42rem)]">
+          <UserAttachmentList
+            references={turn.request.attachmentRefs}
+          />
           <div className="rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
             {turn.request.text}
           </div>
@@ -125,8 +150,11 @@ export function WaterfallTurn({
         <footer
           className={cn(
             'mt-2 flex flex-wrap items-center gap-2 px-2 text-caption text-ink-muted',
-            turn.phase === 'failed' && 'text-danger',
-            turn.phase === 'stopped' && 'text-warning',
+            turn.phase === 'failed' &&
+              !closureNeedsAttention &&
+              'text-danger',
+            (turn.phase === 'stopped' || closureNeedsAttention) &&
+              'text-warning',
           )}
         >
           <span
@@ -134,22 +162,24 @@ export function WaterfallTurn({
             className={cn(
               'h-1.5 w-1.5 rounded-full bg-border-strong',
               turn.phase === 'active' && 'bg-primary',
-              turn.phase === 'failed' && 'bg-danger',
-              turn.phase === 'stopped' && 'bg-warning',
+              turn.phase === 'failed' &&
+                !closureNeedsAttention &&
+                'bg-danger',
+              (turn.phase === 'stopped' || closureNeedsAttention) &&
+                'bg-warning',
             )}
           />
           <span
             className={cn(
               turn.phase === 'active' && 'text-primary',
-              turn.phase === 'failed' && 'text-danger',
-              turn.phase === 'stopped' && 'text-warning',
+              turn.phase === 'failed' &&
+                !closureNeedsAttention &&
+                'text-danger',
+              (turn.phase === 'stopped' || closureNeedsAttention) &&
+                'text-warning',
             )}
           >
-            {turn.phase === 'active' && turn.stop
-              ? turn.stop.state === 'draining'
-                ? '正在核验后停止'
-                : '正在停止'
-              : phaseLabel[turn.phase]}
+            {visiblePhaseLabel(turn, rootRun)}
           </span>
           <span>{turn.stats.roundCount} 轮</span>
           <span>· {turn.stats.toolCallCount} 个工具</span>

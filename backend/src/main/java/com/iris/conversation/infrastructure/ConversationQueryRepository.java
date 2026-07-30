@@ -15,6 +15,8 @@ import com.iris.conversation.domain.ConversationViews.RequestView;
 import com.iris.conversation.domain.ConversationViews.RoundStats;
 import com.iris.conversation.domain.ConversationViews.RoundView;
 import com.iris.conversation.domain.ConversationViews.RunBudget;
+import com.iris.conversation.domain.ConversationViews.RunClosureCounts;
+import com.iris.conversation.domain.ConversationViews.RunClosureView;
 import com.iris.conversation.domain.ConversationViews.RunDefinition;
 import com.iris.conversation.domain.ConversationViews.RunView;
 import com.iris.conversation.domain.ConversationViews.TurnStats;
@@ -493,6 +495,32 @@ public class ConversationQueryRepository {
     public RunView runView(String runId) {
         return jdbc.sql("""
                 SELECT r.*, d.*,
+                       c.run_id AS closure_run_id,
+                       c.execution_status AS closure_execution_status,
+                       c.task_outcome AS closure_task_outcome,
+                       c.terminal_reason AS closure_terminal_reason,
+                       c.final_stop_reason AS closure_final_stop_reason,
+                       c.round_count AS closure_round_count,
+                       c.model_attempt_count AS closure_model_attempt_count,
+                       c.tool_call_count AS closure_tool_call_count,
+                       c.tool_execution_count AS closure_tool_execution_count,
+                       c.tool_observation_count AS closure_tool_observation_count,
+                       c.tool_succeeded_count AS closure_tool_succeeded_count,
+                       c.tool_failed_count AS closure_tool_failed_count,
+                       c.tool_outcome_unknown_count
+                           AS closure_tool_outcome_unknown_count,
+                       c.tool_rejected_count AS closure_tool_rejected_count,
+                       c.tool_expired_count AS closure_tool_expired_count,
+                       (
+                           c.unmatched_tool_call_count
+                           + c.orphan_tool_execution_count
+                           + c.non_terminal_execution_count
+                           + c.missing_observation_count
+                       ) AS closure_unresolved_protocol_facts,
+                       c.evidence_count AS closure_evidence_count,
+                       c.artifact_count AS closure_artifact_count,
+                       c.has_final_answer AS closure_has_final_answer,
+                       c.recorded_at AS closure_recorded_at,
                        f.code AS failure_code,
                        f.category AS failure_category,
                        f.user_message AS failure_user_message,
@@ -503,6 +531,7 @@ public class ConversationQueryRepository {
                        f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.run_id = :runId
                 """)
@@ -515,6 +544,32 @@ public class ConversationQueryRepository {
     private List<RunView> runs(String turnId) {
         return jdbc.sql("""
                 SELECT r.*, d.*,
+                       c.run_id AS closure_run_id,
+                       c.execution_status AS closure_execution_status,
+                       c.task_outcome AS closure_task_outcome,
+                       c.terminal_reason AS closure_terminal_reason,
+                       c.final_stop_reason AS closure_final_stop_reason,
+                       c.round_count AS closure_round_count,
+                       c.model_attempt_count AS closure_model_attempt_count,
+                       c.tool_call_count AS closure_tool_call_count,
+                       c.tool_execution_count AS closure_tool_execution_count,
+                       c.tool_observation_count AS closure_tool_observation_count,
+                       c.tool_succeeded_count AS closure_tool_succeeded_count,
+                       c.tool_failed_count AS closure_tool_failed_count,
+                       c.tool_outcome_unknown_count
+                           AS closure_tool_outcome_unknown_count,
+                       c.tool_rejected_count AS closure_tool_rejected_count,
+                       c.tool_expired_count AS closure_tool_expired_count,
+                       (
+                           c.unmatched_tool_call_count
+                           + c.orphan_tool_execution_count
+                           + c.non_terminal_execution_count
+                           + c.missing_observation_count
+                       ) AS closure_unresolved_protocol_facts,
+                       c.evidence_count AS closure_evidence_count,
+                       c.artifact_count AS closure_artifact_count,
+                       c.has_final_answer AS closure_has_final_answer,
+                       c.recorded_at AS closure_recorded_at,
                        f.code AS failure_code,
                        f.category AS failure_category,
                        f.user_message AS failure_user_message,
@@ -525,6 +580,7 @@ public class ConversationQueryRepository {
                        f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.turn_id = :turnId
                 ORDER BY r.started_at, r.run_id
@@ -552,6 +608,7 @@ public class ConversationQueryRepository {
                 ),
                 rs.getString("purpose"),
                 rs.getString("phase"),
+                mapRunClosure(rs),
                 List.of(),
                 roundIds(rs.getString("run_id")),
                 childRunIds(rs.getString("run_id")),
@@ -569,6 +626,40 @@ public class ConversationQueryRepository {
                 rs.getString("ended_at") == null
                         ? null
                         : Instant.parse(rs.getString("ended_at"))
+        );
+    }
+
+    private RunClosureView mapRunClosure(java.sql.ResultSet rs)
+            throws java.sql.SQLException {
+        if (rs.getString("closure_run_id") == null) {
+            return null;
+        }
+        return new RunClosureView(
+                rs.getString("closure_execution_status"),
+                rs.getString("closure_task_outcome"),
+                rs.getString("closure_terminal_reason"),
+                rs.getString("closure_final_stop_reason"),
+                new RunClosureCounts(
+                        rs.getInt("closure_round_count"),
+                        rs.getInt("closure_model_attempt_count"),
+                        rs.getInt("closure_tool_call_count"),
+                        rs.getInt("closure_tool_execution_count"),
+                        rs.getInt("closure_tool_observation_count"),
+                        rs.getInt("closure_tool_succeeded_count"),
+                        rs.getInt("closure_tool_failed_count"),
+                        rs.getInt(
+                                "closure_tool_outcome_unknown_count"
+                        ),
+                        rs.getInt("closure_tool_rejected_count"),
+                        rs.getInt("closure_tool_expired_count"),
+                        rs.getInt(
+                                "closure_unresolved_protocol_facts"
+                        ),
+                        rs.getInt("closure_evidence_count"),
+                        rs.getInt("closure_artifact_count")
+                ),
+                rs.getInt("closure_has_final_answer") == 1,
+                Instant.parse(rs.getString("closure_recorded_at"))
         );
     }
 

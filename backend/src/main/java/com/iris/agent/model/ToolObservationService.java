@@ -86,9 +86,14 @@ public class ToolObservationService {
         );
         content.put("toolName", source.toolName());
         content.put("status", source.phase());
+        content.put("executionId", executionId);
         boolean error = !"succeeded".equals(source.phase());
         content.put("isError", error);
         if (!error && source.outputJson() != null) {
+            content.put(
+                    "resultRef",
+                    "tool-result://" + executionId
+            );
             content.set("output", read(source.outputJson()));
         } else {
             String errorCode = source.errorCode() == null
@@ -119,6 +124,21 @@ public class ToolObservationService {
             );
             recoveryNode.put("instruction", recovery.instruction());
         }
+        var evidence = content.putArray("evidence");
+        repository.executionEvidence(executionId).forEach(item -> {
+            ObjectNode evidenceItem = evidence.addObject();
+            evidenceItem.put(
+                    "evidenceRef",
+                    "evidence://" + item.evidenceId()
+            );
+            evidenceItem.put("kind", item.kind());
+            if (item.reference() == null) {
+                evidenceItem.putNull("reference");
+            } else {
+                evidenceItem.put("reference", item.reference());
+            }
+            evidenceItem.put("summary", item.summary());
+        });
 
         String contentHash = hash(write(content));
         ToolObservation observation = new ToolObservation(

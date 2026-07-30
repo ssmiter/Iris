@@ -77,15 +77,23 @@ public class WebBridgeClient {
             String runtimeId,
             String sessionId,
             String pageId,
+            String purpose,
+            String searchQuery,
             int maxTextCharacters,
-            int maxElements
+            int maxElements,
+            int maxMatches
     ) {
         ObjectNode body = objectMapper.createObjectNode();
         if (pageId != null && !pageId.isBlank()) {
             body.put("pageId", pageId);
         }
+        body.put("purpose", purpose);
+        if (searchQuery != null && !searchQuery.isBlank()) {
+            body.put("searchQuery", searchQuery);
+        }
         body.put("maxTextCharacters", maxTextCharacters);
         body.put("maxElements", maxElements);
+        body.put("maxMatches", maxMatches);
         return send(
                 runtimes.require(runtimeId),
                 "POST",

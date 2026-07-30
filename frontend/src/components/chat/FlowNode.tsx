@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  Box,
   Brain,
   Check,
   ChevronRight,
@@ -18,6 +17,7 @@ import type {
 } from '@/domain/chat/models'
 import { Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { ArtifactCard } from './ArtifactCard'
 import { BrowserScreenshotPreview } from './BrowserScreenshotPreview'
 
 interface FlowNodeProps {
@@ -163,17 +163,7 @@ function NodeBody({
         </div>
       )
     case 'artifact':
-      return (
-        <div className="flex items-center gap-3 rounded-sm border border-border bg-surface-raised p-3">
-          <Box aria-hidden="true" className="h-5 w-5 text-primary" />
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink">{node.title}</p>
-            <p className="text-caption text-ink-muted">
-              {node.kind} · 预览将在产物视图中打开
-            </p>
-          </div>
-        </div>
-      )
+      return <ArtifactCard node={node} />
     case 'answer':
       return <p>回答节点固定显示在过程摘要下方。</p>
     case 'supplement':

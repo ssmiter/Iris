@@ -41,6 +41,10 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 | elevated | 发送、提交、覆盖或敏感访问 | 强审批、短过期 |
 | destructive | 删除、支付、不可逆 | 强审批 + 额外核验；部分首版禁用 |
 
+风险等级描述用户或外部世界的影响。任务账本等 Iris 私有控制平面更新另声明
+`sideEffect=internal_state`：它们不弹出外部写审批，但仍必须经过 Runtime、资源声明、
+版本前置条件、持久化和 verify，不能伪装成 read-only。
+
 ### 2.1 两层能力，不是两套平台
 
 - **系统原语能力**负责客观观察、变换、行动和验证，接口尽量小、可组合、可单独测试；
@@ -179,6 +183,26 @@ Tool：
 `calculate` 使用确定性的十进制表达式求值器处理 `+ - * / % ^`、括号与一元正负号，
 由输入声明有效数字精度和固定舍入规则。金额、比例、工时和产量等计算不交给语言模型
 猜测；首版不混入单位换算、日期或业务公式，这些语义以后由独立能力组合。
+
+### 4.4 `/code/python`：受控计算与产物生成
+
+`execute_python_analysis` 不把宿主 Shell 暴露为万能能力。它接受完整 Python 源码、明确的
+工作区输入和预期输出，把“灵活编程”约束成一次可冻结、可审批、可核验的 Operation：
+
+- 输入按 Workspace 内容版本复制到独立 staged input，脚本不接收工作区根路径；
+- 输入也可引用同一对话中的 immutable Artifact 或完整 Tool output；Backend 直接搬运
+  规范字节，模型只需观察必要窗口，不承担数据复制；
+- 输出文件名、目标 Workspace 路径、Artifact kind 与标题调用前全部声明，实际集合必须
+  精确匹配；
+- 运行成功不等于任务完成。Backend 重新核对目标版本，建立整组 Checkpoint，原子提交，
+  再把每个精确内容版本登记为 internal Artifact；
+- Capability availability 反映 Application runtime：默认 disabled；本机显式
+  `trusted_process` 为 degraded，未来受 OS 约束的 helper/container 才可报告完整可用；
+- Tool Definition 与运行模式解耦，模型不能选择较弱隔离，也不能要求静默降级。
+
+这个能力适合批量数据变换、确定性计算、图表和文档产物；浏览器交互、领域业务口径和
+外部写入继续由各自对象能力负责。Python 是 Harness 的一个可组合计算环境，不是
+Iris 的唯一实现路径。
 
 ### 域过滤（FilterBySystem）
 

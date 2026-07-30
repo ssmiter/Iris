@@ -75,6 +75,56 @@ export class IrisApiError extends Error {
   }
 }
 
+export interface ArtifactPreviewView {
+  artifactId: string
+  artifactRef: string
+  title: string
+  mode: 'text' | 'image' | 'download_only'
+  format?: 'markdown' | 'json' | 'plain'
+  content?: string
+  truncated: boolean
+  byteCount: number
+  contentRef?: string
+  message?: string
+}
+
+export interface UploadedArtifact {
+  artifactId: string
+  artifactRef: string
+  version: number
+  name: string
+  title: string
+  kind: string
+  sourceKind: 'user_upload' | 'tool'
+  sourceRef: string
+  mediaType: string
+  byteCount: number
+  contentHash: string
+}
+
+export function getArtifactMetadata(
+  artifactRef: string,
+): Promise<UploadedArtifact> {
+  const match = /^artifact:\/\/(artifact_[a-f0-9]{32})@([1-9][0-9]*)$/.exec(
+    artifactRef,
+  )
+  if (!match) {
+    return Promise.reject(new Error('无效的 Artifact 引用'))
+  }
+  return requestJson<UploadedArtifact>(
+    `/api/v1/artifacts/${encodeURIComponent(match[1])}/versions/${match[2]}`,
+  )
+}
+
+export function artifactContentUrl(artifactRef: string): string | null {
+  const match = /^artifact:\/\/(artifact_[a-f0-9]{32})@([1-9][0-9]*)$/.exec(
+    artifactRef,
+  )
+  return match
+    ? `/api/v1/artifacts/${encodeURIComponent(match[1])}/versions/${match[2]}/content`
+    : null
+}
+
 async function requestJson<T>(
   path: string,
   init?: RequestInit,
@@ -83,7 +133,9 @@ async function requestJson<T>(
     ...init,
     headers: {
       Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.body && !(init.body instanceof FormData)
+        ? { 'Content-Type': 'application/json' }
+        : {}),
       ...init?.headers,
     },
   })
@@ -99,6 +151,13 @@ async function requestJson<T>(
     )
   }
   return response.json() as Promise<T>
+}
+
+export function getArtifactPreview(
+  previewRef: string,
+  signal?: AbortSignal,
+): Promise<ArtifactPreviewView> {
+  return requestJson<ArtifactPreviewView>(previewRef, { signal })
 }
 
 export function listConversations(): Promise<ConversationPage> {
@@ -132,6 +191,7 @@ export function createTurn(
   conversationId: string,
   branchId: string,
   text: string,
+  attachmentRefs: string[] = [],
 ) {
   const clientRequestId = crypto.randomUUID()
   return requestJson<{
@@ -148,7 +208,7 @@ export function createTurn(
     body: JSON.stringify({
       branchId,
       clientRequestId,
-      input: { text, attachmentRefs: [] },
+      input: { text, attachmentRefs },
       entrypoint: { kind: 'agentic' },
     }),
   })
@@ -160,6 +220,7 @@ export function createBranch(
   anchorMessageId: string,
   replacementText: string,
   expectedConversationVersion: number,
+  attachmentRefs: string[] = [],
 ) {
   return requestJson<{
     branchId: string
@@ -176,7 +237,7 @@ export function createBranch(
     body: JSON.stringify({
       sourceBranchId,
       anchorMessageId,
-      replacement: { text: replacementText, attachmentRefs: [] },
+      replacement: { text: replacementText, attachmentRefs },
       expectedConversationVersion,
     }),
   })
@@ -230,14 +291,31 @@ export function decideApproval(
   })
 }
 
-export function createSupplement(turnId: string, text: string) {
+export function createSupplement(
+  turnId: string,
+  text: string,
+  attachmentRefs: string[] = [],
+) {
   return requestJson<SupplementView>(
     `/api/v1/turns/${encodeURIComponent(turnId)}/supplements`,
     {
       method: 'POST',
       headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ text, attachmentRefs: [] }),
+      body: JSON.stringify({ text, attachmentRefs }),
     },
+  )
+}
+
+export function uploadArtifact(
+  conversationId: string,
+  branchId: string,
+  file: File,
+) {
+  const body = new FormData()
+  body.append('file', file, file.name)
+  return requestJson<UploadedArtifact>(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/branches/${encodeURIComponent(branchId)}/artifacts`,
+    { method: 'POST', body },
   )
 }
 

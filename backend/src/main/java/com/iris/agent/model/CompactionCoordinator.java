@@ -41,6 +41,8 @@ public final class CompactionCoordinator {
             必须保留：用户目标与约束、已经确认的决定、仍未解决的问题、重要实体和
             标识、工具产生的客观证据、文件或外部状态变化及其结果、失败与
             outcome_unknown。不得把推测写成事实，不得声称未发生的动作已经完成。
+            对后续仍有价值的 task_、artifact://、tool-result://、execution_id、
+            checkpoint_ 和 Evidence 引用必须原样保留，不能只改写成无法回溯的描述。
             删除寒暄、重复表述和不影响后续工作的过程噪声。
             """;
     private static final int MAX_INPUT_TOKENS = 120_000;

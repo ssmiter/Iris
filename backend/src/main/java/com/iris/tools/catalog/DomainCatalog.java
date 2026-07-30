@@ -46,6 +46,7 @@ public final class DomainCatalog {
             Map.entry("hotel", "酒店"), Map.entry("notes", "笔记"),
             Map.entry("resume", "简历"), Map.entry("local", "本地"),
             Map.entry("code", "代码"), Map.entry("system", "系统"),
+            Map.entry("python", "Python 分析"),
             Map.entry("data", "数据"), Map.entry("sql", "SQL"),
             Map.entry("web", "网页"), Map.entry("browser", "浏览器"),
             Map.entry("files", "工作区文件"),

@@ -113,6 +113,10 @@ Model Attempt 动态部分
 Definition 没有变化时，Prompt 不包含当前时间、随机顺序或逐轮计数，因此前缀逐字节
 稳定。用户状态和对话事实位于其后，不反向污染稳定层。
 
+Prompt 源码必须保持 UTF-8 可读。Maven 显式固定 source/reporting encoding；
+`AgentSystemPrompt` 在启动构造时拒绝 Unicode replacement character。终端显示乱码不应
+直接当作源码损坏证据，诊断时必须以显式 UTF-8 解码或原始字节检查复核。
+
 ## 4. 首版元认知的六个部分
 
 ### 4.1 身份与完成标准

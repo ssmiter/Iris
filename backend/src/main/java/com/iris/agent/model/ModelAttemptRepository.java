@@ -345,6 +345,23 @@ public class ModelAttemptRepository {
                 .optional();
     }
 
+    public List<ExecutionEvidence> executionEvidence(String executionId) {
+        return jdbc.sql("""
+                SELECT evidence_id, kind, reference, summary
+                FROM tool_evidence
+                WHERE execution_id = :executionId
+                ORDER BY ordinal
+                """)
+                .param("executionId", executionId)
+                .query((rs, rowNum) -> new ExecutionEvidence(
+                        rs.getString("evidence_id"),
+                        rs.getString("kind"),
+                        rs.getString("reference"),
+                        rs.getString("summary")
+                ))
+                .list();
+    }
+
     public Optional<ToolObservation> findObservation(String toolCallId) {
         return jdbc.sql("""
                 SELECT * FROM tool_observation
@@ -555,6 +572,14 @@ public class ModelAttemptRepository {
             String outputJson,
             String errorCode,
             String errorMessage
+    ) {
+    }
+
+    public record ExecutionEvidence(
+            String evidenceId,
+            String kind,
+            String reference,
+            String summary
     ) {
     }
 

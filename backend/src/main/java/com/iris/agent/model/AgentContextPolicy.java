@@ -27,6 +27,13 @@ public class AgentContextPolicy {
             "make_directory",
             "write_file",
             "apply_patch",
+            "create_task_ledger",
+            "read_task_ledger",
+            "update_task_ledger",
+            "register_workspace_artifact",
+            "read_artifact",
+            "read_artifact_text",
+            "publish_artifact",
             "read_tool_result",
             "query_tool_result"
     );

@@ -255,3 +255,22 @@ approval.resolved
 - workspace 越界在 prepare 阶段 fail-close；
 - 成功 execution 保存 outcome 与 evidence。
 - 完整 Tool output 与有界 Observation 分离；任何截断都可通过 executionId 读回。
+
+## 10. Observation 的稳定引用
+
+ToolExecution、完整结果、Evidence 和模型看到的 ToolObservation 必须连成同一条可回溯
+引用链。每条 terminal Observation 至少携带：
+
+- `executionId`；存在可重取结果正文时同时携带 `tool-result://{executionId}`；
+- 有界的 output 或错误、effect、recovery；
+- Runtime 已持久化 Evidence 的 `evidence://{evidenceId}`、kind、reference 与短摘要。
+
+`tool-result://` 是完整工具结果的数据平面入口：模型可把 executionId 交给
+`read_tool_result`、`query_tool_result` 或 Python staged input，正文不需要经过对话
+上下文复制。`evidence://` 是验证事实的稳定标识，可进入 Task work state 和 Run
+closure；Evidence 的 `reference` 只是它所指向的文件、页面、Checkpoint 或领域对象，
+不能替代 Evidence 自身身份。
+
+Observation 只返回当前 conversation 可访问的引用；Task 标记完成前，Runtime 必须核验
+提交的 Evidence/Artifact 引用真实存在且属于当前 conversation/branch。字符串长得像
+引用，不构成完成证据。

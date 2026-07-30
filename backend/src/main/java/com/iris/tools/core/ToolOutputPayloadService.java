@@ -130,6 +130,69 @@ public class ToolOutputPayloadService {
                 });
     }
 
+    /**
+     * Resolves immutable payload metadata without placing its body in model
+     * context. Used by staged execution adapters during prepare.
+     */
+    public Optional<PayloadDescriptor> findDescriptor(
+            String conversationId,
+            String executionId
+    ) {
+        return repository.findOutputPayload(conversationId, executionId)
+                .map(payload -> {
+                    requireConsistentReference(
+                            payload.objectRef(),
+                            payload.contentHash()
+                    );
+                    return new PayloadDescriptor(
+                            payload.executionId(),
+                            payload.mediaType(),
+                            payload.contentHash(),
+                            payload.byteCount()
+                    );
+                });
+    }
+
+    /**
+     * Reads an exact immutable payload for Backend-to-runtime transfer. The
+     * bytes are not projected into the model transcript.
+     */
+    public Optional<BinaryPayload> findBytes(
+            String conversationId,
+            String executionId,
+            long maximumBytes
+    ) {
+        return repository.findOutputPayload(conversationId, executionId)
+                .map(payload -> {
+                    requireConsistentReference(
+                            payload.objectRef(),
+                            payload.contentHash()
+                    );
+                    if (payload.byteCount() > maximumBytes) {
+                        throw ToolRuntimeException.beforeCommit(
+                                "tool_result_input_too_large",
+                                "完整工具结果超过 staged input 上限"
+                        );
+                    }
+                    try {
+                        return new BinaryPayload(
+                                payload.executionId(),
+                                payload.mediaType(),
+                                payload.contentHash(),
+                                objects.readBytes(
+                                        payload.objectRef(),
+                                        maximumBytes
+                                )
+                        );
+                    } catch (IOException exception) {
+                        throw new IllegalStateException(
+                                "Tool output object is unavailable or corrupted",
+                                exception
+                        );
+                    }
+                });
+    }
+
     private void requireConsistentReference(
             String objectRef,
             String contentHash
@@ -185,5 +248,29 @@ public class ToolOutputPayloadService {
             long totalBytes,
             String content
     ) {
+    }
+
+    public record PayloadDescriptor(
+            String executionId,
+            String mediaType,
+            String contentHash,
+            long byteCount
+    ) {
+    }
+
+    public record BinaryPayload(
+            String executionId,
+            String mediaType,
+            String contentHash,
+            byte[] bytes
+    ) {
+        public BinaryPayload {
+            bytes = bytes.clone();
+        }
+
+        @Override
+        public byte[] bytes() {
+            return bytes.clone();
+        }
     }
 }

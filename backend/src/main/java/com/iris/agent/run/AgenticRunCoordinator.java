@@ -10,7 +10,9 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunBudget;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.RunEventEmitter;
+import com.iris.conversation.application.ConversationLocks;
 import com.iris.conversation.domain.ConversationViews.FailureView;
+import com.iris.conversation.infrastructure.SupplementRepository;
 import com.iris.conversation.infrastructure.TurnStopRepository;
 import com.iris.tools.core.ToolRuntime;
 import org.springframework.stereotype.Service;
@@ -40,6 +42,8 @@ public class AgenticRunCoordinator {
     private final TurnStopRepository stopRequests;
     private final ToolRuntime toolRuntime;
     private final RunCancellationRegistry cancellations;
+    private final ConversationLocks conversationLocks;
+    private final SupplementRepository supplements;
     private final Clock clock = Clock.systemUTC();
 
     public AgenticRunCoordinator(
@@ -51,7 +55,9 @@ public class AgenticRunCoordinator {
             RunEventEmitter lifecycleEvents,
             TurnStopRepository stopRequests,
             ToolRuntime toolRuntime,
-            RunCancellationRegistry cancellations
+            RunCancellationRegistry cancellations,
+            ConversationLocks conversationLocks,
+            SupplementRepository supplements
     ) {
         this.facts = facts;
         this.states = states;
@@ -62,6 +68,8 @@ public class AgenticRunCoordinator {
         this.stopRequests = stopRequests;
         this.toolRuntime = toolRuntime;
         this.cancellations = cancellations;
+        this.conversationLocks = conversationLocks;
+        this.supplements = supplements;
     }
 
     public Mono<RunAdvance> advance(
@@ -286,10 +294,32 @@ public class AgenticRunCoordinator {
                         null
                 );
             }
-            answers.publishFinal(latest.roundId());
-            return new NextRound(null, completeRun(run), null);
+            return conversationLocks.withLock(
+                    run.conversationId(),
+                    () -> closeOrContinue(run, latest)
+            );
         }
         return new NextRound(latest, null, null);
+    }
+
+    private NextRound closeOrContinue(RunRow run, RoundRow latest) {
+        RunRow current = requireRun(run.runId());
+        if (current.phase() != RunPhase.RUNNING) {
+            return new NextRound(
+                    null,
+                    view(current, false, null),
+                    null
+            );
+        }
+        answers.publishFinal(latest.roundId());
+        if (supplements.hasPending(current.turnId())) {
+            return new NextRound(
+                    states.openRound(current.runId()),
+                    null,
+                    null
+            );
+        }
+        return new NextRound(null, completeRun(current), null);
     }
 
     private Mono<RunAdvance> afterRound(
@@ -445,20 +475,21 @@ public class AgenticRunCoordinator {
     }
 
     private RunAdvance completeRun(RunRow run) {
-        RunRow verifying = states.transitionRun(
+        RunRoundService.RunSettlement settlement = states.completeRun(
                 run.runId(),
-                run.version(),
-                RunPhase.VERIFYING
+                run.version()
         );
-        RunRow succeeded = states.transitionRun(
-                run.runId(),
-                verifying.version(),
-                RunPhase.SUCCEEDED
+        RunRow terminal = settlement.run();
+        facts.settleTurn(
+                run.turnId(),
+                terminal.phase() == RunPhase.SUCCEEDED
+                        ? "settled"
+                        : "failed",
+                clock.instant()
         );
-        facts.settleTurn(run.turnId(), "settled", clock.instant());
         lifecycleEvents.turnUpdated(run.turnId());
         cancellations.clear(run.runId());
-        return view(succeeded, false, null);
+        return view(terminal, false, null);
     }
 
     private RunAdvance stopRun(RunRow run, RoundRow latest) {
@@ -469,10 +500,10 @@ public class AgenticRunCoordinator {
                     RoundPhase.STOPPED
             );
         }
-        RunRow cancelledRun = states.transitionRun(
+        RunRow cancelledRun = states.cancelRun(
                 run.runId(),
                 run.version(),
-                RunPhase.CANCELLED
+                "user_cancelled"
         );
         Instant now = clock.instant();
         facts.settleTurn(run.turnId(), "stopped", now);

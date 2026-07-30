@@ -77,6 +77,71 @@ public class ConversationRepository {
                 .update();
     }
 
+    private void inheritTaskStateAtFork(
+            String branchId,
+            String conversationId,
+            String sourceBranchId,
+            long sourceEventSequence,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO agent_task_work_state (
+                  task_id, branch_id, state_version, phase,
+                  steps_json, blockers_json, evidence_refs_json,
+                  artifact_refs_json, summary, source_run_id,
+                  source_round_id, created_at
+                )
+                SELECT state.task_id, :branchId, state.state_version,
+                       state.phase, state.steps_json, state.blockers_json,
+                       state.evidence_refs_json, state.artifact_refs_json,
+                       state.summary, state.source_run_id,
+                       state.source_round_id, state.created_at
+                FROM agent_task_work_state state
+                JOIN agent_run run ON run.run_id = state.source_run_id
+                JOIN conversation_event event
+                  ON event.turn_id = run.turn_id
+                 AND event.event_type = 'turn.accepted'
+                WHERE state.branch_id = :sourceBranchId
+                  AND event.sequence < :sourceEventSequence
+                  AND state.state_version = (
+                    SELECT MAX(candidate.state_version)
+                    FROM agent_task_work_state candidate
+                    JOIN agent_run candidate_run
+                      ON candidate_run.run_id = candidate.source_run_id
+                    JOIN conversation_event candidate_event
+                      ON candidate_event.turn_id = candidate_run.turn_id
+                     AND candidate_event.event_type = 'turn.accepted'
+                    WHERE candidate.task_id = state.task_id
+                      AND candidate.branch_id = :sourceBranchId
+                      AND candidate_event.sequence < :sourceEventSequence
+                  )
+                """)
+                .param("branchId", branchId)
+                .param("sourceBranchId", sourceBranchId)
+                .param("sourceEventSequence", sourceEventSequence)
+                .update();
+        jdbc.sql("""
+                INSERT INTO agent_task_head (
+                  task_id, conversation_id, branch_id,
+                  definition_version, state_version, phase, version,
+                  created_at, updated_at
+                )
+                SELECT copied.task_id, :conversationId, :branchId,
+                       source_head.definition_version,
+                       copied.state_version, copied.phase, 1, :now, :now
+                FROM agent_task_work_state copied
+                JOIN agent_task_head source_head
+                  ON source_head.task_id = copied.task_id
+                 AND source_head.branch_id = :sourceBranchId
+                WHERE copied.branch_id = :branchId
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("sourceBranchId", sourceBranchId)
+                .param("now", now.toString())
+                .update();
+    }
+
     public boolean conversationExists(String conversationId) {
         return jdbc.sql("""
                 SELECT COUNT(*) FROM iris_conversation
@@ -193,6 +258,13 @@ public class ConversationRepository {
                 .param("frameId", baseContextFrameId)
                 .param("now", now.toString())
                 .update();
+        inheritTaskStateAtFork(
+                branchId,
+                conversationId,
+                sourceBranchId,
+                sourceEventSequence,
+                now
+        );
     }
 
     public ContextFrame eligibleContextFrame(

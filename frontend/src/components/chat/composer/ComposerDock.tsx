@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { GitBranch, Paperclip, Send, Square, X } from 'lucide-react'
 import type {
   PendingSupplement,
@@ -18,10 +18,16 @@ interface ComposerDockProps {
   onPermissionModeChange: (value: PermissionMode) => void
   pendingSupplements: PendingSupplement[]
   onCancelSupplement: (clientRequestId: string) => void
-  onSendTurn: (text: string) => void | Promise<void>
-  onSendSupplement: (text: string) => void | Promise<void>
+  attachments?: Array<{
+    artifactRef: string
+    name: string
+    byteCount: number
+  }>
+  onRemoveAttachment?: (artifactRef: string) => void
+  onSendTurn: (text: string, attachmentRefs: string[]) => void | Promise<void>
+  onSendSupplement: (text: string, attachmentRefs: string[]) => void | Promise<void>
   onStop: () => void | Promise<void>
-  onAttachmentRequest: () => void
+  onAttachmentRequest: (files: File[]) => void | Promise<void>
   replacementMode?: {
     onCancel: () => void
   }
@@ -36,6 +42,8 @@ export function ComposerDock({
   onPermissionModeChange,
   pendingSupplements,
   onCancelSupplement,
+  attachments = [],
+  onRemoveAttachment,
   onSendTurn,
   onSendSupplement,
   onStop,
@@ -43,6 +51,7 @@ export function ComposerDock({
   replacementMode,
 }: ComposerDockProps) {
   const [submitting, setSubmitting] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
   const canSubmit = value.trim().length > 0 && !submitting
 
   const submit = async () => {
@@ -51,8 +60,9 @@ export function ComposerDock({
 
     setSubmitting(true)
     try {
-      if (activeTurn) await onSendSupplement(text)
-      else await onSendTurn(text)
+      const refs = attachments.map((attachment) => attachment.artifactRef)
+      if (activeTurn) await onSendSupplement(text, refs)
+      else await onSendTurn(text, refs)
       onValueChange('')
     } finally {
       setSubmitting(false)
@@ -88,6 +98,27 @@ export function ComposerDock({
           items={pendingSupplements}
           onCancel={onCancelSupplement}
         />
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.artifactRef}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 py-1 text-caption text-ink"
+              >
+                <Paperclip aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+                <span className="truncate">{attachment.name}</span>
+                <button
+                  type="button"
+                  className="rounded-sm text-ink-muted hover:text-ink"
+                  aria-label={`移除附件 ${attachment.name}`}
+                  onClick={() => onRemoveAttachment?.(attachment.artifactRef)}
+                >
+                  <X aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="rounded-xl border border-border/80 bg-surface-raised/96 p-2 shadow-raised backdrop-blur-xl transition-[border-color,box-shadow] duration-fast focus-within:border-border-strong focus-within:shadow-floating motion-reduce:transition-none">
           <div className="flex items-end gap-2 px-2 pt-1">
@@ -112,11 +143,22 @@ export function ComposerDock({
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              aria-label="添加附件（尚未接入）"
-              onClick={onAttachmentRequest}
+              aria-label="添加附件"
+              onClick={() => fileInput.current?.click()}
             >
               <Paperclip aria-hidden="true" className="h-4 w-4" />
             </Button>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? [])
+                event.target.value = ''
+                if (files.length > 0) void onAttachmentRequest(files)
+              }}
+            />
             <PermissionModeSelect
               value={permissionMode}
               onChange={onPermissionModeChange}
