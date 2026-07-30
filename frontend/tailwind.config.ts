@@ -123,6 +123,16 @@ export default {
           '0%, 100%': { opacity: '.45', transform: 'scale(.9)' },
           '50%': { opacity: '1', transform: 'scale(1)' },
         },
+        // 瀑布流节点出生：内容淡入微升，来路线段从上方生长（ WonWork 水流感
+        // 的 Iris 克制版——时长压进 deliberate token，只播一次，both 填充防闪）。
+        'node-enter': {
+          from: { opacity: '0', transform: 'translateY(6px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        'seg-grow': {
+          from: { transform: 'scaleY(0)' },
+          to: { transform: 'scaleY(1)' },
+        },
         'reveal-cursor': {
           '0%, 100%': { opacity: '.28' },
           '50%': { opacity: '.72' },
@@ -137,6 +147,8 @@ export default {
         'dialog-in': 'dialog-in var(--motion-deliberate) var(--ease-enter)',
         'dialog-out': 'dialog-out var(--motion-normal) var(--ease-exit)',
         'soft-pulse': 'soft-pulse 1.8s var(--ease-standard) infinite',
+        'node-enter': 'node-enter var(--motion-deliberate) var(--ease-enter) both',
+        'seg-grow': 'seg-grow var(--motion-deliberate) var(--ease-enter) both',
         'reveal-cursor': 'reveal-cursor var(--motion-cursor-cycle) var(--ease-standard) infinite',
         spin: 'spin .8s linear infinite',
       },

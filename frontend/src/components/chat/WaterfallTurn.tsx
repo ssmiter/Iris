@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { AlertTriangle, Clock3, GitBranch } from 'lucide-react'
 import type {
   AttentionAction,
@@ -35,6 +36,13 @@ const phaseLabel: Record<TurnView['phase'], string> = {
   stopped: '已停止',
   failed: '失败',
 }
+
+/**
+ * 已播过入场动画的 Turn（会话级，不持久化）。
+ * 只有新到达的 Turn（queued/active）播淡入微升；历史水合的 Turn 全部 settled，
+ * 不会入册也不会播；Virtuoso 回收重建靠此集合防重放。
+ */
+const bornTurnIds = new Set<string>()
 
 function visiblePhaseLabel(turn: TurnView, run?: RunView) {
   if (turn.phase === 'active' && turn.stop) {
@@ -80,9 +88,25 @@ export function WaterfallTurn({
   const closureNeedsAttention =
     rootRun?.closure?.executionStatus === 'uncertain' ||
     rootRun?.closure?.taskOutcome === 'blocked'
+  // 入场动画只在挂载瞬间判定一次：新 Turn（queued/active）才播。
+  const [born] = useState(() => {
+    const fresh = turn.phase === 'queued' || turn.phase === 'active'
+    if (!fresh || bornTurnIds.has(turn.turnId)) return false
+    bornTurnIds.add(turn.turnId)
+    if (bornTurnIds.size > 2048) {
+      const oldest = bornTurnIds.values().next().value
+      if (oldest) bornTurnIds.delete(oldest)
+    }
+    return true
+  })
 
   return (
-    <article className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)] py-6">
+    <article
+      className={cn(
+        'mx-auto w-full max-w-conversation px-[var(--conversation-pad)] py-6',
+        born && 'animate-node-enter motion-reduce:animate-none',
+      )}
+    >
       <div className="flex justify-end">
         <div className="group max-w-[92%] sm:max-w-[min(86%,42rem)]">
           <UserAttachmentList

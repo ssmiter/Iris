@@ -89,12 +89,15 @@ export function RoundSection({
           >
             <div className="overflow-hidden">
               <div className="pb-1 pl-1">
-                {processNodes.map((node) => (
+                {processNodes.map((node, index) => (
                   <FlowNode
                     key={node.nodeId}
                     node={node}
                     expanded={expandedNodeIds.has(node.nodeId)}
                     onToggle={() => onToggleNode(node.nodeId)}
+                    isFirst={index === 0}
+                    isLast={index === processNodes.length - 1}
+                    chainLive={round.phase === 'active' && processExpanded}
                     onAttentionAction={onAttentionAction}
                   />
                 ))}

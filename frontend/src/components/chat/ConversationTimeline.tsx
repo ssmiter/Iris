@@ -173,17 +173,21 @@ export function ConversationTimeline({
       />
 
       {!atBottom && (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-surface-raised shadow-floating"
-          onClick={jumpToLatest}
-        >
-          <ArrowDown aria-hidden="true" className="h-4 w-4" />
-          {unseenTurnCount > 0
-            ? `${unseenTurnCount} 个新轮次 · 回到最新`
-            : '回到最新'}
-        </Button>
+        // 居中 transform 放外层、入场动画放内层：keyframes 会整体覆盖 transform，
+        // 合写在同一元素上会导致动画期间横向居中失效并跳变。
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="animate-node-enter rounded-full bg-surface-raised shadow-floating motion-reduce:animate-none"
+            onClick={jumpToLatest}
+          >
+            <ArrowDown aria-hidden="true" className="h-4 w-4" />
+            {unseenTurnCount > 0
+              ? `${unseenTurnCount} 个新轮次 · 回到最新`
+              : '回到最新'}
+          </Button>
+        </div>
       )}
     </div>
   )

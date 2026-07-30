@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   AlertTriangle,
   Brain,
@@ -24,11 +25,24 @@ interface FlowNodeProps {
   node: RenderNode
   expanded: boolean
   onToggle: () => void
+  /** 链上第一个节点：来路线段收成短桩，不再向上伸进虚空 */
+  isFirst: boolean
+  /** 链上最后一个节点：去路线段渐隐到透明，给链条一个收尾 */
+  isLast: boolean
+  /** 回合活跃且过程区可见：此时挂载的新节点播出生动画（线段生长+淡入微升） */
+  chainLive: boolean
   onAttentionAction?: (
     node: AttentionNode,
     action: AttentionAction,
   ) => void
 }
+
+/**
+ * 已播过出生动画的节点（会话级，不持久化）。
+ * Virtuoso 会回收/重建 DOM，靠这个集合防止回滚再滚回时动画重放；
+ * 历史水合时回合已 settled（chainLive=false），根本不会入册。
+ */
+const bornNodeIds = new Set<string>()
 
 const nodeIcon = {
   thinking: Brain,
@@ -189,23 +203,54 @@ export function FlowNode({
   node,
   expanded,
   onToggle,
+  isFirst,
+  isLast,
+  chainLive,
   onAttentionAction,
 }: FlowNodeProps) {
   const Icon = nodeIcon[node.type]
   const active = isActive(node)
   const failed = isFailed(node)
+  // 水流语义：执行到达过本节点，则来路/去路线段染色（queued 是唯一"未到达"态）。
+  // 已到达的连续染色在活跃节点的呼吸点处收束，形成"水流前沿"。
+  const reached = node.status !== 'queued'
+  // 出生动画只在挂载瞬间判定一次：回合活跃 + 过程区可见 + 此前未播过。
+  // 折叠挂载（用户尚未展开）不播也不入册，展开靠容器自身的 grid-rows 展开动画。
+  const [born] = useState(() => {
+    if (!chainLive || bornNodeIds.has(node.nodeId)) return false
+    bornNodeIds.add(node.nodeId)
+    if (bornNodeIds.size > 4096) {
+      const oldest = bornNodeIds.values().next().value
+      if (oldest) bornNodeIds.delete(oldest)
+    }
+    return true
+  })
   const bodyId = `flow-node-body-${node.nodeId}`
 
   return (
     <div className="relative grid grid-cols-[20px_minmax(0,1fr)] gap-2">
       <div className="flex flex-col items-center" aria-hidden="true">
-        <span className="w-px flex-1 bg-border" />
+        <span
+          className={cn(
+            'w-px',
+            isFirst ? 'h-2 flex-none' : 'flex-1',
+            reached
+              ? failed
+                ? 'bg-danger/20'
+                : 'bg-primary/15'
+              : 'bg-border',
+            born && !isFirst &&
+              'origin-top animate-seg-grow motion-reduce:animate-none',
+          )}
+        />
         <span
           className={cn(
             'flex h-5 w-5 items-center justify-center rounded-full border bg-surface',
             active && 'border-primary text-primary',
             failed && 'border-danger text-danger',
-            !active && !failed && 'border-border-strong text-ink-muted',
+            !active && !failed && reached && 'border-primary/40 text-primary',
+            !active && !failed && !reached &&
+              'border-border-strong text-ink-muted',
           )}
         >
           {active ? (
@@ -216,10 +261,28 @@ export function FlowNode({
             <Check className="h-3 w-3" />
           )}
         </span>
-        <span className="w-px flex-1 bg-border" />
+        <span
+          className={cn(
+            'w-px flex-1',
+            isLast
+              ? reached
+                ? 'bg-gradient-to-b from-primary/15 to-transparent'
+                : 'bg-gradient-to-b from-border to-transparent'
+              : reached
+                ? failed
+                  ? 'bg-danger/20'
+                  : 'bg-primary/15'
+                : 'bg-border',
+          )}
+        />
       </div>
 
-      <div className="min-w-0 py-1">
+      <div
+        className={cn(
+          'min-w-0 py-1',
+          born && 'animate-node-enter motion-reduce:animate-none',
+        )}
+      >
         <button
           type="button"
           className={cn(
