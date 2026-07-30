@@ -159,11 +159,13 @@ observed time / local time zone / host platform
 active capability schemas
 omitted capability candidates
 recent tool calls / failures / outcome unknown
-maximum identical-input calls and latest error code
+latest phase / latest error code / same-input same-failure count
 ```
 
 最近工具活动按最后执行时间有界选择，不把整个 Catalog 统计塞入上下文。它回答“这一轮
 执行已经走了多远、哪条路径正在重复碰壁、还剩多少客观预算”，不保存任务语义，也不由模型维护。
+累计调用、失败和结果未知数量只是历史水位；路径纠偏只能读取全局最近活动的最新终态。
+旧失败之后已经成功，或相同输入曾经成功调用多次，都不能被投影成“当前仍在重复失败”。
 Task Work State 记录目标推进；Runtime Pulse 记录执行水位。两者分开可以避免模型为了
 更新计数反复改写账本，也避免把动态计数放进稳定 System Prompt 破坏前缀缓存。Pulse
 固定在该 Model Attempt snapshot 中；它提供节奏感，但不把预算耗尽机械等同于任务完成。

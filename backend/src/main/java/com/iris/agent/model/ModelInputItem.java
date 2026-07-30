@@ -84,7 +84,8 @@ public sealed interface ModelInputItem {
             int callCount,
             int failedCount,
             int outcomeUnknownCount,
-            int maxIdenticalInputCount,
+            String latestPhase,
+            int latestSameFailureCount,
             String latestErrorCode
     ) {
     }

@@ -173,7 +173,8 @@ public class ModelContextAssembler {
                                 activity.callCount(),
                                 activity.failedCount(),
                                 activity.outcomeUnknownCount(),
-                                activity.maxIdenticalInputCount(),
+                                activity.latestPhase(),
+                                activity.latestSameFailureCount(),
                                 activity.latestErrorCode()
                         ))
                         .toList()

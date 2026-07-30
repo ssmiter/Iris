@@ -183,8 +183,10 @@ public class ProviderMessageCompiler {
                     .append(activity.failedCount())
                     .append("\" outcome_unknown=\"")
                     .append(activity.outcomeUnknownCount())
-                    .append("\" max_identical_input_calls=\"")
-                    .append(activity.maxIdenticalInputCount());
+                    .append("\" latest_phase=\"")
+                    .append(xmlAttribute(activity.latestPhase()))
+                    .append("\" latest_same_failure_count=\"")
+                    .append(activity.latestSameFailureCount());
             if (activity.latestErrorCode() != null) {
                 text.append("\" latest_error_code=\"")
                         .append(xmlAttribute(
@@ -204,12 +206,13 @@ public class ProviderMessageCompiler {
         boolean budgetTight = pulse.toolCallsUsed() * 4
                 >= pulse.toolCallsLimit() * 3
                 || pulse.elapsedMs() * 4 >= pulse.timeLimitMs() * 3;
-        boolean repeatedFailure = pulse.recentToolActivity().stream()
-                .anyMatch(activity ->
-                        activity.maxIdenticalInputCount() >= 2
-                                && (activity.failedCount() > 0
-                                || activity.outcomeUnknownCount() > 0)
-                );
+        ModelInputItem.ToolActivity latestActivity =
+                pulse.recentToolActivity().isEmpty()
+                        ? null
+                        : pulse.recentToolActivity().getFirst();
+        boolean repeatedFailure = latestActivity != null
+                && "failed".equals(latestActivity.latestPhase())
+                && latestActivity.latestSameFailureCount() >= 2;
         boolean unknownOutcome = pulse.recentToolActivity().stream()
                 .anyMatch(activity ->
                         activity.outcomeUnknownCount() > 0
@@ -219,11 +222,21 @@ public class ProviderMessageCompiler {
         }
         text.append("\n  <runtime_guidance>");
         if (repeatedFailure) {
+            text.append("\n    Tool ")
+                    .append(xmlAttribute(latestActivity.toolName()))
+                    .append(" ended with the same input and failure ")
+                    .append(latestActivity.latestSameFailureCount())
+                    .append(" times");
+            if (latestActivity.latestErrorCode() != null) {
+                text.append(" (")
+                        .append(xmlAttribute(
+                                latestActivity.latestErrorCode()
+                        ))
+                        .append(")");
+            }
             text.append(
-                    "\n    Repeating the same failed input is not progress; "
-            ).append(
-                    "re-observe the state or choose a materially different path."
-            );
+                    "; this is not progress. Re-observe the state or choose "
+            ).append("a materially different path.");
         }
         if (unknownOutcome) {
             text.append(
