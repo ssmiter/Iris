@@ -87,19 +87,33 @@ public class ModelContextAssembler {
         }
 
         List<ModelRequest.ToolDefinition> definitions = new ArrayList<>();
+        List<ModelInputItem.CapabilityRuntimeLimit> capabilityLimits =
+                new ArrayList<>();
         for (String name : uniqueNames) {
             ToolBinding binding = tools.find(name).orElseThrow(
                     () -> new IllegalArgumentException(
                             "Capability lease references an unknown tool: " + name
                     )
             );
-            availability.requireExecutable(binding);
+            var currentAvailability =
+                    availability.requireExecutable(binding);
             definitions.add(new ModelRequest.ToolDefinition(
                     binding.manifest().name(),
                     binding.manifest().description(),
                     binding.manifest().inputSchema(),
                     binding.manifestHash()
             ));
+            if (currentAvailability.status()
+                    == com.iris.tools.core.CapabilityAvailability.Status.DEGRADED) {
+                capabilityLimits.add(
+                        new ModelInputItem.CapabilityRuntimeLimit(
+                                binding.manifest().name(),
+                                currentAvailability.value(),
+                                currentAvailability.reason(),
+                                currentAvailability.checkedAt().toString()
+                        )
+                );
+            }
         }
         int estimatedCapabilityTokens = tokens.estimate(definitions);
         if (estimatedCapabilityTokens > seed.maxCapabilityTokens()) {
@@ -137,6 +151,11 @@ public class ModelContextAssembler {
                     .put("contentHash", artifact.contentHash()));
             allItems.add(new ModelInputItem.ArtifactContextIndex(
                     index.toString()
+            ));
+        }
+        if (!capabilityLimits.isEmpty()) {
+            allItems.add(new ModelInputItem.CapabilityRuntimeState(
+                    capabilityLimits
             ));
         }
         taskLedger.activeForContext(

@@ -130,6 +130,7 @@ event 水位线复制当时可见的状态头；两个分支随后独立推进�
 - active Task work state：目标、步骤、阻塞项和 Evidence/Artifact 引用；
 - explicitly published Artifact context index：只含冻结成果的元数据与 `artifact://`
   引用，不含正文；
+- Capability runtime state：当前 active lease 中降级可用能力的限制原因与检查时间；
 - Runtime pulse：当前 Run 的轮次、工具调用和时间预算水位。
 
 它们都位于动态区，不污染稳定 System Prompt；Window Planner 把它们视为当前决策所需

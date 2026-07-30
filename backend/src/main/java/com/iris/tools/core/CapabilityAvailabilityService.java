@@ -57,7 +57,7 @@ public class CapabilityAvailabilityService {
         );
     }
 
-    public void requireExecutable(ToolBinding binding) {
+    public CapabilityAvailability requireExecutable(ToolBinding binding) {
         CapabilityAvailability availability = current(binding);
         if (!availability.executable()) {
             throw new ToolRuntimeException(
@@ -66,6 +66,7 @@ public class CapabilityAvailabilityService {
                             + " 当前不可用：" + availability.reason()
             );
         }
+        return availability;
     }
 
     private int severity(Status status) {

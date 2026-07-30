@@ -326,7 +326,11 @@ Definition status 只有 `active / deprecated / retired`；注册校验是一次
 Availability 由当前 Application/Environment probe 产生，并贯穿 Card、Definition、
 active lease 与 Runtime 提交前核对。`unavailable` Definition 仍可发现和读取，以便模型
 解释缺少的连接、进程或会话，但不能进入可调用 lease；`degraded` 可以进入 lease，同时
-必须把限制原因暴露给模型。Registry 中存在 Java class 只证明 executor binding 已注册，
+必须把限制原因暴露给模型。每个 Model Attempt 根据已经准入的 schema lease 重新读取
+availability；其中 `degraded` 项作为有界 `Capability Runtime State` 放在上下文动态区，
+而不是改写不可变 Manifest 或稳定 System Prompt。这样通过搜索直接激活、上一 Run
+暖启动或环境状态刚发生变化时，模型都能看到当前限制，不依赖较早的 Definition
+observation 仍留在窗口内。Registry 中存在 Java class 只证明 executor binding 已注册，
 不等于它依赖的数据库连接、浏览器 daemon 或编程环境当前可用。
 
 ### 系统提示中的元认知注入

@@ -110,6 +110,9 @@ public class ModelContextWindowPlanner {
                     ModelInputItem.ArtifactContextIndex.class::isInstance
             )
                     || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.CapabilityRuntimeState.class::isInstance
+            )
+                    || groups.get(index).items().stream().anyMatch(
                     ModelInputItem.RuntimePulse.class::isInstance
             )
                     || containsRequiredUser(

@@ -56,6 +56,26 @@ public sealed interface ModelInputItem {
     }
 
     /**
+     * Current limitations of executable but degraded capabilities in the
+     * active schema lease. The immutable Tool Definition remains unchanged.
+     */
+    record CapabilityRuntimeState(
+            java.util.List<CapabilityRuntimeLimit> limitations
+    ) implements ModelInputItem {
+        public CapabilityRuntimeState {
+            limitations = java.util.List.copyOf(limitations);
+        }
+    }
+
+    record CapabilityRuntimeLimit(
+            String toolName,
+            String status,
+            String reason,
+            String checkedAt
+    ) {
+    }
+
+    /**
      * Code-maintained execution waterline for the current model attempt.
      */
     record RuntimePulse(
