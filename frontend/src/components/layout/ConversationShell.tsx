@@ -54,7 +54,7 @@ export function ConversationShell({
   }, [theme])
 
   return (
-    <div className="flex h-screen min-h-[32rem] overflow-hidden bg-canvas text-ink">
+    <div className="flex h-dvh min-h-[32rem] overflow-hidden bg-canvas text-ink">
       <DesktopConversationSidebar />
       <MobileConversationSidebar />
 

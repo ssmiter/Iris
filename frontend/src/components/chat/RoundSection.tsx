@@ -1,3 +1,4 @@
+import { useLayoutEffect, useMemo } from 'react'
 import type {
   AttentionAction,
   AttentionNode,
@@ -14,8 +15,9 @@ interface RoundSectionProps {
   nodesById: Record<string, RenderNode>
   processExpanded: boolean
   expandedNodeIds: ReadonlySet<string>
-  onToggleProcess: () => void
+  onToggleProcess: (nodeIds: string[]) => void
   onToggleNode: (nodeId: string) => void
+  onRevealNewNodes: (nodeIds: string[]) => void
   onAttentionAction?: (
     node: AttentionNode,
     action: AttentionAction,
@@ -29,14 +31,23 @@ export function RoundSection({
   expandedNodeIds,
   onToggleProcess,
   onToggleNode,
+  onRevealNewNodes,
   onAttentionAction,
 }: RoundSectionProps) {
-  const processNodes = round.processNodeIds
-    .map((nodeId) => nodesById[nodeId])
-    .filter(
-      (node): node is RenderNode =>
-        Boolean(node) && node?.type !== 'supplement',
-    )
+  const processNodes = useMemo(
+    () => round.processNodeIds
+      .map((nodeId) => nodesById[nodeId])
+      .filter(
+        (node): node is RenderNode =>
+          Boolean(node) && node?.type !== 'supplement',
+      ),
+    [nodesById, round.processNodeIds],
+  )
+  const processNodeIds = useMemo(
+    () => processNodes.map((node) => node.nodeId),
+    [processNodes],
+  )
+  const processNodeKey = processNodeIds.join('\u001f')
   const supplementNodes = round.processNodeIds
     .map((nodeId) => nodesById[nodeId])
     .filter(
@@ -59,6 +70,10 @@ export function RoundSection({
   ).length
   const processId = `round-process-${round.roundId}`
 
+  useLayoutEffect(() => {
+    if (processExpanded) onRevealNewNodes(processNodeIds)
+  }, [onRevealNewNodes, processExpanded, processNodeKey])
+
   return (
     <section
       className={cn(
@@ -80,7 +95,7 @@ export function RoundSection({
           <div
             id={processId}
             className={cn(
-              'grid transition-[grid-template-rows,opacity] duration-deliberate ease-standard',
+              'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
               processExpanded
                 ? 'grid-rows-[1fr] opacity-100'
                 : 'grid-rows-[0fr] opacity-0',
@@ -109,7 +124,7 @@ export function RoundSection({
             round={round}
             expanded={processExpanded}
             pendingCount={pendingCount}
-            onToggle={onToggleProcess}
+            onToggle={() => onToggleProcess(processNodeIds)}
           />
         </>
       )}

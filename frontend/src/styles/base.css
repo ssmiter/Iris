@@ -52,7 +52,9 @@
   }
 
   #root {
-    min-height: 100vh;
+    height: 100dvh;
+    min-height: 32rem;
+    overflow: hidden;
   }
 }
 

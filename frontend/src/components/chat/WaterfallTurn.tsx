@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { AlertTriangle, Clock3, GitBranch } from 'lucide-react'
 import type {
   AttentionAction,
@@ -20,8 +20,9 @@ interface WaterfallTurnProps {
   nodesById: Record<string, RenderNode>
   expandedRoundIds: ReadonlySet<string>
   expandedNodeIds: ReadonlySet<string>
-  onToggleRound: (roundId: string) => void
+  onToggleRound: (roundId: string, nodeIds: string[]) => void
   onToggleNode: (nodeId: string) => void
+  onRevealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
   onAttentionAction?: (
     node: AttentionNode,
     action: AttentionAction,
@@ -71,7 +72,7 @@ function formatElapsed(turn: TurnView) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-export function WaterfallTurn({
+function WaterfallTurnView({
   turn,
   runsById,
   roundsById,
@@ -80,6 +81,7 @@ export function WaterfallTurn({
   expandedNodeIds,
   onToggleRound,
   onToggleNode,
+  onRevealNewRoundNodes,
   onAttentionAction,
   onReplaceRequest,
 }: WaterfallTurnProps) {
@@ -150,6 +152,7 @@ export function WaterfallTurn({
             expandedNodeIds={expandedNodeIds}
             onToggleRound={onToggleRound}
             onToggleNode={onToggleNode}
+            onRevealNewRoundNodes={onRevealNewRoundNodes}
             onAttentionAction={onAttentionAction}
           />
         ) : (
@@ -219,3 +222,73 @@ export function WaterfallTurn({
     </article>
   )
 }
+
+function answerNodeForRound(
+  round: RoundView,
+  nodesById: Record<string, RenderNode>,
+) {
+  if (round.answerNodeId) return nodesById[round.answerNodeId]
+  return Object.values(nodesById).find(
+    (node) =>
+      node.type === 'answer'
+      && node.roundId === round.roundId,
+  )
+}
+
+function sameTurnProjection(
+  previous: WaterfallTurnProps,
+  next: WaterfallTurnProps,
+) {
+  if (
+    previous.turn !== next.turn
+    || previous.onToggleRound !== next.onToggleRound
+    || previous.onToggleNode !== next.onToggleNode
+    || previous.onRevealNewRoundNodes !== next.onRevealNewRoundNodes
+    || previous.onAttentionAction !== next.onAttentionAction
+    || previous.onReplaceRequest !== next.onReplaceRequest
+  ) {
+    return false
+  }
+
+  const previousRun = previous.runsById[previous.turn.rootRunId]
+  const nextRun = next.runsById[next.turn.rootRunId]
+  if (previousRun !== nextRun) return false
+  if (!previousRun || !nextRun) return true
+
+  for (const roundId of nextRun.roundIds) {
+    const previousRound = previous.roundsById[roundId]
+    const nextRound = next.roundsById[roundId]
+    if (
+      previousRound !== nextRound
+      || previous.expandedRoundIds.has(roundId)
+        !== next.expandedRoundIds.has(roundId)
+    ) {
+      return false
+    }
+    if (!previousRound || !nextRound) continue
+
+    for (const nodeId of nextRound.processNodeIds) {
+      if (
+        previous.nodesById[nodeId] !== next.nodesById[nodeId]
+        || previous.expandedNodeIds.has(nodeId)
+          !== next.expandedNodeIds.has(nodeId)
+      ) {
+        return false
+      }
+    }
+
+    if (
+      answerNodeForRound(previousRound, previous.nodesById)
+      !== answerNodeForRound(nextRound, next.nodesById)
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export const WaterfallTurn = memo(
+  WaterfallTurnView,
+  sameTurnProjection,
+)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import {
   AlertTriangle,
   Brain,
@@ -199,7 +199,7 @@ function NodeBody({
   }
 }
 
-export function FlowNode({
+export const FlowNode = memo(function FlowNode({
   node,
   expanded,
   onToggle,
@@ -287,7 +287,8 @@ export function FlowNode({
           type="button"
           className={cn(
             'flex min-h-9 w-full items-center gap-2 rounded-sm px-2 text-left',
-            'transition-colors duration-fast hover:bg-surface-muted',
+            'transition-[color,background-color,transform,opacity] duration-fast ease-standard',
+            'hover:bg-surface-muted active:scale-[0.995] active:bg-surface-muted active:opacity-80',
             'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
           )}
           aria-expanded={expanded}
@@ -317,7 +318,7 @@ export function FlowNode({
           <ChevronRight
             aria-hidden="true"
             className={cn(
-              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-normal',
+              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
               expanded && 'rotate-90',
               'motion-reduce:transition-none',
             )}
@@ -326,7 +327,7 @@ export function FlowNode({
         <div
           id={bodyId}
           className={cn(
-            'grid transition-[grid-template-rows,opacity] duration-normal ease-standard',
+            'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
             expanded
               ? 'grid-rows-[1fr] opacity-100'
               : 'grid-rows-[0fr] opacity-0',
@@ -346,4 +347,11 @@ export function FlowNode({
       </div>
     </div>
   )
-}
+}, (previous, next) => (
+  previous.node === next.node
+  && previous.expanded === next.expanded
+  && previous.isFirst === next.isFirst
+  && previous.isLast === next.isLast
+  && previous.chainLive === next.chainLive
+  && previous.onAttentionAction === next.onAttentionAction
+))

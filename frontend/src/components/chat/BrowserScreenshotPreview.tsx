@@ -22,14 +22,14 @@ export function BrowserScreenshotPreview({
 
   return (
     <figure className="overflow-hidden rounded-sm border border-border bg-surface-muted">
-      <div className="relative flex min-h-48 items-center justify-center">
+      <div className="relative flex aspect-video items-center justify-center">
         {state === 'loading' && (
           <span className="absolute text-caption text-ink-muted">
             正在读取视觉证据…
           </span>
         )}
         {state === 'failed' ? (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-ink-muted">
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
             <ImageOff aria-hidden="true" className="h-5 w-5" />
             <span className="text-caption">截图暂时无法读取</span>
           </div>
@@ -42,7 +42,7 @@ export function BrowserScreenshotPreview({
             onLoad={() => setState('ready')}
             onError={() => setState('failed')}
             className={cn(
-              'max-h-[32rem] w-full object-contain transition-opacity duration-normal',
+              'h-full w-full object-contain transition-opacity duration-normal',
               state === 'ready' ? 'opacity-100' : 'opacity-0',
               'motion-reduce:transition-none',
             )}

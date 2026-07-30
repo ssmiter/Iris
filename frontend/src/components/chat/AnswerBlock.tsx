@@ -28,7 +28,7 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
       )}
       <div
         className={cn(
-          'prose prose-sm max-w-none text-ink',
+          'answer-prose prose prose-sm max-w-none text-ink',
           'prose-headings:text-ink prose-p:text-ink prose-strong:text-ink',
           'prose-a:text-primary prose-code:text-ink prose-code:before:content-none prose-code:after:content-none',
           'prose-pre:border prose-pre:border-border/70 prose-pre:bg-surface-muted',

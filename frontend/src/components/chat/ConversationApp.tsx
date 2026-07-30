@@ -50,14 +50,25 @@ function summary(view: ConversationView) {
 export function ConversationApp() {
   const chat = useChatStore()
   const conversations = useConversationStore()
-  const viewState = useViewStateStore()
+  const draftsByConversationId = useViewStateStore(
+    (state) => state.draftsByConversationId,
+  )
+  const permissionMode = useViewStateStore(
+    (state) => state.permissionMode,
+  )
+  const theme = useViewStateStore((state) => state.theme)
+  const setDraft = useViewStateStore((state) => state.setDraft)
+  const setPermissionMode = useViewStateStore(
+    (state) => state.setPermissionMode,
+  )
+  const setTheme = useViewStateStore((state) => state.setTheme)
   const currentConversationId = conversations.currentConversationId
   const currentBranchId = conversations.currentBranchId
   const branches = conversations.branches
   const draftKey = currentConversationId
     ? `${currentConversationId}:${currentBranchId ?? ''}`
     : 'new-conversation'
-  const draft = viewState.draftsByConversationId[draftKey] ?? ''
+  const draft = draftsByConversationId[draftKey] ?? ''
   const [replacementTarget, setReplacementTarget] =
     useState<TurnView | null>(null)
   const [pendingAttachments, setPendingAttachments] =
@@ -371,7 +382,7 @@ export function ConversationApp() {
         activeTurnCount: 0,
         version: created.version,
       })
-      viewState.setDraft(`${conversationId}:${branchId}`, draft)
+      setDraft(`${conversationId}:${branchId}`, draft)
       conversations.setCurrentConversation(conversationId, branchId)
     }
     const remaining = Math.max(0, 16 - pendingAttachments.length)
@@ -392,7 +403,7 @@ export function ConversationApp() {
     }
   }
 
-  const handleAttentionAction = async (
+  const handleAttentionAction = useCallback(async (
     node: AttentionNode,
     action: AttentionAction,
   ) => {
@@ -413,16 +424,20 @@ export function ConversationApp() {
         description: (error as Error).message,
       })
     }
-  }
+  }, [])
+  const handleReplaceRequest = useCallback((turn: TurnView) => {
+    setReplacementTarget(turn)
+    setDraft(draftKey, turn.request.text)
+  }, [draftKey, setDraft])
 
   const composer = (
     <ComposerDock
       value={draft}
-      onValueChange={(value) => viewState.setDraft(draftKey, value)}
+      onValueChange={(value) => setDraft(draftKey, value)}
       activeTurn={Boolean(activeTurn)}
       stopRequested={Boolean(activeTurn?.stop)}
-      permissionMode={viewState.permissionMode}
-      onPermissionModeChange={viewState.setPermissionMode}
+      permissionMode={permissionMode}
+      onPermissionModeChange={setPermissionMode}
       pendingSupplements={chat.pendingSupplements}
       attachments={pendingAttachments}
       onRemoveAttachment={(artifactRef) =>
@@ -435,7 +450,7 @@ export function ConversationApp() {
           ? {
               onCancel: () => {
                 setReplacementTarget(null)
-                viewState.setDraft(draftKey, '')
+                setDraft(draftKey, '')
               },
             }
           : undefined
@@ -586,17 +601,15 @@ export function ConversationApp() {
             variant="ghost"
             size="icon"
             aria-label={
-              viewState.theme === 'light'
+              theme === 'light'
                 ? '切换到暗色主题'
                 : '切换到亮色主题'
             }
             onClick={() =>
-              viewState.setTheme(
-                viewState.theme === 'light' ? 'dark' : 'light',
-              )
+              setTheme(theme === 'light' ? 'dark' : 'light')
             }
           >
-            {viewState.theme === 'light' ? (
+            {theme === 'light' ? (
               <Moon aria-hidden="true" className="h-4 w-4" />
             ) : (
               <Sun aria-hidden="true" className="h-4 w-4" />
@@ -608,15 +621,13 @@ export function ConversationApp() {
     >
       {projection.turns.length > 0 ? (
         <ConversationTimeline
+          key={draftKey}
           projection={projection}
           onAttentionAction={handleAttentionAction}
           onReplaceRequest={
             activeTurn
               ? undefined
-              : (turn) => {
-                  setReplacementTarget(turn)
-                  viewState.setDraft(draftKey, turn.request.text)
-                }
+              : handleReplaceRequest
           }
         />
       ) : (

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { ArrowDown } from 'lucide-react'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { Virtuoso } from 'react-virtuoso'
 import type {
   AttentionAction,
   AttentionNode,
@@ -10,6 +10,7 @@ import type {
 import { Button } from '@/components/ui'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { WaterfallTurn } from './WaterfallTurn'
+import { useConversationFollow } from './useConversationFollow'
 
 interface ConversationTimelineProps {
   projection: ConversationProjection
@@ -25,24 +26,27 @@ export function ConversationTimeline({
   onAttentionAction,
   onReplaceRequest,
 }: ConversationTimelineProps) {
-  const virtuosoRef = useRef<VirtuosoHandle>(null)
-  const scrollerRef = useRef<HTMLElement | Window | null>(null)
-  const previousTurnCount = useRef(projection.turns.length)
   const expandedRoundFlags = useViewStateStore(
     (state) => state.expandedRoundIds,
   )
   const expandedNodeFlags = useViewStateStore(
     (state) => state.expandedNodeIds,
   )
-  const atBottom = useViewStateStore((state) => state.atBottom)
-  const followMode = useViewStateStore((state) => state.followMode)
-  const unseenTurnCount = useViewStateStore((state) => state.unseenTurnCount)
-  const setScrollState = useViewStateStore((state) => state.setScrollState)
-  const reviewHistory = useViewStateStore((state) => state.reviewHistory)
-  const addUnseenTurns = useViewStateStore((state) => state.addUnseenTurns)
-  const followLatest = useViewStateStore((state) => state.followLatest)
   const toggleRound = useViewStateStore((state) => state.toggleRound)
   const toggleNode = useViewStateStore((state) => state.toggleNode)
+  const revealNewRoundNodes = useViewStateStore(
+    (state) => state.revealNewRoundNodes,
+  )
+  const {
+    virtuosoRef,
+    setScroller,
+    followMode,
+    unseenTurnCount,
+    handleAtBottomChange,
+    handleListHeightChange,
+    followOutput,
+    jumpToLatest,
+  } = useConversationFollow(projection.turns.length)
   const expandedRoundIds = useMemo(
     () => new Set(Object.keys(expandedRoundFlags)),
     [expandedRoundFlags],
@@ -64,80 +68,21 @@ export function ConversationTimeline({
     return map
   }, [projection.compactBoundaries])
 
-  const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-    setScrollState(isAtBottom)
-  }, [setScrollState])
-
-  const jumpToLatest = useCallback(() => {
-    followLatest()
-    virtuosoRef.current?.scrollToIndex({
-      index: projection.turns.length - 1,
-      align: 'end',
-      behavior: 'smooth',
-    })
-  }, [followLatest, projection.turns.length])
-
-  useEffect(() => {
-    const newTurnCount = projection.turns.length - previousTurnCount.current
-    if (newTurnCount > 0) {
-      addUnseenTurns(newTurnCount)
-    }
-    previousTurnCount.current = projection.turns.length
-  }, [addUnseenTurns, projection.turns.length])
-
-  useEffect(() => {
-    const scroller = scrollerRef.current
-    if (!scroller) return
-
-    let touchStartY: number | null = null
-    const onWheel = (event: Event) => {
-      if ((event as WheelEvent).deltaY < 0) reviewHistory()
-    }
-    const onKeyDown = (event: Event) => {
-      const key = (event as KeyboardEvent).key
-      if (['ArrowUp', 'PageUp', 'Home'].includes(key)) reviewHistory()
-    }
-    const onTouchStart = (event: Event) => {
-      touchStartY = (event as TouchEvent).touches[0]?.clientY ?? null
-    }
-    const onTouchMove = (event: Event) => {
-      const currentY = (event as TouchEvent).touches[0]?.clientY
-      if (
-        touchStartY !== null
-        && currentY !== undefined
-        && currentY > touchStartY + 8
-      ) {
-        reviewHistory()
-      }
-    }
-
-    scroller.addEventListener('wheel', onWheel, { passive: true })
-    scroller.addEventListener('keydown', onKeyDown)
-    scroller.addEventListener('touchstart', onTouchStart, { passive: true })
-    scroller.addEventListener('touchmove', onTouchMove, { passive: true })
-    return () => {
-      scroller.removeEventListener('wheel', onWheel)
-      scroller.removeEventListener('keydown', onKeyDown)
-      scroller.removeEventListener('touchstart', onTouchStart)
-      scroller.removeEventListener('touchmove', onTouchMove)
-    }
-  }, [reviewHistory])
-
   return (
     <div className="relative min-h-0 flex-1">
       <Virtuoso
         ref={virtuosoRef}
-        scrollerRef={(element) => {
-          scrollerRef.current = element
-        }}
-        className="h-full scrollbar-subtle"
+        scrollerRef={setScroller}
+        className="conversation-scroll h-full scrollbar-subtle"
         data={projection.turns}
         computeItemKey={(_, turn) => turn.turnId}
         initialTopMostItemIndex={Math.max(0, projection.turns.length - 1)}
-        increaseViewportBy={{ top: 320, bottom: 200 }}
-        atBottomThreshold={80}
+        increaseViewportBy={{ top: 420, bottom: 280 }}
+        minOverscanItemCount={{ top: 1, bottom: 1 }}
+        atBottomThreshold={48}
         atBottomStateChange={handleAtBottomChange}
-        followOutput={() => followMode === 'following' ? 'auto' : false}
+        totalListHeightChanged={handleListHeightChange}
+        followOutput={followOutput}
         itemContent={(_, turn) => (
           <div>
             {boundariesByTurn.get(turn.turnId)?.map((boundary) => (
@@ -165,21 +110,25 @@ export function ConversationTimeline({
               expandedNodeIds={expandedNodeIds}
               onToggleRound={toggleRound}
               onToggleNode={toggleNode}
+              onRevealNewRoundNodes={revealNewRoundNodes}
               onAttentionAction={onAttentionAction}
               onReplaceRequest={onReplaceRequest}
             />
           </div>
         )}
+        components={{
+          Footer: () => <div className="h-7" aria-hidden="true" />,
+        }}
       />
 
-      {!atBottom && (
+      {followMode === 'reviewing' && (
         // 居中 transform 放外层、入场动画放内层：keyframes 会整体覆盖 transform，
         // 合写在同一元素上会导致动画期间横向居中失效并跳变。
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+        <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
           <Button
             variant="secondary"
             size="sm"
-            className="animate-node-enter rounded-full bg-surface-raised shadow-floating motion-reduce:animate-none"
+            className="pointer-events-auto animate-node-enter rounded-full border-border/80 bg-surface-raised/96 shadow-floating backdrop-blur-md motion-reduce:animate-none"
             onClick={jumpToLatest}
           >
             <ArrowDown aria-hidden="true" className="h-4 w-4" />

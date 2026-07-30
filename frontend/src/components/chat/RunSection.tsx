@@ -15,8 +15,9 @@ interface RunSectionProps {
   nodesById: Record<string, RenderNode>
   expandedRoundIds: ReadonlySet<string>
   expandedNodeIds: ReadonlySet<string>
-  onToggleRound: (roundId: string) => void
+  onToggleRound: (roundId: string, nodeIds: string[]) => void
   onToggleNode: (nodeId: string) => void
+  onRevealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
   onAttentionAction?: (
     node: AttentionNode,
     action: AttentionAction,
@@ -31,6 +32,7 @@ export function RunSection({
   expandedNodeIds,
   onToggleRound,
   onToggleNode,
+  onRevealNewRoundNodes,
   onAttentionAction,
 }: RunSectionProps) {
   const rounds = run.roundIds
@@ -63,8 +65,13 @@ export function RunSection({
           nodesById={nodesById}
           processExpanded={expandedRoundIds.has(round.roundId)}
           expandedNodeIds={expandedNodeIds}
-          onToggleProcess={() => onToggleRound(round.roundId)}
+          onToggleProcess={(nodeIds) =>
+            onToggleRound(round.roundId, nodeIds)
+          }
           onToggleNode={onToggleNode}
+          onRevealNewNodes={(nodeIds) =>
+            onRevealNewRoundNodes(round.roundId, nodeIds)
+          }
           onAttentionAction={onAttentionAction}
         />
       ))}

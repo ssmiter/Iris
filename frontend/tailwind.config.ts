@@ -96,11 +96,13 @@ export default {
         fast: 'var(--motion-fast)',
         normal: 'var(--motion-normal)',
         deliberate: 'var(--motion-deliberate)',
+        fold: 'var(--motion-fold)',
       },
       transitionTimingFunction: {
         standard: 'var(--ease-standard)',
         enter: 'var(--ease-enter)',
         exit: 'var(--ease-exit)',
+        flow: 'var(--ease-flow)',
       },
       keyframes: {
         'overlay-in': {

@@ -8,22 +8,17 @@ type FlagMap = Record<string, true>
 export interface ViewState {
   expandedRoundIds: FlagMap
   expandedNodeIds: FlagMap
-  followMode: 'following' | 'reviewing'
-  atBottom: boolean
-  unseenTurnCount: number
+  initializedNodeIds: FlagMap
   theme: Theme
   permissionMode: PermissionMode
   draftsByConversationId: Record<string, string>
   sidebarOpen: boolean
   mobileSidebarOpen: boolean
 
-  toggleRound: (roundId: string) => void
+  toggleRound: (roundId: string, nodeIds: string[]) => void
   toggleNode: (nodeId: string) => void
   seedExpandedNodes: (nodeIds: string[]) => void
-  setScrollState: (atBottom: boolean) => void
-  reviewHistory: () => void
-  addUnseenTurns: (count: number) => void
-  followLatest: () => void
+  revealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
   setTheme: (theme: Theme) => void
   setPermissionMode: (mode: PermissionMode) => void
   setDraft: (conversationId: string, value: string) => void
@@ -44,22 +39,49 @@ export const useViewStateStore = create<ViewState>()(
     (set) => ({
       expandedRoundIds: {},
       expandedNodeIds: {},
-      followMode: 'following',
-      atBottom: true,
-      unseenTurnCount: 0,
+      initializedNodeIds: {},
       theme: getInitialTheme(),
       permissionMode: 'auto',
       draftsByConversationId: {},
       sidebarOpen: true,
       mobileSidebarOpen: false,
 
-      toggleRound: (roundId) =>
-        set((state) => ({
-          expandedRoundIds: toggleFlag(state.expandedRoundIds, roundId),
-        })),
+      toggleRound: (roundId, nodeIds) =>
+        set((state) => {
+          if (state.expandedRoundIds[roundId]) {
+            return {
+              expandedRoundIds: toggleFlag(
+                state.expandedRoundIds,
+                roundId,
+              ),
+            }
+          }
+
+          const unseenNodeIds = nodeIds.filter(
+            (nodeId) => !state.initializedNodeIds[nodeId],
+          )
+          return {
+            expandedRoundIds: {
+              ...state.expandedRoundIds,
+              [roundId]: true,
+            },
+            expandedNodeIds: unseenNodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              state.expandedNodeIds,
+            ),
+            initializedNodeIds: unseenNodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              state.initializedNodeIds,
+            ),
+          }
+        }),
       toggleNode: (nodeId) =>
         set((state) => ({
           expandedNodeIds: toggleFlag(state.expandedNodeIds, nodeId),
+          initializedNodeIds: {
+            ...state.initializedNodeIds,
+            [nodeId]: true,
+          },
         })),
       seedExpandedNodes: (nodeIds) =>
         set((state) => ({
@@ -67,29 +89,28 @@ export const useViewStateStore = create<ViewState>()(
             (flags, nodeId) => ({ ...flags, [nodeId]: true }),
             state.expandedNodeIds,
           ),
+          initializedNodeIds: nodeIds.reduce<FlagMap>(
+            (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+            state.initializedNodeIds,
+          ),
         })),
-      setScrollState: (atBottom) =>
-        set((state) => ({
-          atBottom,
-          followMode: atBottom ? 'following' : state.followMode,
-          unseenTurnCount: atBottom ? 0 : state.unseenTurnCount,
-        })),
-      reviewHistory: () =>
-        set({
-          followMode: 'reviewing',
-        }),
-      addUnseenTurns: (count) =>
-        set((state) => ({
-          unseenTurnCount:
-            state.followMode === 'reviewing'
-              ? state.unseenTurnCount + Math.max(0, count)
-              : state.unseenTurnCount,
-        })),
-      followLatest: () =>
-        set({
-          atBottom: true,
-          followMode: 'following',
-          unseenTurnCount: 0,
+      revealNewRoundNodes: (roundId, nodeIds) =>
+        set((state) => {
+          if (!state.expandedRoundIds[roundId]) return state
+          const unseenNodeIds = nodeIds.filter(
+            (nodeId) => !state.initializedNodeIds[nodeId],
+          )
+          if (unseenNodeIds.length === 0) return state
+          return {
+            expandedNodeIds: unseenNodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              state.expandedNodeIds,
+            ),
+            initializedNodeIds: unseenNodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              state.initializedNodeIds,
+            ),
+          }
         }),
       setTheme: (theme) => set({ theme }),
       setPermissionMode: (permissionMode) => set({ permissionMode }),

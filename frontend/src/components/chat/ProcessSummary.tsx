@@ -27,7 +27,8 @@ export function ProcessSummary({
       type="button"
       className={cn(
         'group flex min-h-9 w-full items-center gap-1.5 rounded-sm px-2 text-left text-small',
-        'text-ink-muted transition-colors duration-fast hover:bg-surface-muted hover:text-ink-subtle',
+        'text-ink-muted transition-[color,background-color,transform,opacity] duration-fast ease-standard',
+        'hover:bg-surface-muted hover:text-ink-subtle active:scale-[0.995] active:bg-surface-muted active:opacity-80',
         'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
       )}
       aria-expanded={expanded}
@@ -37,7 +38,7 @@ export function ProcessSummary({
       <ChevronRight
         aria-hidden="true"
         className={cn(
-          'h-3.5 w-3.5 shrink-0 transition-transform duration-normal',
+          'h-3.5 w-3.5 shrink-0 transition-transform duration-deliberate ease-flow',
           expanded && 'rotate-90',
           'motion-reduce:transition-none',
         )}
