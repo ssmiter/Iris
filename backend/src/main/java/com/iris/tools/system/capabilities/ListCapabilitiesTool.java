@@ -32,9 +32,9 @@ public class ListCapabilitiesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.list",
-                "4",
+                "5",
                 "list_capabilities",
-                "列出能力目录的直接子目录、语义说明、已实现数量和当前层工具卡片；结构未知时浏览，词面明确时搜索",
+                "结构未知时列出能力目录的直接子目录和当前层能力卡片；具体对象或动作明确时改用 capabilities 搜索",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -113,6 +113,9 @@ public class ListCapabilitiesTool implements Tool {
         properties.putObject("parentPath")
                 .put("type", "string")
                 .put("description", "当前目录");
+        properties.putObject("guidance")
+                .put("type", "string")
+                .put("description", "当前列表的下一步使用边界，区分目录路径与精确能力路径");
         properties.putObject("directories")
                 .put("type", "array")
                 .put(

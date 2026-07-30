@@ -479,22 +479,59 @@ public class ExecutePythonAnalysisTool implements Tool {
     private JsonNode outputSchema() {
         ObjectNode schema = objectSchema();
         ObjectNode properties = (ObjectNode) schema.path("properties");
-        properties.putObject("runtimeMode").put("type", "string");
-        properties.putObject("durationMs").put("type", "integer");
-        properties.putObject("stdout").put("type", "string");
-        properties.putObject("stderr").put("type", "string");
-        properties.putObject("stdoutTruncated").put("type", "boolean");
-        properties.putObject("stderrTruncated").put("type", "boolean");
-        properties.putObject("checkpointId").put("type", "string");
+        properties.putObject("runtimeMode")
+                .put("type", "string")
+                .put(
+                        "description",
+                        "实际承接本次执行的 Python 运行模式"
+                );
+        properties.putObject("durationMs")
+                .put("type", "integer")
+                .put("description", "Python 子进程执行耗时，单位毫秒");
+        properties.putObject("stdout")
+                .put("type", "string")
+                .put("description", "有界的标准输出；不作为产物交付");
+        properties.putObject("stderr")
+                .put("type", "string")
+                .put("description", "有界的标准错误输出，用于诊断脚本失败");
+        properties.putObject("stdoutTruncated")
+                .put("type", "boolean")
+                .put("description", "标准输出是否因捕获预算被截断");
+        properties.putObject("stderrTruncated")
+                .put("type", "boolean")
+                .put("description", "标准错误输出是否因捕获预算被截断");
+        properties.putObject("checkpointId")
+                .put("type", "string")
+                .put(
+                        "description",
+                        "本次写入前建立的工作区检查点集合 ID"
+                );
         ObjectNode outputs = properties.putObject("outputs");
-        outputs.put("type", "array");
+        outputs.put("type", "array")
+                .put(
+                        "description",
+                        "已写入工作区并登记为不可变 Artifact 的声明输出"
+                );
         ObjectNode item = objectSchema();
         ObjectNode itemProperties = (ObjectNode) item.path("properties");
-        itemProperties.putObject("outputName").put("type", "string");
-        itemProperties.putObject("workspacePath").put("type", "string");
-        itemProperties.putObject("bytesWritten").put("type", "integer");
-        itemProperties.putObject("afterHash").put("type", "string");
-        itemProperties.putObject("artifact").put("type", "object");
+        itemProperties.putObject("outputName")
+                .put("type", "string")
+                .put("description", "输入契约中声明的输出名称");
+        itemProperties.putObject("workspacePath")
+                .put("type", "string")
+                .put("description", "工作区围栏内的输出逻辑路径");
+        itemProperties.putObject("bytesWritten")
+                .put("type", "integer")
+                .put("description", "核验后实际写入的字节数");
+        itemProperties.putObject("afterHash")
+                .put("type", "string")
+                .put("description", "写入并核验后的文件内容哈希");
+        itemProperties.putObject("artifact")
+                .put("type", "object")
+                .put(
+                        "description",
+                        "由该输出登记得到的不可变 Artifact 元数据"
+                );
         item.putArray("required")
                 .add("outputName").add("workspacePath")
                 .add("bytesWritten").add("afterHash").add("artifact");

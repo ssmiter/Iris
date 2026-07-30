@@ -171,7 +171,42 @@ export function ConversationApp() {
             ) {
               return
             }
+            const eventTurn =
+              event.type === 'turn.accepted' ||
+              event.type === 'turn.updated'
+                ? (event.envelope.payload.turn as
+                    | TurnView
+                    | undefined)
+                : undefined
+            const previousTurn = eventTurn
+              ? useChatStore.getState().turnsById[eventTurn.turnId]
+              : undefined
             useChatStore.getState().applyEvent(event)
+            if (eventTurn) {
+              const isActive = (turn: TurnView | undefined) =>
+                turn?.phase === 'queued' || turn?.phase === 'active'
+              const activeDelta =
+                Number(isActive(eventTurn)) -
+                Number(isActive(previousTurn))
+              if (activeDelta !== 0) {
+                const conversationState =
+                  useConversationStore.getState()
+                const currentSummary =
+                  conversationState.conversationsById[
+                    currentConversationId
+                  ]
+                if (currentSummary) {
+                  conversationState.upsertConversation({
+                    ...currentSummary,
+                    activeTurnCount: Math.max(
+                      0,
+                      currentSummary.activeTurnCount + activeDelta,
+                    ),
+                    updatedAt: event.envelope.occurredAt,
+                  })
+                }
+              }
+            }
             if (
               event.type.startsWith('compaction.') &&
               event.envelope.payload.compaction
@@ -272,17 +307,19 @@ export function ConversationApp() {
       currentConversationId &&
       currentBranchId
     ) {
-      const version =
-        conversations.conversationsById[currentConversationId]?.version
-      if (version === undefined) {
-        throw new Error('对话版本尚未就绪，请稍后再试。')
-      }
+      // SSE keeps the timeline current without reloading the whole View, so
+      // the summary version captured when the Turn was accepted may be stale
+      // after rounds, tools, artifacts and closure events have completed.
+      const sourceView = await getConversationView(
+        currentConversationId,
+        currentBranchId,
+      )
       const created = await createBranch(
         currentConversationId,
         replacementTarget.branchId,
         replacementTarget.requestMessageId,
         text,
-        version,
+        sourceView.version,
         attachmentRefs,
       )
       setReplacementTarget(null)

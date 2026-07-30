@@ -195,6 +195,9 @@ Frontend 成为第二个浏览器执行器。
 - Backend 持久化 ToolCall、Operation Snapshot、session/page 引用、Observation/Evidence
   内容引用与最终状态，不尝试序列化 CDP handle；
 - availability probe 有短缓存，区分“未配置、daemon 不可达、协议不兼容、浏览器不可用”；
+- `browserRunning` 必须由 CDP liveness 得出，不能只检查内存里是否还保存着 launcher
+  对象；Edge 在最后一个页面关闭后可能自行退出，下一次创建 Session 应清理失效 handle
+  并按同一 profile 自动重启，不能让健康接口长期报告假 ready；
 - daemon 重启后历史仍可读，但旧 Session 明确失效；模型发现 unavailable reason 后可以
   重开会话或请求用户启动浏览器，而不是无限重试；
 - 页面正文、元素和截图受预算约束；完整大对象经 Tool Runtime 落 Managed Object Store，

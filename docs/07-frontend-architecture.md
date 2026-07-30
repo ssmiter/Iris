@@ -185,6 +185,9 @@ Iris 的第一版只需要七类节点：
 | `supplement` | `id, status, text, sourceMessageId, injectedAfterRoundId?` | 保留准确因果位置，但按普通用户追加消息呈现 |
 | `run` | `id, childRunId, kind, status, progressSummary` | 在需要监督时呈现 Pipeline/child Run 的整体进度 |
 
+`ToolNode.summary` 是折叠状态也可见的一句话结论；`evidenceSummary` 只在它提供不同的
+验证信息时存在。投影与组件都应去重，不能把同一句 Runtime message 连续渲染两遍。
+
 所有节点共享：
 
 - 稳定 `id`，刷新、重连和分支切换后不变；
@@ -543,6 +546,9 @@ flowchart TD
 - 加载、切换、重命名等 API 状态。
 
 完整历史仍在后端；store 只是当前工作集缓存。
+会话列表中的 `activeTurnCount` 也是 SSE 投影：`turn.accepted / turn.updated` 必须按
+Turn 进入或离开 `queued / active` 的状态差增量更新，不能等下一次整页加载才纠正。
+该摘要只用于导航反馈，不反向决定 Turn 是否仍在运行。
 
 ### 10.3 `viewStateStore`
 

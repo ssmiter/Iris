@@ -334,7 +334,8 @@ public class ToolProjectionService {
         projection.put("toolCallId", call.toolCallId());
         projection.put("toolExecutionId", result.executionId());
         projection.put("toolName", call.toolName());
-        projection.put("summary", toolSummary(result));
+        String summary = toolSummary(result);
+        projection.put("summary", summary);
         if ("succeeded".equals(result.phase())) {
             projection.put(
                     "resultRef",
@@ -342,7 +343,9 @@ public class ToolProjectionService {
             );
         }
         if (result.message() != null && !result.message().isBlank()) {
-            projection.put("evidenceSummary", result.message());
+            if (!result.message().equals(summary)) {
+                projection.put("evidenceSummary", result.message());
+            }
         }
         enrichToolProjection(
                 projection,

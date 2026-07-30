@@ -40,7 +40,7 @@ const server = http.createServer(async (request, response) => {
         status: 'ok',
         version: '0.2.0',
         protocolVersion: config.protocolVersion,
-        ...runtimeState(),
+        ...await runtimeState(),
       })
     }
 
@@ -150,6 +150,11 @@ const server = http.createServer(async (request, response) => {
       },
     })
   } catch (error) {
+    console.error(
+      `[iris-webbridge] ${request.method} ${request.url || '/'} failed:`,
+      error?.code || error?.name || 'error',
+      error instanceof Error ? error.message : 'unknown error',
+    )
     return json(response, error.statusCode || 500, {
       error: {
         code: error.code || 'webbridge_internal_error',

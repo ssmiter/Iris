@@ -128,6 +128,8 @@ public class CapabilityService {
                 .toList();
         return new CapabilityListing(
                 parent,
+                "具体对象或动作已明确时停止逐层浏览，改用 search_files(namespace=capabilities)；"
+                        + "directories[].path 只能继续列目录，只有 items[].path 才能读取精确定义。",
                 directoryCards,
                 items.stream()
                         .sorted(java.util.Comparator.comparing(
@@ -167,8 +169,9 @@ public class CapabilityService {
             );
         }
         String parent = normalizePath(parentPath);
-        Pattern queryPattern = compileSearchPattern(
-                query.trim(),
+        String normalizedQuery = query.trim();
+        List<Pattern> queryPatterns = compileSearchPatterns(
+                normalizedQuery,
                 regex,
                 caseSensitive
         );
@@ -186,7 +189,7 @@ public class CapabilityService {
                 ))
                 .toList();
         List<RankedDocument> matches = candidates.stream()
-                .map(document -> rank(document, queryPattern))
+                .map(document -> rank(document, queryPatterns))
                 .filter(result -> result.score() > 0)
                 .sorted(Comparator
                         .comparingInt(RankedDocument::score)
@@ -194,7 +197,7 @@ public class CapabilityService {
                         .thenComparing(result -> result.document().path()))
                 .toList();
         return new CapabilityFileSearchResult(
-                query.trim(),
+                normalizedQuery,
                 parent,
                 candidates.size(),
                 matches.size(),
@@ -227,31 +230,49 @@ public class CapabilityService {
 
     private RankedDocument rank(
             CatalogDocument document,
-            Pattern pattern
+            List<Pattern> patterns
     ) {
         int score = 0;
         String matchedField = null;
-        if (pattern.matcher(document.name()).find()) {
-            score += 80;
-            matchedField = "name";
-        }
-        if (pattern.matcher(document.path()).find()) {
-            score += 50;
-            if (matchedField == null) matchedField = "path";
-        }
-        if (pattern.matcher(document.description()).find()) {
-            score += 30;
-            if (matchedField == null) matchedField = "description";
-        }
-        if (pattern.matcher(document.parameterNames()).find()) {
-            score += 20;
-            if (matchedField == null) matchedField = "parameters";
-        }
-        if (pattern.matcher(document.metadata()).find()) {
-            score += 10;
-            if (matchedField == null) matchedField = "metadata";
+        for (Pattern pattern : patterns) {
+            if (pattern.matcher(document.name()).find()) {
+                score += 80;
+                matchedField = prefer(matchedField, "name");
+            }
+            if (pattern.matcher(document.path()).find()) {
+                score += 50;
+                matchedField = prefer(matchedField, "path");
+            }
+            if (pattern.matcher(document.description()).find()) {
+                score += 30;
+                matchedField = prefer(matchedField, "description");
+            }
+            if (pattern.matcher(document.parameterNames()).find()) {
+                score += 20;
+                matchedField = prefer(matchedField, "parameters");
+            }
+            if (pattern.matcher(document.metadata()).find()) {
+                score += 10;
+                matchedField = prefer(matchedField, "metadata");
+            }
         }
         return new RankedDocument(score, matchedField, document);
+    }
+
+    private String prefer(String current, String candidate) {
+        if (current == null) {
+            return candidate;
+        }
+        List<String> priority = List.of(
+                "name",
+                "path",
+                "description",
+                "parameters",
+                "metadata"
+        );
+        return priority.indexOf(candidate) < priority.indexOf(current)
+                ? candidate
+                : current;
     }
 
     private CapabilityFileMatch fileMatch(RankedDocument ranked) {
@@ -289,6 +310,56 @@ public class CapabilityService {
                 String.join(" ", parameters),
                 metadata
         );
+    }
+
+    private List<Pattern> compileSearchPatterns(
+            String query,
+            boolean regex,
+            boolean caseSensitive
+    ) {
+        if (regex) {
+            return List.of(compileSearchPattern(
+                    query,
+                    true,
+                    caseSensitive
+            ));
+        }
+        return searchTerms(query).stream()
+                .map(term -> compileSearchPattern(
+                        term,
+                        false,
+                        caseSensitive
+                ))
+                .toList();
+    }
+
+    private List<String> searchTerms(String query) {
+        java.util.LinkedHashSet<String> terms =
+                new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher matcher = Pattern.compile(
+                "[\\p{IsHan}]+|[\\p{L}\\p{N}_-]+"
+        ).matcher(query);
+        while (matcher.find()) {
+            String token = matcher.group();
+            if (token.codePoints().allMatch(codePoint ->
+                    Character.UnicodeScript.of(codePoint)
+                            == Character.UnicodeScript.HAN)) {
+                int[] characters = token.codePoints().toArray();
+                if (characters.length <= 2) {
+                    terms.add(token);
+                    continue;
+                }
+                for (int index = 0; index < characters.length - 1; index++) {
+                    terms.add(new String(characters, index, 2));
+                }
+            } else if (token.length() >= 2) {
+                terms.add(token);
+            }
+        }
+        if (terms.isEmpty()) {
+            terms.add(query);
+        }
+        return List.copyOf(terms);
     }
 
     private Pattern compileSearchPattern(
@@ -477,6 +548,7 @@ public class CapabilityService {
 
     public record CapabilityListing(
             String parentPath,
+            String guidance,
             List<DirectoryCard> directories,
             List<CapabilityCard> items
     ) {

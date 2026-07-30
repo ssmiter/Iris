@@ -123,11 +123,12 @@ function NodeBody({
       return (
         <div className="space-y-2">
           <p>{node.summary}</p>
-          {node.evidenceSummary && (
+          {node.evidenceSummary &&
+            node.evidenceSummary !== node.summary && (
             <p className="rounded-xs bg-surface-muted px-3 py-2 text-small">
               {node.evidenceSummary}
             </p>
-          )}
+            )}
           {node.resultRef && (
             <p className="font-mono text-caption text-ink-muted">
               result: {node.resultRef}

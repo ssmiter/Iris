@@ -154,13 +154,30 @@ public class ReadArtifactTextTool implements Tool {
     private JsonNode outputSchema() {
         ObjectNode schema = ArtifactToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
-        properties.putObject("artifactRef").put("type", "string");
-        properties.putObject("title").put("type", "string");
-        properties.putObject("format").put("type", "string");
-        properties.putObject("startCharacter").put("type", "integer");
-        properties.putObject("content").put("type", "string");
-        properties.putObject("hasMore").put("type", "boolean");
-        properties.putObject("nextStartCharacter").put("type", "integer");
+        properties.putObject("artifactRef")
+                .put("type", "string")
+                .put("description", "本次读取的版本化 Artifact 引用");
+        properties.putObject("title")
+                .put("type", "string")
+                .put("description", "Artifact 的用户可读标题");
+        properties.putObject("format")
+                .put("type", "string")
+                .put("description", "Artifact 声明的内容格式");
+        properties.putObject("startCharacter")
+                .put("type", "integer")
+                .put("description", "本窗口在完整文本中的起始字符偏移");
+        properties.putObject("content")
+                .put("type", "string")
+                .put("description", "当前字符窗口内的文本内容");
+        properties.putObject("hasMore")
+                .put("type", "boolean")
+                .put("description", "当前窗口之后是否仍有可读取文本");
+        properties.putObject("nextStartCharacter")
+                .put("type", "integer")
+                .put(
+                        "description",
+                        "存在后续内容时，下一窗口应使用的起始字符偏移"
+                );
         schema.putArray("required")
                 .add("artifactRef")
                 .add("title")

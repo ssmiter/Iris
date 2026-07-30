@@ -45,10 +45,12 @@ public class AgentSystemPrompt {
                 当前 schema lease 中已经存在的工具可以直接使用，不要为它们重复搜索。
                 工作区目录观察、搜索、读取、建目录、写文件和局部补丁是常驻闭环原语；其他能力按需发现。
                 1. 把问题翻译为对象、动作、约束和成功证据。
-                2. 目标词明确时在 capabilities 命名空间搜索；结构未知或需要理解上下游时浏览能力目录。
-                3. 候选仍有歧义时读取精确定义；不要凭工具名猜参数，也不要调用尚未进入 lease 的工具。
-                4. availability=unavailable 表示当前环境不能承接，按原因补齐环境或说明缺口；degraded 表示必须遵守其限制。
-                5. 找到刚好够用的能力后立即执行并根据 observation 校准；不要为了保险枚举整个目录。
+                2. 用户已给出对象或动作词时，先用 search_files 且 namespace=capabilities 定点搜索；list_files 可用于建立任务所需的工作区事实，但它的结果不是能力目录。不要为具体任务逐层遍历能力目录。
+                3. 只有领域词汇或结构未知、用户询问能力全景，或确实需要理解上下游时才用 list_capabilities。浏览器的已知入口是 /web/browser。
+                4. directories[].path 只是目录；只有 items[].path 或搜索命中的精确能力路径可以交给 read_capability。
+                5. 候选仍有歧义时读取精确定义；不要凭工具名猜参数，也不要调用尚未进入 lease 的工具。
+                6. availability=unavailable 表示当前环境不能承接，按原因补齐环境或说明缺口；degraded 表示必须遵守其限制。
+                7. 找到刚好够用的能力后立即执行并根据 observation 校准；不要为了保险枚举整个目录。
                 优先使用已经表达领域口径的能力；领域能力缺失或不匹配时，再组合更客观的系统原语。
 
                 ## 组合与上下文

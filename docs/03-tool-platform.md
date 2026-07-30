@@ -99,13 +99,17 @@ class 文件目录当持久化数据库。Capability Catalog 是独立的语义�
 | capability path | name | 作用 | 关键边界 |
 |---|---|---|---|
 | `/system/files/list_files` | `list_files` | 确认目录结构与候选文件 | 稳定排序、深度与数量预算、不跟随目录链接 |
-| `/system/files/search_files` | `search_files` | 在工作区文本或只读语义目录中定位事实 | 默认字面量、可选正则、范围与命中预算、零命中也返回扫描证据 |
+| `/system/files/search_files` | `search_files` | 在工作区文本或只读语义目录中定位事实 | 工作区默认字面量；能力查询按自然词元相关性排序；可选正则、范围与命中预算、零命中也返回扫描证据 |
 | `/system/files/read_file` | `read_file` | 按行读取一个文本文件 | 行号、范围、字符预算、编码与二进制识别、给出下一段游标 |
 
 - 三个 Tool 都放在 `tools/system/files/`，因此目录路径天然一致；它们属于常驻工作区原语，
   模型可直接使用。
 - 默认 `namespace=workspace`，输入只使用工作区逻辑相对路径，输出也只暴露 `/` 分隔的逻辑路径，不把 Windows 盘符和实际工作区根写入模型上下文。
 - `search_files(namespace=capabilities)` 复用同一个“定位描述”原语搜索 Capability Catalog；此时 `path` 是能力绝对目录，结果路径可直接交给 `read_capability`。它只复用模型接口，不把 Capability Definition 伪装成物理工作区文件，也不允许 `read_file` 或写工具进入该命名空间。
+- 两个 namespace 共享“搜索”动作，不共享检索语义：工作区文本搜索保持可核验的逐行字面量；
+  Capability 搜索把自然语言拆为英文词和中文双字领域词，在 name、path、description、参数与
+  元数据上加权排序。这样“MES 密炼生产计划”可以命中同时包含 MES、密炼和计划的 Definition，
+  不要求描述中存在一整段完全连续的字符串；显式 `regex=true` 时仍严格执行用户给出的正则。
 - 有界输出不是静默丢弃：结果必须带 `truncated`、实际扫描范围与可继续行动的提示。搜索零命中也要说明扫描了多少文件、跳过了什么。
 - `read_file` 与 `search_files` 只处理文本；图片、PDF、Office 等以后由内容类型专用原语处理，不能把二进制误解码后塞入上下文。
 - 路径解析、链接围栏、编码检测与遍历策略由共享 Workspace 层实现。Tool 只负责契约、输入归一化和结果投影，禁止各自复制一套安全判断。
@@ -236,6 +240,14 @@ Iris 的唯一实现路径。
 | `list_capabilities(path?)` | 看目录树（带统计） | 顶层调用返回各域与工具数；懒加载，不返回 schema |
 | `read_capability(path)` | 读取精确 Capability Definition | 返回判别联合 `ToolManifest | PipelineDefinition | GuidanceDefinition` |
 | `search_files(namespace="capabilities", query, path?)` | 定点搜索能力描述 | 复用文件搜索心智，覆盖 name/description/目录段/参数名；结果按能力聚合并返回扫描证据 |
+
+发现路径必须服从任务的确定性，而不是机械遍历目录。对象或动作已经明确的点状任务直接用
+`search_files(namespace="capabilities")`；只有词汇和结构都未知、用户询问能力全景，或确实
+需要理解上下游时才使用 `list_capabilities`。`list_files` 仍可正常用于建立任务所需的
+工作区事实，只是它的结果不代表 Capability，也不与能力目录共享路径语义。
+目录返回中的 `directories[].path` 只是继续浏览的入口，不能交给 `read_capability`；
+只有 `items[].path` 与搜索命中的精确路径才是可读取的 Definition。浏览器是高频闭环域，
+其已知入口固定为 `/web/browser`，无需从 `/` 逐级试探。
 
 `list_capabilities` 与 `read_capability` 位于 `/system/capabilities`；`search_files`
 仍只有 `/system/files` 下的一份 Definition，通过显式 namespace 路由到只读 Catalog

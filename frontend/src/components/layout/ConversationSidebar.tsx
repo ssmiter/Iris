@@ -34,12 +34,28 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
       <div className="flex h-[var(--topbar-height)] items-center justify-between px-3">
         <span className="text-small font-semibold text-ink">对话</span>
         {mobile ? (
-          <Dialog.Close asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <X aria-hidden="true" className="h-4 w-4" />
-              <span className="sr-only">关闭对话列表</span>
-            </Button>
-          </Dialog.Close>
+          <span className="flex items-center gap-1">
+            <Dialog.Close asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="新建对话"
+                onClick={() => {
+                  startNewConversation()
+                  resetConversation()
+                }}
+              >
+                <Plus aria-hidden="true" className="h-4 w-4" />
+              </Button>
+            </Dialog.Close>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <X aria-hidden="true" className="h-4 w-4" />
+                <span className="sr-only">关闭对话列表</span>
+              </Button>
+            </Dialog.Close>
+          </span>
         ) : (
           <Button
             variant="ghost"

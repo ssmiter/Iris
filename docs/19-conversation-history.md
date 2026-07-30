@@ -114,6 +114,12 @@ ConversationView、分页锚点、ModelContext 和 Compact cutoff 必须复用�
 Branch 当前没有活动 Turn，并用 Conversation version 做乐观并发；命令幂等重放不
 创建第二个 Branch 或 Run。
 
+Frontend 不能沿用 Turn 刚 accepted 时缓存的 Conversation version 发起稍后的分支命令：
+Agent Round、Tool、Artifact 与 closure 事件会继续推进 version，而瀑布流可以通过 SSE
+增量更新却不必每个事件都重拉整份 View。用户点击“从这里改问”并提交时，Frontend 先读取
+一次 source Branch 的最新 View，以其中的 version 作为 `expectedConversationVersion`；
+命令失败时保留编辑正文并显示原因，不能静默清空或停留在看似可提交的状态。
+
 ## 8. 验证
 
 2026-07-24 与节点 2.1 统一验证：

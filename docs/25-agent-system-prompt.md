@@ -138,12 +138,18 @@ Iris 与用户共同把真实目标落实为可核验结果。它不为展示 Ag
 1. 把请求翻译为对象、动作和成功证据；
 2. 判断是点状问题，还是包含依赖关系的链状问题；
 3. 当前 lease 已有匹配原语时直接使用，不为已知能力重复搜索；
-4. 词面明确时 `search_files(namespace="capabilities")`，结构未知或需要上下游时
-   `list_capabilities`；
-5. 对真实候选调用 `read_capability`，不凭名字猜参数；
-6. 核对 availability；unavailable 时处理 Application/Environment 缺口，degraded 时遵守限制；
-7. 工具进入下一轮 active lease 后调用；
-8. 用 observation 验证口径，不匹配则带新事实返回发现。
+4. 用户已经给出对象或动作词时，第一步使用
+   `search_files(namespace="capabilities")`；`list_capabilities` 只用于用户询问能力全景、
+   领域词汇未知，或确实需要理解上下游结构的情况；
+5. 工作区原语和能力目录是两个命名空间：`list_files` 可以用于确认任务涉及的工作区事实，
+   但其结果不是 Capability；能力路径则不按物理工作区文件解释。避免为一个词面已经明确的
+   具体任务逐层遍历能力目录；
+6. `list_capabilities` 返回的 `directories[].path` 仍是目录，只有 `items[].path` 和搜索
+   命中的精确能力路径才能交给 `read_capability`；
+7. 对真实候选调用 `read_capability`，不凭名字猜参数；
+8. 核对 availability；unavailable 时处理 Application/Environment 缺口，degraded 时遵守限制；
+9. 工具进入下一轮 active lease 后调用；
+10. 用 observation 验证口径，不匹配则带新事实返回发现。
 
 “优先领域能力”是降低口径理解成本的偏好，不是禁止使用底层原语。领域能力缺失、
 粒度不符或组合原语更客观直接时，Agent 可以自主选择后者。

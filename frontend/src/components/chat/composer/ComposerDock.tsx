@@ -4,7 +4,7 @@ import type {
   PendingSupplement,
   PermissionMode,
 } from '@/domain/chat/input'
-import { Button } from '@/components/ui'
+import { Button, notify } from '@/components/ui'
 import { ComposerTextarea } from './ComposerTextarea'
 import { PermissionModeSelect } from './PermissionModeSelect'
 import { SupplementQueueTray } from './SupplementQueueTray'
@@ -64,6 +64,16 @@ export function ComposerDock({
       if (activeTurn) await onSendSupplement(text, refs)
       else await onSendTurn(text, refs)
       onValueChange('')
+    } catch (error) {
+      notify.error(
+        activeTurn ? '补充消息没有送入' : '消息没有发送',
+        {
+          description:
+            error instanceof Error
+              ? error.message
+              : '请稍后重试。',
+        },
+      )
     } finally {
       setSubmitting(false)
     }

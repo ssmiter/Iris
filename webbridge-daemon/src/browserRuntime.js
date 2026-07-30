@@ -12,6 +12,7 @@ import {
 
 const sessions = new Map()
 let chrome = null
+let chromeLaunch = null
 
 export function browserInstallation() {
   if (config.browserPath) {
@@ -51,11 +52,12 @@ export function browserInstallation() {
       }
 }
 
-export function runtimeState() {
+export async function runtimeState() {
   const installation = browserInstallation()
+  const running = await chromeIsAlive()
   return {
     browserReady: installation.available,
-    browserRunning: Boolean(chrome),
+    browserRunning: running,
     browserPath: installation.path,
     browserError: installation.error,
     sessionCount: sessions.size,
@@ -485,7 +487,16 @@ export async function shutdown() {
 }
 
 async function ensureChrome() {
-  if (chrome) return chrome
+  if (await chromeIsAlive()) return chrome
+  if (!chromeLaunch) {
+    chromeLaunch = launchChrome().finally(() => {
+      chromeLaunch = null
+    })
+  }
+  return chromeLaunch
+}
+
+async function launchChrome() {
   const installation = browserInstallation()
   if (!installation.available) {
     throw protocolError(
@@ -508,6 +519,19 @@ async function ensureChrome() {
     ],
   })
   return chrome
+}
+
+async function chromeIsAlive() {
+  if (!chrome) return false
+  try {
+    await CDP.Version({ port: chrome.port })
+    return true
+  } catch {
+    const stale = chrome
+    chrome = null
+    await stale.kill().catch(() => undefined)
+    return false
+  }
 }
 
 function requireSession(sessionId) {
