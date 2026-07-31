@@ -81,7 +81,7 @@ export function ComposerDock({
 
   return (
     <div className="composer-dock-scrim shrink-0 px-[var(--page-gutter)] pb-3 pt-4">
-      <div className="mx-auto w-full max-w-conversation">
+      <div className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)]">
         {replacementMode && (
           <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-small text-ink">
             <span className="inline-flex min-w-0 items-center gap-2">
@@ -130,7 +130,7 @@ export function ComposerDock({
           </div>
         )}
 
-        <div className="rounded-xl border border-border/80 bg-surface-raised/96 p-2 shadow-raised backdrop-blur-xl transition-[border-color,box-shadow] duration-fast focus-within:border-border-strong focus-within:shadow-floating motion-reduce:transition-none">
+        <div className="rounded-xl border border-border/70 bg-surface-raised/95 p-2 shadow-hairline backdrop-blur-md transition-[border-color,box-shadow] duration-fast focus-within:border-border-strong focus-within:shadow-raised motion-reduce:transition-none">
           <div className="flex items-end gap-2 px-2 pt-1">
             <ComposerTextarea
               value={value}

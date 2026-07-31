@@ -45,6 +45,9 @@
   }
 
   .answer-prose {
+    /* 与 text-body 同字号：摘要行/正文同一文字轴、同一字号，天然一体 */
+    font-size: 0.9375rem;
+    line-height: 1.7;
     overflow-wrap: anywhere;
     text-wrap: pretty;
   }

@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Brain,
@@ -16,10 +16,12 @@ import type {
   AttentionNode,
   RenderNode,
 } from '@/domain/chat/models'
-import { Button } from '@/components/ui'
+import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { ArtifactCard } from './ArtifactCard'
 import { BrowserScreenshotPreview } from './BrowserScreenshotPreview'
+import { ClampText } from './ClampText'
+import { ToolResultText } from './ToolResultText'
 
 interface FlowNodeProps {
   node: RenderNode
@@ -90,6 +92,11 @@ function nodeTitle(node: RenderNode) {
   }
 }
 
+function formatMs(durationMs: number) {
+  if (durationMs < 1000) return `${durationMs}ms`
+  return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)}s`
+}
+
 function statusText(node: RenderNode) {
   const labels: Record<string, string> = {
     queued: '排队中',
@@ -113,7 +120,93 @@ function statusText(node: RenderNode) {
     unavailable: '不可用',
     outcome_unknown: '结果待核实',
   }
-  return labels[node.status] ?? node.status
+  const base = labels[node.status] ?? node.status
+  // 思考节点后端喂了 durationMs，完成时把耗时带上（WonWork 节点耗时同款）
+  if (
+    node.type === 'thinking'
+    && node.status === 'completed'
+    && node.durationMs != null
+  ) {
+    return `${base} · ${formatMs(node.durationMs)}`
+  }
+  return base
+}
+
+const riskTone = {
+  read_only: 'success',
+  standard: 'neutral',
+  elevated: 'warning',
+  destructive: 'danger',
+} as const
+
+const riskLabel = {
+  read_only: '只读',
+  standard: '标准',
+  elevated: '提权',
+  destructive: '破坏性',
+} as const
+
+/**
+ * 审批/澄清卡。两阶段退场（WonWork ghost 的克制版）：
+ * 点击后按钮区立刻淡出禁用（决定已提交，不瞬消），
+ * 后端 resolved 推送到达后整卡切换为保留说明（淡入）。
+ * 4s 未收到 resolved 视为提交失败，按钮恢复可点。
+ */
+function AttentionBody({
+  node,
+  onAttentionAction,
+}: {
+  node: AttentionNode
+  onAttentionAction?: FlowNodeProps['onAttentionAction']
+}) {
+  const [acting, setActing] = useState(false)
+
+  useEffect(() => {
+    if (!acting) return
+    const timer = setTimeout(() => setActing(false), 4000)
+    return () => clearTimeout(timer)
+  }, [acting])
+
+  return (
+    <div className="rounded-sm border border-warning/30 bg-warning-soft p-3">
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 font-medium text-warning-foreground">
+          {node.impact}
+        </p>
+        {node.approval && (
+          <Badge tone={riskTone[node.approval.riskLevel]}>
+            {riskLabel[node.approval.riskLevel]}
+          </Badge>
+        )}
+      </div>
+      {node.status === 'waiting' ? (
+        <div
+          className={cn(
+            'mt-3 flex flex-wrap gap-2 transition-opacity duration-fast motion-reduce:transition-none',
+            acting && 'pointer-events-none opacity-40',
+          )}
+        >
+          {node.actions.map((action) => (
+            <Button
+              key={action.id}
+              size="sm"
+              variant={action.tone}
+              onClick={() => {
+                setActing(true)
+                onAttentionAction?.(node, action)
+              }}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 animate-overlay-in text-small text-ink-subtle motion-reduce:animate-none">
+          此请求已经结束，历史影响陈述仍被保留。
+        </p>
+      )}
+    </div>
+  )
 }
 
 function NodeBody({
@@ -124,58 +217,40 @@ function NodeBody({
   switch (node.type) {
     case 'thinking':
       return (
-        <div className="space-y-2">
-          <p>{node.summary}</p>
-          {node.detailRef && (
-            <p className="text-caption text-ink-muted">
-              详细记录可按需读取 · {node.detailRef}
-            </p>
-          )}
-        </div>
+        <ClampText>
+          <div className="space-y-2">
+            <p>{node.summary}</p>
+            {node.detailRef && (
+              <p className="text-caption text-ink-muted">
+                详细记录可按需读取 · {node.detailRef}
+              </p>
+            )}
+          </div>
+        </ClampText>
       )
     case 'tool':
       return (
-        <div className="space-y-2">
-          <p>{node.summary}</p>
-          {node.evidenceSummary &&
-            node.evidenceSummary !== node.summary && (
-            <p className="rounded-xs bg-surface-muted px-3 py-2 text-small">
-              {node.evidenceSummary}
-            </p>
+        <ClampText>
+          <div className="space-y-2">
+            <p>{node.summary}</p>
+            {node.evidenceSummary &&
+              node.evidenceSummary !== node.summary && (
+              <p className="rounded-xs bg-surface-muted px-3 py-2 text-small">
+                {node.evidenceSummary}
+              </p>
+              )}
+            {node.resultRef && (
+              <ToolResultText resultRef={node.resultRef} expanded={expanded} />
             )}
-          {node.resultRef && (
-            <p className="font-mono text-caption text-ink-muted">
-              result: {node.resultRef}
-            </p>
-          )}
-          {expanded && node.preview?.kind === 'browser_screenshot' && (
-            <BrowserScreenshotPreview preview={node.preview} />
-          )}
-        </div>
+            {expanded && node.preview?.kind === 'browser_screenshot' && (
+              <BrowserScreenshotPreview preview={node.preview} />
+            )}
+          </div>
+        </ClampText>
       )
     case 'attention':
       return (
-        <div className="rounded-sm border border-warning/30 bg-warning-soft p-3">
-          <p className="font-medium text-warning-foreground">{node.impact}</p>
-          {node.status === 'waiting' ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {node.actions.map((action) => (
-                <Button
-                  key={action.id}
-                  size="sm"
-                  variant={action.tone}
-                  onClick={() => onAttentionAction?.(node, action)}
-                >
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-2 text-small text-ink-subtle">
-              此请求已经结束，历史影响陈述仍被保留。
-            </p>
-          )}
-        </div>
+        <AttentionBody node={node} onAttentionAction={onAttentionAction} />
       )
     case 'artifact':
       return <ArtifactCard node={node} />
@@ -246,7 +321,12 @@ export const FlowNode = memo(function FlowNode({
         <span
           className={cn(
             'flex h-5 w-5 items-center justify-center rounded-full border bg-surface',
-            active && 'border-primary text-primary',
+            // 光环：活跃节点外圈扩散；attention 等待态整体换 warning 色且更急促
+            active && node.type !== 'attention' &&
+              'border-primary text-primary animate-node-halo',
+            active && node.type === 'attention' &&
+              'border-warning text-warning animate-node-halo-warn',
+            'motion-reduce:animate-none',
             failed && 'border-danger text-danger',
             !active && !failed && reached && 'border-primary/40 text-primary',
             !active && !failed && !reached &&
@@ -286,7 +366,7 @@ export const FlowNode = memo(function FlowNode({
         <button
           type="button"
           className={cn(
-            'flex min-h-9 w-full items-center gap-2 rounded-sm px-2 text-left',
+            'flex min-h-8 w-full items-center gap-2 rounded-sm px-2 text-left',
             'transition-[color,background-color,transform,opacity] duration-fast ease-standard',
             'hover:bg-surface-muted active:scale-[0.995] active:bg-surface-muted active:opacity-80',
             'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',

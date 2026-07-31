@@ -6,6 +6,7 @@ node_modules/
 dist/
 target/
 *.class
+*.tsbuildinfo
 
 # 运行时数据（个人数据绝不入库）
 /workspace/

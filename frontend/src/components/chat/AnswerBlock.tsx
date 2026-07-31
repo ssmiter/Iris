@@ -16,12 +16,12 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
 
   return (
     <section
-      className="mt-4 min-w-0 text-body text-ink"
+      className="mt-2.5 min-w-0 text-body text-ink"
       aria-label={isFinal ? 'Iris 的回答' : '阶段结论'}
       aria-busy={revealing}
     >
       {!isFinal && (
-        <div className="mb-2 flex items-center gap-2 text-caption text-ink-muted">
+        <div className="mb-1.5 flex items-center gap-2 text-caption text-ink-muted">
           <span className="h-1.5 w-1.5 rounded-full bg-border-strong" />
           阶段结论
         </div>

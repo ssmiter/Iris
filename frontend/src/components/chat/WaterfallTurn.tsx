@@ -3,6 +3,7 @@ import { AlertTriangle, Clock3, GitBranch } from 'lucide-react'
 import type {
   AttentionAction,
   AttentionNode,
+  FailureView,
   RenderNode,
   RoundView,
   RunView,
@@ -72,6 +73,21 @@ function formatElapsed(turn: TurnView) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
+/** FailureView.recoveryAction → 用户可读的恢复建议（后端已投影，此前只显示 userMessage） */
+const recoveryLabel: Record<FailureView['recoveryAction'], string | null> = {
+  retry_same: '可以直接重试',
+  reprepare: '将重新准备后重试',
+  rediscover: '将重新发现可行路径',
+  reconcile: '需要核对已发生的影响',
+  user_input: '需要你的补充信息',
+  none: null,
+}
+
+const sideEffectLabel: Partial<Record<FailureView['sideEffectOutcome'], string>> = {
+  may_have_applied: '部分操作可能已生效，请核验',
+  confirmed_applied: '部分操作已生效',
+}
+
 function WaterfallTurnView({
   turn,
   runsById,
@@ -135,9 +151,9 @@ function WaterfallTurnView({
         </div>
       </div>
 
-      <div className="mt-5 min-w-0">
+      <div className="mt-4 min-w-0">
         {hasPendingAttention && (
-          <div className="mb-2 flex items-center gap-2 px-2 text-small text-warning">
+          <div className="mb-2 flex items-center gap-2 text-small text-warning">
             <AlertTriangle aria-hidden="true" className="h-4 w-4" />
             <span>{turn.pendingAttentionIds.length} 项操作需要你的决定</span>
           </div>
@@ -170,13 +186,24 @@ function WaterfallTurnView({
               aria-hidden="true"
               className="mt-0.5 h-4 w-4 shrink-0"
             />
-            <p>{turn.failure.userMessage}</p>
+            <div className="min-w-0">
+              <p>{turn.failure.userMessage}</p>
+              <p className="mt-1 text-caption opacity-80">
+                {[
+                  sideEffectLabel[turn.failure.sideEffectOutcome],
+                  recoveryLabel[turn.failure.recoveryAction],
+                  `traceId ${turn.failure.traceId.slice(0, 8)}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            </div>
           </div>
         )}
 
         <footer
           className={cn(
-            'mt-2 flex flex-wrap items-center gap-2 px-2 text-caption text-ink-muted',
+            'mt-2 flex flex-wrap items-center gap-2 text-caption text-ink-muted',
             turn.phase === 'failed' &&
               !closureNeedsAttention &&
               'text-danger',

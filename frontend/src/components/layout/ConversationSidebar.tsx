@@ -102,16 +102,21 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
                   active ? 'text-primary' : 'text-ink-muted',
                 )}
               />
-              <span className="min-w-0">
+              <span className="min-w-0 flex-1">
                 <span className="block truncate text-small font-medium">
                   {conversation.title}
                 </span>
-                <span className="mt-0.5 block text-caption text-ink-muted">
+                <span className="mt-0.5 block truncate text-caption text-ink-muted">
                   {conversation.activeTurnCount > 0
                     ? `${conversation.activeTurnCount} 个任务进行中`
-                    : '最近更新'}
+                    : conversation.lastVisibleText || '最近更新'}
                 </span>
               </span>
+              {(conversation.pendingAttentionCount ?? 0) > 0 && (
+                <span className="mt-0.5 shrink-0 rounded-full bg-warning-soft px-1.5 py-0.5 text-caption text-warning-foreground">
+                  {conversation.pendingAttentionCount} 项待决定
+                </span>
+              )}
             </button>
           )
         })}

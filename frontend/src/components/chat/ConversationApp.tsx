@@ -9,6 +9,7 @@ import {
   createTurn,
   decideApproval,
   getConversationView,
+  IrisApiError,
   listConversations,
   streamConversationEvents,
   stopTurn,
@@ -21,16 +22,21 @@ import { Badge, Button, ToastHost, notify } from '@/components/ui'
 import type {
   AttentionAction,
   AttentionNode,
+  BranchSummary,
   CompactBoundaryView,
   CompactionView,
 } from '@/domain/chat/models'
 import type { TurnView } from '@/domain/chat/models'
 import { selectActiveTurn, selectProjection } from '@/domain/chat/selectors'
 import { useChatStore } from '@/stores/chatStore'
-import { useConversationStore } from '@/stores/conversationStore'
+import {
+  useConversationStore,
+  type ConversationSummary,
+} from '@/stores/conversationStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { ComposerDock } from './composer'
 import { ConversationTimeline } from './ConversationTimeline'
+import { PendingApprovalStack } from './PendingApprovalStack'
 
 function summary(view: ConversationView) {
   const turns = Object.values(view.turnsById)
@@ -89,7 +95,14 @@ export function ConversationApp() {
     )
     useConversationStore.getState().setBranches(view.branches)
     useConversationStore.getState().setCompactions(view.compactionsById)
-    useConversationStore.getState().upsertConversation(summary(view))
+    // 列表水合给出的 lastVisibleText 在 view 摘要里没有——合并保留，避免每次
+    // hydrateView 把侧栏预览行抹掉。
+    useConversationStore.getState().upsertConversation({
+      ...useConversationStore.getState().conversationsById[
+        view.conversationId
+      ],
+      ...summary(view),
+    })
     useViewStateStore.getState().seedExpandedNodes(
       Object.values(view.renderNodesById)
         .filter(
@@ -176,6 +189,57 @@ export function ConversationApp() {
           useChatStore.getState().eventCursor,
           controller.signal,
           (event) => {
+            // branch.created 的 envelope.branchId 是新分支自身——必须先于
+            // 下方 branchId 过滤处理，否则永远被丢弃（盲猜对账发现的断链）。
+            if (event.type === 'branch.created') {
+              const branch = event.envelope.payload.branch as
+                | BranchSummary
+                | undefined
+              if (branch) {
+                const conversationState = useConversationStore.getState()
+                if (
+                  !conversationState.branches.some(
+                    (item) => item.branchId === branch.branchId,
+                  )
+                ) {
+                  conversationState.setBranches([
+                    ...conversationState.branches,
+                    branch,
+                  ])
+                }
+              }
+              return
+            }
+            if (event.type === 'conversation.updated') {
+              const incoming = event.envelope.payload.conversation as
+                | Partial<
+                    Pick<
+                      ConversationSummary,
+                      | 'title'
+                      | 'updatedAt'
+                      | 'activeTurnCount'
+                      | 'pendingAttentionCount'
+                      | 'lastVisibleText'
+                      | 'version'
+                    >
+                  >
+                | undefined
+              const conversationId = event.envelope.conversationId
+              if (incoming && conversationId) {
+                const conversationState = useConversationStore.getState()
+                const existing =
+                  conversationState.conversationsById[conversationId]
+                if (existing) {
+                  conversationState.upsertConversation({
+                    ...existing,
+                    ...incoming,
+                    conversationId,
+                    title: incoming.title ?? existing.title,
+                  })
+                }
+              }
+              return
+            }
             if (
               event.envelope.branchId &&
               event.envelope.branchId !== currentBranchId
@@ -252,6 +316,23 @@ export function ConversationApp() {
         )
       } catch (error) {
         if (controller.signal.aborted) return
+        // 续传游标失效（410 event_cursor_unavailable）：整树重水合拿到新游标
+        // 再重连——否则同一个失效游标会在退避循环里无限 410。
+        if (error instanceof IrisApiError && error.status === 410) {
+          try {
+            const view = await getConversationView(
+              currentConversationId,
+              currentBranchId || undefined,
+            )
+            if (controller.signal.aborted) return
+            hydrateView(view)
+            reconnectAttempt = 0
+            void connect()
+            return
+          } catch {
+            // 重水合也失败，落入常规退避
+          }
+        }
         reconnectAttempt += 1
         reconnectTimer = window.setTimeout(
           connect,
@@ -300,6 +381,21 @@ export function ConversationApp() {
     ],
   )
   const activeTurn = selectActiveTurn(chat)
+  // 浮动审批条与链内 attention 卡共享同一批事实（docs/24 §7）：
+  // 只接 approval 子型（decideApproval 唯一已接入的决议通路），
+  // clarification/takeover/auth 仍由链内卡陈述。
+  const waitingApprovals = useMemo(
+    () =>
+      Object.values(projection.renderNodesById)
+        .filter(
+          (node): node is AttentionNode =>
+            node.type === 'attention'
+            && node.subtype === 'approval'
+            && node.status === 'waiting',
+        )
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [projection.renderNodesById],
+  )
   const activeCompaction = Object.values(
     conversations.compactionsById,
   ).find(
@@ -431,7 +527,12 @@ export function ConversationApp() {
   }, [draftKey, setDraft])
 
   const composer = (
-    <ComposerDock
+    <div className="relative">
+      <PendingApprovalStack
+        nodes={waitingApprovals}
+        onDecide={handleAttentionAction}
+      />
+      <ComposerDock
       value={draft}
       onValueChange={(value) => setDraft(draftKey, value)}
       activeTurn={Boolean(activeTurn)}
@@ -516,7 +617,8 @@ export function ConversationApp() {
         }
       }}
       onAttachmentRequest={addAttachments}
-    />
+      />
+    </div>
   )
 
   return (

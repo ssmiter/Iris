@@ -249,12 +249,15 @@ frontend/src/
 ├── components/chat/
 │   ├── AnswerBlock.tsx        # 当前 chars 揭示与完成提升
 │   ├── RoundSection.tsx       # 正式链接前的流式答案投影桥梁
-│   └── ConversationTimeline.tsx # 两态跟随、意图识别、回到最新
+│   ├── ConversationTimeline.tsx # 两态跟随、意图识别、回到最新
+│   ├── useConversationFollow.ts # 滚动所有权：位置/意图分离、手势打断
+│   ├── PendingApprovalStack.tsx # 审批浮动条与 ghost 两阶段退场
+│   └── ClampText.tsx          # 节点正文长内容软截断
 ├── stores/
 │   ├── chatStore.ts           # SSE 权威投影与帧级 delta 合并
-│   └── viewStateStore.ts      # 折叠、跟随等可丢弃视图状态
+│   └── viewStateStore.ts      # 折叠、展开初始化等可丢弃视图状态
 └── components/chat（后续）
-    └── PendingApprovalStack.tsx
+    └── （无）
 ```
 
 `motion/` 不 import store 与 API；引擎只接受文本与事件回调。所有过渡时长与
@@ -321,8 +324,94 @@ t7 visual frontier 追平
 - 对话正文、过程、侧栏与顶部栏移除非必要卡片边界；Composer 作为主操作面
   保留单一轻边界，并以画布渐隐承接内容。
 
-后续切片仍包括：块级增量 Markdown、审批 ghost 两阶段退场、历史水合动画抑制
-以及千 Turn 长列表的专项性能校准。本文的完整验收门槛不因分批实现而降低。
+第二轮（2026-07-30，WonWork 瀑布流视觉经验回迁）已落地：
+
+- 脊柱水流感：已到达段 `primary/15` 染色在活跃节点呼吸点收束成"水流前沿"，
+  失败节点 `danger/20`；首节点短桩、末节点渐隐收尾，链条两端不再悬空；
+- 节点出生：来路线段 `scaleY` 生长 + 内容淡入微升（280ms `ease-enter`），
+  仅"回合活跃 + 过程区可见 + 挂载瞬间"触发；模块级快照集合防虚拟列表
+  重放，水合与 settled 零动画（§6）；
+- 活跃节点 halo 光环（attention 等待态 warning 色、更急促），思考节点
+  完成时展示后端已喂的 `durationMs`；
+- 长内容软截断 `ClampText`（阈值 168px + 24 余量，底部渐隐 + 展开全部）；
+- 审批 ghost 两阶段退场完整版：`PendingApprovalStack` 浮动条（composer
+  上方 overlay，顺序按首现稳定、新项靠 composer 侧追加、busy 防重、
+  Tab 快速批准首项、IME/输入框守卫），与链内卡共享同一 attentionId 事实；
+- 回合收尾微光：active→非 active 相位跃迁（SSE 事实驱动，非组件计时器
+  发明业务阶段）时摘要行泛 primary 薄光一次性散去；
+- 链内 attention 卡两阶段：点击即淡出禁用（决议已提交），后端 resolved
+  收敛后说明淡入，4s 未收敛自动恢复可点；
+- 审批卡展示后端已喂的 `riskLevel` 徽标（只读/标准/提权/破坏性）。
+
+第三轮（2026-07-31，文字轴与纵向节奏一体化）已落地：
+
+- 单一文字轴：摘要行（`-ml-2` 抵消 hover 内边距）、Turn 页脚、待决提示
+  全部与回答正文齐平于 `conversation-pad` 轴；hover 底色向左溢出 8px
+  而文字不动（WonWork `padding: 5px 0` 齐边模式的等价物）；
+- 纵向节奏收紧到 WonWork 的 5–10px 量级：Round `py-2`（后续 `mt-1 pt-3`）、
+  摘要/节点行高 `min-h-8`、回答 `mt-2.5`、阶段结论 caption `mb-1.5`；
+- 回答正文字号与 `text-body` 统一为 0.9375rem / 1.7（`answer-prose` 覆盖
+  `prose-sm` 的 0.875rem——摘要行与正文同字号才不割裂）；
+- Composer 与浮动审批条内缩 `conversation-pad`，卡片左缘与文字轴对齐；
+  Composer 降为单一轻边界（`shadow-hairline`，聚焦时升至 `raised`），
+  不再以浮空卡片姿态与正文割裂。
+
+第四轮（2026-07-31，产物区提升与工具输出解析）已落地：
+
+- `ArtifactZone`：artifact 节点从脊柱滤出，提升为回答之后始终可见的产物区
+  （WonWork wf-artifact-zone 等价物，折叠过程区不再埋住卡片）；新发布卡片
+  在 Round 活跃时播出生动画（模块级快照集合防重放，水合静默）；
+- `ArtifactCard` 升级为 WonWork 结构（头部标题+操作 + 内联体）：图片类产物
+  挂载即取预览内联展示（max-h-56，点击开 Modal 看全图），其余类型保持
+  克制、点开 Modal 才取预览；
+- `ToolResultText`：tool 节点不再把 `tool-result://` 内部 URI 原样摊给用户，
+  展开时惰性解析 ToolOutputController 文本窗口（首窗 4000 字符，ClampText
+  软截断兜底，过长输出注明总字符数）；
+- 前后端对账结论（本论的"接口对不上"清单）：
+  - artifact 增量链路完整：模型 `publish_artifact(user_timeline)` →
+    `ToolProjectionService.projectPublishedArtifact` → `render_node.added`
+    + 协调边界 `round.updated`（全量 RoundView 携带新 processNodeIds），
+    前端无需 store 补丁；
+  - `thinking` / `run`（child run）节点类型契约超前：前端类型与 FlowNode
+    分支齐全，后端无任何写入器，当前永远不会出现；
+  - 契约文档列出的 `branch.created` 事件后端从未发射，分支列表以
+    `createBranch` 后的 `hydrateView` 为准（现网无断链）；
+  - Python 声明输出只登记 `internal` visibility，须模型再调
+    `publish_artifact` 才出卡片（AgentSystemPrompt §77 已有引导）。
+
+第五轮（2026-07-31，盲猜对账实验）已落地。方法：两个隔离子代理各自只读
+一侧代码、盲猜对方特性面，猜想与现实的差集即断链清单（实验自我校准：
+thinking/child-run/groupId 三项契约超前被两侧独立命中）。修复：
+
+- **410 游标失效死循环（P0）**：SSE 续传游标过期后后端返回
+  `event_cursor_unavailable`，此前前端拿同一失效游标无限退避重连
+  （永久"正在连接"）；现在捕获 410 → 整树重水合拿新游标 → 立即重连；
+- **`branch.created` 接入**：后端实际发射（上轮调研误判为未发射），但
+  envelope.branchId 是新分支自身、必被 branchId 过滤丢弃——处理已前置到
+  过滤器之前，去重后追加分支列表；`conversation.updated`（重命名）同样
+  前置接入，合并进列表摘要；
+- **侧栏增强**：消费后端已投影的 `lastVisibleText`（预览行，hydrateView
+  覆盖时合并保留）与 `pendingAttentionCount`（"N 项待决定"warning 徽标）；
+- **审批过期显示**：`approval.expiresAt`（快照默认 5 分钟 TTL）在浮动审批卡
+  上以 30s 粒度展示"约 X 分钟后过期"，不足 1 分钟转 warning 色；
+- **失败卡增强**：消费 FailureView 已投影的 `recoveryAction`（恢复建议）、
+  `sideEffectOutcome`（副作用警示）、`traceId`（短码）。
+
+对账后确认健康、无需动作的：Idempotency-Key 全写操作齐备；stop reason
+已发送；SSE 心跳注释帧天然容忍；attention payload 双写（attention+node）
+仅冗余无危害。
+
+仍为"半实现、暂不接"的契约超前（双方各欠一半，列为未来切片，不盲目接）：
+PermissionMode 四档选择器是纯前端 UI（createTurn 不携带、后端无此字段，
+**安慰剂控件，接线需后端先定义语义**）；`turn_stop.phase='draining'` 后端
+无写入方；`RunClosureView.taskOutcome` 恒 not_assessed、budget 用量恒 0；
+hasEarlierTurns/beforeTurnId 翻页与 PATCH 重命名端点后端就绪、前端无入口；
+clarification/takeover/auth 决议通路；检查点回滚与能力目录无用户 REST 面。
+
+后续切片仍包括：块级增量 Markdown、千 Turn 长列表的专项性能校准、
+尾部窗口逐字淡入（§3.1）。本文的完整验收门槛不因分批实现而降低。
+另：`groupId` 目前后端四处投影器均写 null，并行/重试组（FlowGroup 式）
+视觉分组需后端先定义并填充 group 语义，再行前端实现。
 
 ## 14. 本轮故障的结论
 

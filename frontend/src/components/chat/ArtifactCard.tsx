@@ -18,9 +18,12 @@ export function ArtifactCard({ node }: ArtifactCardProps) {
   const [preview, setPreview] = useState<ArtifactPreviewView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 图片类产物挂载即取预览并内联展示（产物区的"一眼可见"）；
+  // 其余类型保持克制，点开 Modal 时才取。
+  const inlineImage = node.kind === 'image' && Boolean(node.previewRef)
 
   useEffect(() => {
-    if (!open || preview || !node.previewRef) return
+    if ((!open && !inlineImage) || preview || !node.previewRef) return
     const controller = new AbortController()
     setLoading(true)
     setError(null)
@@ -37,41 +40,71 @@ export function ArtifactCard({ node }: ArtifactCardProps) {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [node.previewRef, open, preview])
+  }, [node.previewRef, open, preview, inlineImage])
+
+  const inlineSrc =
+    inlineImage && preview?.mode === 'image' ? preview.contentRef : null
 
   return (
     <>
-      <div className="flex items-center gap-3 rounded-sm border border-border bg-surface-raised p-3">
-        <Box aria-hidden="true" className="h-5 w-5 text-primary" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium text-ink">{node.title}</p>
-          <p className="text-caption text-ink-muted">
-            {node.kind}
-            {node.byteCount != null
-              ? ` · ${formatByteCount(node.byteCount)}`
-              : ''}
-          </p>
+      <div className="overflow-hidden rounded-md border border-border bg-surface-raised">
+        <div className="flex items-center gap-3 px-3.5 py-2.5">
+          <Box aria-hidden="true" className="h-5 w-5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-small font-medium text-ink">{node.title}</p>
+            <p className="text-caption text-ink-muted">
+              {node.kind}
+              {node.byteCount != null
+                ? ` · ${formatByteCount(node.byteCount)}`
+                : ''}
+            </p>
+          </div>
+          {node.previewRef ? (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-ink-subtle transition-colors hover:bg-surface-muted hover:text-ink"
+              onClick={() => setOpen(true)}
+            >
+              <Eye aria-hidden="true" className="h-4 w-4" />
+              查看
+            </button>
+          ) : null}
+          {node.downloadRef ? (
+            <a
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-primary transition-colors hover:bg-primary-soft"
+              href={node.downloadRef}
+              download
+            >
+              <Download aria-hidden="true" className="h-4 w-4" />
+              下载
+            </a>
+          ) : null}
         </div>
-        {node.previewRef ? (
+        {inlineImage && (
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-ink-subtle transition-colors hover:bg-surface-muted hover:text-ink"
+            className="block w-full border-t border-border/60 bg-surface-muted/60 p-2"
+            aria-label={`查看 ${node.title} 大图`}
             onClick={() => setOpen(true)}
           >
-            <Eye aria-hidden="true" className="h-4 w-4" />
-            查看
+            {inlineSrc ? (
+              <img
+                className="mx-auto max-h-56 rounded-xs object-contain"
+                src={inlineSrc}
+                alt={node.title}
+                loading="lazy"
+              />
+            ) : (
+              <span className="flex min-h-24 items-center justify-center gap-2 text-caption text-ink-muted">
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                />
+                {error ?? '正在读取预览…'}
+              </span>
+            )}
           </button>
-        ) : null}
-        {node.downloadRef ? (
-          <a
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-primary transition-colors hover:bg-primary-soft"
-            href={node.downloadRef}
-            download
-          >
-            <Download aria-hidden="true" className="h-4 w-4" />
-            下载
-          </a>
-        ) : null}
+        )}
       </div>
 
       <Modal

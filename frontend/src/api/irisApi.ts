@@ -160,6 +160,36 @@ export function getArtifactPreview(
   return requestJson<ArtifactPreviewView>(previewRef, { signal })
 }
 
+/** 工具输出文本窗口（tool-result:// 的解析端点） */
+export interface ToolOutputWindow {
+  toolExecutionId: string
+  format: string
+  contentHash: string
+  totalCharacters: number
+  startCharacter: number
+  endCharacterExclusive: number
+  content: string
+  truncated: boolean
+  nextStartCharacter: number | null
+}
+
+export function getToolOutput(
+  conversationId: string,
+  executionId: string,
+  signal?: AbortSignal,
+  characterCount = 4000,
+): Promise<ToolOutputWindow> {
+  const query = new URLSearchParams({
+    startCharacter: '0',
+    characterCount: String(characterCount),
+  })
+  return requestJson<ToolOutputWindow>(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}`
+      + `/tool-executions/${encodeURIComponent(executionId)}/output?${query}`,
+    { signal },
+  )
+}
+
 export function listConversations(): Promise<ConversationPage> {
   return requestJson('/api/v1/conversations?limit=50')
 }
