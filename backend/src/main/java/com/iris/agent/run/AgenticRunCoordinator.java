@@ -44,6 +44,7 @@ public class AgenticRunCoordinator {
     private final RunCancellationRegistry cancellations;
     private final ConversationLocks conversationLocks;
     private final SupplementRepository supplements;
+    private final RunFinalizationPolicy finalizationPolicy;
     private final Clock clock = Clock.systemUTC();
 
     public AgenticRunCoordinator(
@@ -57,7 +58,8 @@ public class AgenticRunCoordinator {
             ToolRuntime toolRuntime,
             RunCancellationRegistry cancellations,
             ConversationLocks conversationLocks,
-            SupplementRepository supplements
+            SupplementRepository supplements,
+            RunFinalizationPolicy finalizationPolicy
     ) {
         this.facts = facts;
         this.states = states;
@@ -70,6 +72,7 @@ public class AgenticRunCoordinator {
         this.cancellations = cancellations;
         this.conversationLocks = conversationLocks;
         this.supplements = supplements;
+        this.finalizationPolicy = finalizationPolicy;
     }
 
     public Mono<RunAdvance> advance(
@@ -308,6 +311,16 @@ public class AgenticRunCoordinator {
             return new NextRound(
                     null,
                     view(current, false, null),
+                    null
+            );
+        }
+        RunFinalizationPolicy.Decision finalization =
+                finalizationPolicy.evaluate(current.runId());
+        if (finalization.continueRun()) {
+            answers.publishStage(latest.roundId());
+            return new NextRound(
+                    states.openRound(current.runId()),
+                    null,
                     null
             );
         }

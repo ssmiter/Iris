@@ -272,6 +272,50 @@ public class TaskLedgerService {
                 .toList();
     }
 
+    /**
+     * Returns only an active head whose current state was written by this Run.
+     * Older branch tasks must not turn an unrelated short conversation into a
+     * readiness loop.
+     */
+    public Optional<FinalizationGap> finalizationGap(String runId) {
+        return jdbc.sql("""
+                SELECT head.task_id, head.state_version,
+                       state.steps_json, state.blockers_json
+                FROM agent_task_head head
+                JOIN agent_task_work_state state
+                  ON state.task_id = head.task_id
+                 AND state.branch_id = head.branch_id
+                 AND state.state_version = head.state_version
+                JOIN agent_run run
+                  ON run.run_id = :runId
+                 AND run.conversation_id = head.conversation_id
+                 AND run.branch_id = head.branch_id
+                WHERE head.phase = 'active'
+                  AND state.source_run_id = :runId
+                ORDER BY head.updated_at DESC, head.task_id DESC
+                LIMIT 1
+                """)
+                .param("runId", runId)
+                .query((rs, row) -> {
+                    ArrayNode steps = array(rs.getString("steps_json"));
+                    int unfinished = 0;
+                    for (JsonNode step : steps) {
+                        String status = step.path("status").asText();
+                        if (!"completed".equals(status)
+                                && !"skipped".equals(status)) {
+                            unfinished++;
+                        }
+                    }
+                    return new FinalizationGap(
+                            rs.getString("task_id"),
+                            rs.getInt("state_version"),
+                            unfinished,
+                            array(rs.getString("blockers_json")).size()
+                    );
+                })
+                .optional();
+    }
+
     public ObjectNode toJson(TaskSnapshot snapshot) {
         ObjectNode result = objectMapper.createObjectNode();
         result.put("taskId", snapshot.taskId());
@@ -511,6 +555,14 @@ public class TaskLedgerService {
             ArrayNode artifactRefs,
             String summary,
             Instant updatedAt
+    ) {
+    }
+
+    public record FinalizationGap(
+            String taskId,
+            int stateVersion,
+            int unfinishedStepCount,
+            int blockerCount
     ) {
     }
 }

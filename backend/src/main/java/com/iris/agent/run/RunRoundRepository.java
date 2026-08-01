@@ -210,6 +210,26 @@ public class RunRoundRepository {
                 .single();
     }
 
+    public int finalAnswerRoundCount(String runId) {
+        return jdbc.sql("""
+                SELECT COUNT(*)
+                FROM agent_round round
+                WHERE round.run_id = :runId
+                  AND round.phase = 'completed'
+                  AND round.tool_call_count = 0
+                  AND EXISTS (
+                      SELECT 1
+                      FROM model_attempt attempt
+                      WHERE attempt.round_id = round.round_id
+                        AND attempt.phase = 'completed'
+                        AND attempt.stop_reason = 'end_turn'
+                  )
+                """)
+                .param("runId", runId)
+                .query(Integer.class)
+                .single();
+    }
+
     public RunBudget runBudget(String runId) {
         return jdbc.sql("""
                 SELECT d.tool_calls_limit, d.time_limit_ms,

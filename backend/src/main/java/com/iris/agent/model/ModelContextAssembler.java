@@ -6,6 +6,7 @@ import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunBudget;
 import com.iris.agent.run.RunRoundRepository.RunRow;
+import com.iris.agent.run.RunFinalizationPolicy;
 import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.agent.model.ModelContextWindowPlanner.WindowPlan;
 import com.iris.agent.model.ToolObservationMicroCompactor.Projection;
@@ -41,6 +42,7 @@ public class ModelContextAssembler {
     private final TaskLedgerService taskLedger;
     private final ArtifactService artifacts;
     private final RunRoundRepository runs;
+    private final RunFinalizationPolicy finalizationPolicy;
     private final ModelPromptPrefixService promptPrefixes;
     private final Clock clock = Clock.systemUTC();
 
@@ -56,6 +58,7 @@ public class ModelContextAssembler {
             TaskLedgerService taskLedger,
             ArtifactService artifacts,
             RunRoundRepository runs,
+            RunFinalizationPolicy finalizationPolicy,
             ModelPromptPrefixService promptPrefixes
     ) {
         this.facts = facts;
@@ -69,6 +72,7 @@ public class ModelContextAssembler {
         this.taskLedger = taskLedger;
         this.artifacts = artifacts;
         this.runs = runs;
+        this.finalizationPolicy = finalizationPolicy;
         this.promptPrefixes = promptPrefixes;
     }
 
@@ -169,6 +173,15 @@ public class ModelContextAssembler {
                 task.stateVersion(),
                 taskLedger.toJson(task).toString()
         )));
+        RunFinalizationPolicy.Decision finalization =
+                finalizationPolicy.evaluate(run.runId());
+        if (finalization.continueRun()) {
+            allItems.add(new ModelInputItem.FinalizationDirective(
+                    finalization.taskId(),
+                    finalization.stateVersion(),
+                    finalization.instruction()
+            ));
+        }
         RunBudget runtimeBudget = runs.runBudget(run.runId());
         allItems.add(new ModelInputItem.RuntimePulse(
                 run.runId(),

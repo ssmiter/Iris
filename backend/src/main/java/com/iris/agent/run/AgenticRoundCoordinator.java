@@ -53,6 +53,7 @@ public class AgenticRoundCoordinator {
     private final SupplementInjectionService supplementInjections;
     private final TurnStopRepository stopRequests;
     private final RunCancellationRegistry cancellations;
+    private final RunFinalizationPolicy finalizationPolicy;
 
     public AgenticRoundCoordinator(
             RunRoundRepository runFacts,
@@ -65,7 +66,8 @@ public class AgenticRoundCoordinator {
             RunEventEmitter lifecycleEvents,
             SupplementInjectionService supplementInjections,
             TurnStopRepository stopRequests,
-            RunCancellationRegistry cancellations
+            RunCancellationRegistry cancellations,
+            RunFinalizationPolicy finalizationPolicy
     ) {
         this.runFacts = runFacts;
         this.contexts = contexts;
@@ -78,6 +80,7 @@ public class AgenticRoundCoordinator {
         this.supplementInjections = supplementInjections;
         this.stopRequests = stopRequests;
         this.cancellations = cancellations;
+        this.finalizationPolicy = finalizationPolicy;
     }
 
     public Mono<RoundAdvance> advance(
@@ -236,6 +239,11 @@ public class AgenticRoundCoordinator {
                     if (visibleText.isBlank()) {
                         answerStreams.discard(started.attempt().attemptId());
                     } else {
+                        boolean finalizationRetry = result.toolCalls().isEmpty()
+                                && !"max_tokens".equals(result.stopReason())
+                                && finalizationPolicy.evaluate(
+                                        started.run().runId()
+                                ).continueRun();
                         answerStreams.complete(
                                 started.run(),
                                 round,
@@ -245,6 +253,7 @@ public class AgenticRoundCoordinator {
                                         && !"max_tokens".equals(
                                                 result.stopReason()
                                         )
+                                        && !finalizationRetry
                                         ? "final"
                                         : "stage"
                         );

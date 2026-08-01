@@ -89,6 +89,12 @@ public class ProviderMessageCompiler {
                                 Role.USER,
                                 new TextPart(directive.text())
                         );
+                case ModelInputItem.FinalizationDirective directive ->
+                        append(
+                                messages,
+                                Role.USER,
+                                new TextPart(directive.text())
+                        );
                 case ModelInputItem.AssistantToolCall call ->
                         append(messages, Role.ASSISTANT, new ToolCallPart(
                                 call.toolCallId(),

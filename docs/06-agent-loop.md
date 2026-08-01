@@ -152,6 +152,13 @@ payload。Python 或其他受限计算环境以后只消费显式输入、产出
 行动决策隔离，两个角色读取同一版本化 Task Definition，并通过 Work State/Evidence 交换
 结构化结果；它们不共享隐式“记忆”，也不能各自改写一份目标。
 
+Task Ledger 一旦被当前 Run 主动创建或更新，就参与一次有界的收尾一致性检查：模型返回
+无 ToolCall 的答案，但该 Ledger head 仍是 `active` 时，Backend 把这段回答保留为 stage，
+并最多追加一个 Round，明确要求模型继续完成，或把状态如实改成 blocked/paused/completed。
+这不是让代码判断开放目标是否真正完成，也不扫描用户措辞猜“是否需要写操作”；没有在
+当前 Run 使用 Ledger 的短对话完全不受影响。一次提醒后仍无行动则正常收尾，避免 readiness
+机制自身形成昂贵循环。
+
 ### 8.1 Runtime Pulse 不是任务状态
 
 每个 Round 在模型上下文末端加入一条由 Backend 计算的有界 Runtime Pulse：

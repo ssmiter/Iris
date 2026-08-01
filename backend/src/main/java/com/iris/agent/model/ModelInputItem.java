@@ -133,6 +133,14 @@ public sealed interface ModelInputItem {
     ) implements ModelInputItem {
     }
 
+    /** A bounded host consistency nudge, never a user-authored message. */
+    record FinalizationDirective(
+            String taskId,
+            int stateVersion,
+            String text
+    ) implements ModelInputItem {
+    }
+
     record AssistantToolCall(
             String attemptId,
             String toolCallId,

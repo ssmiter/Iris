@@ -56,6 +56,10 @@ postcondition 已在各自 Runtime 内验证；Run 收尾只确认 ToolCall/Exec
 开放任务是否真正满足用户目标不能由一个通用 `succeeded` 状态臆测。可机械验证的场景
 应把验证放在对应工具或领域环境内；内容质量需要独立模态时再按场景引入 Reviewer。
 Run succeeded 只表示本次 Harness 轨迹正常闭合，不等价于所有现实目标都客观达成。
+唯一的通用收尾门只检查 Harness 自身产生的明显矛盾：当前 Run 已写入的 Task Work State
+仍为 active，却直接给出终稿。它最多派生一次带版本号的 finalization directive；指令进入
+动态上下文而非稳定 System Prompt，也不伪装成用户 Message。模型若继续调用工具或更新
+Ledger，仍走普通 Round；若再次选择结束，内核不无限阻拦。
 
 ### Round
 

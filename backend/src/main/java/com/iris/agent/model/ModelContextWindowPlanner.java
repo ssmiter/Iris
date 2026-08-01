@@ -104,6 +104,9 @@ public class ModelContextWindowPlanner {
                     ModelInputItem.ContinuationDirective.class::isInstance
             )
                     || groups.get(index).items().stream().anyMatch(
+                    ModelInputItem.FinalizationDirective.class::isInstance
+            )
+                    || groups.get(index).items().stream().anyMatch(
                     ModelInputItem.TaskWorkState.class::isInstance
             )
                     || groups.get(index).items().stream().anyMatch(
