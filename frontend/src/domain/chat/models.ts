@@ -289,6 +289,7 @@ export interface CompactionView {
   conversationId: string
   branchId: string
   phase: 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled'
+  trigger: 'manual' | 'auto'
   parentContextFrameId: string
   sourceStartSequence: number
   waterlineSequence: number

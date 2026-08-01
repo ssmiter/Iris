@@ -21,23 +21,28 @@ import java.util.UUID;
 
 @Repository
 public class CompactionRepository {
+    private static final int MIN_REFERENCE_PROJECTION_CHARACTERS = 2_048;
+
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
     private final ModelTokenEstimator tokens;
+    private final ToolResultContextProjector contextProjector;
 
     public CompactionRepository(
             JdbcClient jdbc,
             ObjectMapper objectMapper,
-            ModelTokenEstimator tokens
+            ModelTokenEstimator tokens,
+            ToolResultContextProjector contextProjector
     ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.tokens = tokens;
+        this.contextProjector = contextProjector;
     }
 
     public SourceSnapshot buildSource(CompactPlan plan) {
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("schemaVersion", 1);
+        payload.put("schemaVersion", 2);
         payload.put("parentFrameId", plan.parentFrameId());
         payload.put("sourceStartSequence", plan.sourceStartSequence());
         payload.put("waterlineSequence", plan.waterlineSequence());
@@ -64,8 +69,14 @@ public class CompactionRepository {
             String roundId,
             CompactPlan plan,
             SourceSnapshot source,
+            String trigger,
             Instant now
     ) {
+        if (!"manual".equals(trigger) && !"auto".equals(trigger)) {
+            throw new IllegalArgumentException(
+                    "Compaction trigger must be manual or auto"
+            );
+        }
         jdbc.sql("""
                 INSERT INTO agent_run(
                     run_id, conversation_id, branch_id, turn_id,
@@ -73,7 +84,7 @@ public class CompactionRepository {
                     phase, version, started_at, ended_at
                 ) VALUES (
                     :runId, :conversationId, :branchId, :turnId,
-                    NULL, :runId, 'pipeline', 'compact_context',
+                    NULL, :runId, 'pipeline', :purpose,
                     'running', 1, :now, NULL
                 )
                 """)
@@ -81,6 +92,12 @@ public class CompactionRepository {
                 .param("conversationId", plan.conversationId())
                 .param("branchId", plan.branchId())
                 .param("turnId", plan.operationAnchorTurnId())
+                .param(
+                        "purpose",
+                        "auto".equals(trigger)
+                                ? "compact_context_auto"
+                                : "compact_context"
+                )
                 .param("now", now.toString())
                 .update();
         jdbc.sql("""
@@ -168,7 +185,12 @@ public class CompactionRepository {
                 SELECT compact.*, source.content_hash,
                        source.payload_json, source.fact_count,
                        source.estimated_tokens, round.round_id,
-                       run.phase AS agent_run_phase
+                       run.phase AS agent_run_phase,
+                       CASE
+                         WHEN run.purpose = 'compact_context_auto'
+                         THEN 'auto'
+                         ELSE 'manual'
+                       END AS trigger
                 FROM compaction_run compact
                 JOIN compaction_source_snapshot source
                   ON source.snapshot_id = compact.source_snapshot_id
@@ -182,6 +204,7 @@ public class CompactionRepository {
                         rs.getString("conversation_id"),
                         rs.getString("branch_id"),
                         rs.getString("phase"),
+                        rs.getString("trigger"),
                         rs.getString("parent_frame_id"),
                         rs.getLong("source_start_sequence"),
                         rs.getLong("waterline_sequence"),
@@ -209,6 +232,7 @@ public class CompactionRepository {
                 row.conversationId(),
                 row.branchId(),
                 row.phase(),
+                row.trigger(),
                 row.parentFrameId(),
                 row.sourceStartSequence(),
                 row.waterlineSequence(),
@@ -396,7 +420,11 @@ public class CompactionRepository {
                            'user' AS fact_kind, message.message_id AS fact_id,
                            message.content AS text_content,
                            NULL AS tool_name, NULL AS json_content,
-                           NULL AS outcome_kind
+                           NULL AS outcome_kind,
+                           NULL AS execution_id,
+                           NULL AS resolved_tool_name,
+                           NULL AS manifest_hash,
+                           NULL AS payload_hash
                     FROM message
                     JOIN conversation_event event
                       ON event.turn_id = message.turn_id
@@ -418,7 +446,8 @@ public class CompactionRepository {
                            10 + block.block_index,
                            block.block_kind, block.block_id,
                            block.text_content, call.tool_name,
-                           call.arguments_json, NULL
+                           call.arguments_json, NULL,
+                           NULL, NULL, NULL, NULL
                     FROM model_attempt attempt
                     JOIN agent_round round
                       ON round.round_id = attempt.round_id
@@ -448,10 +477,18 @@ public class CompactionRepository {
                            'tool_result', observation.observation_id,
                            NULL, call.tool_name,
                            observation.content_json,
-                           observation.outcome_kind
+                           observation.outcome_kind,
+                           execution.execution_id,
+                           execution.tool_name,
+                           execution.manifest_hash,
+                           payload.content_hash
                     FROM tool_observation observation
                     JOIN model_tool_call call
                       ON call.tool_call_id = observation.tool_call_id
+                    JOIN tool_execution execution
+                      ON execution.execution_id = observation.execution_id
+                    LEFT JOIN tool_output_payload payload
+                      ON payload.execution_id = execution.execution_id
                     JOIN model_attempt attempt
                       ON attempt.attempt_id = call.attempt_id
                     JOIN agent_round round
@@ -495,7 +532,34 @@ public class CompactionRepository {
                     if (json == null) {
                         fact.putNull("content");
                     } else {
-                        fact.set("content", read(json));
+                        JsonNode content = read(json);
+                        String visibleToolName = rs.getString("tool_name");
+                        String resolvedToolName = rs.getString(
+                                "resolved_tool_name"
+                        );
+                        if (resolvedToolName != null
+                                && !resolvedToolName.equals(visibleToolName)) {
+                            fact.put("resolvedToolName", resolvedToolName);
+                        }
+                        if (json.length()
+                                >= MIN_REFERENCE_PROJECTION_CHARACTERS
+                                && contextProjector.canReplace(
+                                rs.getString("outcome_kind"),
+                                rs.getString("execution_id"),
+                                rs.getString("payload_hash"),
+                                resolvedToolName,
+                                rs.getString("manifest_hash")
+                        )) {
+                            content = contextProjector.toReference(
+                                    content,
+                                    visibleToolName,
+                                    resolvedToolName,
+                                    rs.getString("execution_id"),
+                                    rs.getString("payload_hash")
+                            );
+                            fact.put("contextProjection", "reference");
+                        }
+                        fact.set("content", content);
                     }
                     putNullable(
                             fact,
@@ -563,6 +627,7 @@ public class CompactionRepository {
             String conversationId,
             String branchId,
             String phase,
+            String trigger,
             String parentFrameId,
             long sourceStartSequence,
             long waterlineSequence,

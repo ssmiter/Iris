@@ -1,11 +1,6 @@
 package com.iris.agent.model;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
-import com.iris.tools.core.ToolManifest.ContextRetention;
-import com.iris.tools.core.ToolRegistry;
-import com.iris.tools.core.ToolRegistry.ToolBinding;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
@@ -28,21 +23,18 @@ public class ToolObservationMicroCompactor {
     private static final double TARGET_WATERLINE = 0.60;
     private static final int KEEP_RECENT_REFETCHABLE = 6;
 
-    private final ToolRegistry tools;
     private final JdbcClient jdbc;
-    private final ObjectMapper objectMapper;
+    private final ToolResultContextProjector contextProjector;
     private final ModelTokenEstimator tokens;
     private final Clock clock = Clock.systemUTC();
 
     public ToolObservationMicroCompactor(
-            ToolRegistry tools,
             JdbcClient jdbc,
-            ObjectMapper objectMapper,
+            ToolResultContextProjector contextProjector,
             ModelTokenEstimator tokens
     ) {
-        this.tools = tools;
         this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
+        this.contextProjector = contextProjector;
         this.tokens = tokens;
     }
 
@@ -65,7 +57,7 @@ public class ToolObservationMicroCompactor {
                     && frozen.contains(result.observationId())) {
                 ModelInputItem.ToolResult replacement = compacted(
                         result,
-                        callNames.get(result.toolCallId())
+                        effectiveToolName(result, callNames)
                 );
                 tokensSaved += Math.max(
                         0,
@@ -100,7 +92,7 @@ public class ToolObservationMicroCompactor {
                     && !frozen.contains(result.observationId())
                     && refetchable(
                             result,
-                            callNames.get(result.toolCallId())
+                            effectiveToolName(result, callNames)
                     )) {
                 candidates.add(index);
             }
@@ -117,7 +109,7 @@ public class ToolObservationMicroCompactor {
             int itemIndex = candidates.get(candidateIndex);
             ModelInputItem.ToolResult result =
                     (ModelInputItem.ToolResult) projected.get(itemIndex);
-            String toolName = callNames.get(result.toolCallId());
+            String toolName = effectiveToolName(result, callNames);
             ModelInputItem.ToolResult replacement = compacted(
                     result,
                     toolName
@@ -159,7 +151,7 @@ public class ToolObservationMicroCompactor {
             if (item instanceof ModelInputItem.ToolResult result
                     && !refetchable(
                     result,
-                    names.get(result.toolCallId())
+                    effectiveToolName(result, names)
             )) {
                 pinned.add(result.observationId());
             }
@@ -177,35 +169,29 @@ public class ToolObservationMicroCompactor {
                 || toolName == null) {
             return false;
         }
-        ToolBinding binding = tools.find(toolName).orElse(null);
-        return binding != null
-                && binding.manifestHash().equals(result.manifestHash())
-                && binding.manifest().contextRetention()
-                == ContextRetention.REFETCHABLE;
+        return contextProjector.canReplace(
+                result.outcomeKind(),
+                result.executionId(),
+                result.payloadHash(),
+                toolName,
+                result.manifestHash()
+        );
     }
 
     private ModelInputItem.ToolResult compacted(
             ModelInputItem.ToolResult result,
             String toolName
     ) {
-        ObjectNode content = result.content().isObject()
-                ? ((ObjectNode) result.content()).deepCopy()
-                : objectMapper.createObjectNode();
-        content.put("toolName", toolName == null ? "unknown" : toolName);
-        content.put("status", "succeeded");
-        content.put("isError", false);
-        ObjectNode output = objectMapper.createObjectNode();
-        output.put("microCompacted", true);
-        output.put(
-                "resultReference",
-                "tool-result://" + result.executionId()
+        String visibleToolName = result.content()
+                .path("toolName")
+                .asText(null);
+        var content = contextProjector.toReference(
+                result.content(),
+                visibleToolName,
+                toolName,
+                result.executionId(),
+                result.payloadHash()
         );
-        output.put("contentHash", result.payloadHash());
-        output.put(
-                "guidance",
-                "旧的可重取结果已从当前视野收敛；需要原文时调用 read_tool_result"
-        );
-        content.set("output", output);
         return new ModelInputItem.ToolResult(
                 result.assistantAttemptId(),
                 result.observationId(),
@@ -227,6 +213,19 @@ public class ToolObservationMicroCompactor {
             }
         }
         return names;
+    }
+
+    private String effectiveToolName(
+            ModelInputItem.ToolResult result,
+            Map<String, String> visibleNames
+    ) {
+        String resolved = result.content()
+                .path("resolvedToolName")
+                .asText("")
+                .trim();
+        return resolved.isBlank()
+                ? visibleNames.get(result.toolCallId())
+                : resolved;
     }
 
     private Set<String> frozenDecisions(String conversationId) {

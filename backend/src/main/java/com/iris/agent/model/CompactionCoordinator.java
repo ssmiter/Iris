@@ -361,7 +361,7 @@ public final class CompactionCoordinator {
                             0
                     );
                     CompactBoundary boundary =
-                            frames.record(plan, "manual", summary);
+                            frames.record(plan, row.trigger(), summary);
                     compactions.complete(
                             row.runId(),
                             boundary.boundaryId(),

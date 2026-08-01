@@ -14,6 +14,10 @@ Provider 工具定义来自稳定的常驻闭环原语集。领域 Definition �
 进入动态历史，预算不足时只能减少当前历史视野，不能把全量能力目录换成摘要，也不能
 拆开 `assistant tool call -> tool result`。
 
+通过 `invoke_capability` 产生的结果在协议配对上仍属于代理 ToolCall，但 retention、
+可重取性与 micro-compaction 必须按不可变 Resolution 指向的真实 Manifest 判断。否则
+所有领域结果都会继承代理的 pinned 策略，稳定调用入口反而阻断上下文收敛。
+
 Tool output payload、Tool Observation 与 Context projection 是三层不同实体：payload
 保存完整结果，Observation 保存当时实际回注模型的不可变内容，Context projection
 决定某次 attempt 是否还能看见它。清理 projection 不能反向改写前两层。
@@ -131,6 +135,9 @@ base Frame 的上下文 + base waterline 到目标位置的 canonical facts
   Frame，并把它固定为子分支 head；不能选择覆盖了分叉点或其后事实的 Frame。
 - 祖先分支在分叉点之后的水位线、Turn 和 summary 都不可泄露给子分支。
 - 父分支在子分支创建后形成的新 Frame 不得追溯性改变子分支 head；历史重放必须稳定。
+- 新 Agentic Run 在接受用户请求时把当时的 Context Frame 记入 Definition snapshot；
+  同一 Run 的后续 Round 始终沿这条固定 Frame 组装历史。后台 Compact 可以推进分支 head，
+  但只影响此后接受的新 Run，不能在正在执行的工具链中途切换水位线。
 - 子分支可以在继承水位线之上继续 Compact；新 summary 的 source range 从上一条
   有效水位线开始，到新水位线结束，不能重复注入已覆盖事实。
 - Compact 的 cutoff 必须是所选分支可见路径上的 Turn，并且覆盖区间内所有
@@ -144,12 +151,21 @@ base Frame 的上下文 + base waterline 到目标位置的 canonical facts
 
 ## 8. Compact Pipeline
 
+自动 Compact 是低频 Backend maintenance，不是一个交给模型选择的 Tool。一个 Agentic Run
+成功并把 Turn 完全落盘后，若最后一次 Context snapshot 已达到高水位，或 Window Planner
+已经不得不丢弃旧事实，Backend 才尝试启动；仍需满足“当前 head 后有足够多的已闭合 Turn、
+保留最近四个 Turn、同分支没有另一条 Compact”这些确定性前置条件。不满足就安静跳过，
+不能为了整理上下文阻断刚完成的用户结果。自动与手动使用同一套 source snapshot、模型
+摘要、Frame CAS 和 SSE 协议，只是 Boundary trigger 不同。
+
 手动 Compact 不接受 Frontend 指定 cutoff 或 summary。Backend 在 Conversation lock
 内完成以下 Prepare：
 
 1. 从当前 head 之后的已闭合可见 Turn 中选择水位线，并保留最近四个 Turn；
 2. 冻结 `parent Frame summary + (parent waterline, new waterline)` 中的 canonical
-   user、assistant、ToolCall 和 ToolObservation；
+   user、assistant、ToolCall 和 ToolObservation；构造摘要输入时，较大的 succeeded
+   可重取结果先机械投影为 `tool-result://` + content hash，错误、写入影响、
+   `outcome_unknown` 与不可重取证据保持原样；
 3. 保存带 content hash 的 `compaction_source_snapshot`；
 4. 创建 `kind=pipeline` 的 Run、单个模型步骤和 `compaction_run` 投影；
 5. 写入 `compaction.started` 后异步唤醒。

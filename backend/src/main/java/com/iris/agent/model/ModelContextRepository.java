@@ -61,10 +61,21 @@ public class ModelContextRepository {
                 context_head AS (
                     SELECT frame.frame_id, frame.frame_kind,
                            frame.waterline_sequence
-                    FROM branch_context_head head
+                    FROM target t
+                    LEFT JOIN run_definition_snapshot snapshot
+                      ON snapshot.run_id = t.target_run_id
+                    JOIN branch_context_head head
+                      ON head.branch_id = :branchId
                     JOIN context_frame frame
-                      ON frame.frame_id = head.frame_id
-                    WHERE head.branch_id = :branchId
+                      ON frame.frame_id = CASE
+                           WHEN snapshot.dependency_snapshot_ref
+                                LIKE 'context-frame:%'
+                           THEN substr(
+                                snapshot.dependency_snapshot_ref,
+                                length('context-frame:') + 1
+                           )
+                           ELSE head.frame_id
+                         END
                 ),
                 boundary AS (
                     SELECT cb.boundary_id, cs.summary_text,

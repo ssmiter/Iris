@@ -26,6 +26,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -101,6 +102,23 @@ public final class CompactionCommandService {
         return result.response();
     }
 
+    public Optional<CreateCompactionResponse> createAuto(
+            String conversationId,
+            String branchId
+    ) {
+        CommandResult result = locks.withLock(conversationId, () ->
+                transactions.execute(status -> createAutoOnce(
+                        conversationId,
+                        branchId
+                ))
+        );
+        if (result == null) {
+            return Optional.empty();
+        }
+        eventHub.publish(result.events());
+        return Optional.of(result.response());
+    }
+
     private CommandResult createOnce(
             String conversationId,
             String idempotencyKey,
@@ -137,6 +155,49 @@ public final class CompactionCommandService {
                     exception.getMessage()
             );
         }
+        CommandResult result = createRun(
+                conversationId,
+                request.branchId(),
+                plan,
+                "manual"
+        );
+        conversations.insertIdempotency(
+                conversationId,
+                ENDPOINT,
+                idempotencyKey,
+                requestHash,
+                HttpStatus.ACCEPTED.value(),
+                write(result.response()),
+                clock.instant()
+        );
+        return result;
+    }
+
+    private CommandResult createAutoOnce(
+            String conversationId,
+            String branchId
+    ) {
+        if (!conversations.branchBelongsToConversation(
+                branchId,
+                conversationId
+        ) || compactFacts.hasActive(conversationId, branchId)) {
+            return null;
+        }
+        CompactPlan plan;
+        try {
+            plan = compactions.planManual(conversationId, branchId);
+        } catch (IllegalStateException exception) {
+            return null;
+        }
+        return createRun(conversationId, branchId, plan, "auto");
+    }
+
+    private CommandResult createRun(
+            String conversationId,
+            String branchId,
+            CompactPlan plan,
+            String trigger
+    ) {
         SourceSnapshot source = compactFacts.buildSource(plan);
         String runId = id("run");
         String roundId = id("round");
@@ -146,6 +207,7 @@ public final class CompactionCommandService {
                 roundId,
                 plan,
                 source,
+                trigger,
                 now
         );
         CompactionView view = compactFacts.view(runId).orElseThrow();
@@ -156,7 +218,7 @@ public final class CompactionCommandService {
                 eventId,
                 "compaction.started",
                 conversationId,
-                request.branchId(),
+                branchId,
                 plan.operationAnchorTurnId(),
                 runId,
                 null,
@@ -175,15 +237,6 @@ public final class CompactionCommandService {
         conversations.incrementConversationVersion(conversationId, now);
         CreateCompactionResponse response =
                 new CreateCompactionResponse(runId, eventId);
-        conversations.insertIdempotency(
-                conversationId,
-                ENDPOINT,
-                idempotencyKey,
-                requestHash,
-                HttpStatus.ACCEPTED.value(),
-                write(response),
-                now
-        );
         return new CommandResult(response, List.of(event));
     }
 

@@ -409,13 +409,26 @@ public class ConversationRepository {
                     tool_calls_limit, time_limit_ms
                 ) VALUES (
                     :runId, 'iris.agentic.default', '1', :snapshotHash,
-                    :normalizedInputHash, NULL, 30, 600000
+                    :normalizedInputHash, :contextFrameRef, 30, 600000
                 )
                 """)
                 .param("runId", runId)
                 .param("snapshotHash", snapshotHash)
                 .param("normalizedInputHash", normalizedInputHash)
+                .param("contextFrameRef", contextFrameRef(branchId))
                 .update();
+    }
+
+    private String contextFrameRef(String branchId) {
+        String frameId = jdbc.sql("""
+                SELECT frame_id
+                FROM branch_context_head
+                WHERE branch_id = :branchId
+                """)
+                .param("branchId", branchId)
+                .query(String.class)
+                .single();
+        return "context-frame:" + frameId;
     }
 
     public long incrementConversationVersion(String conversationId, Instant now) {

@@ -32,6 +32,7 @@ public final class CompactionViews {
             String conversationId,
             String branchId,
             String phase,
+            String trigger,
             String parentContextFrameId,
             long sourceStartSequence,
             long waterlineSequence,

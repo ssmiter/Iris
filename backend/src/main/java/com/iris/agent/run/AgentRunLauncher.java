@@ -2,6 +2,7 @@ package com.iris.agent.run;
 
 import com.iris.agent.model.provider.IrisModelProperties;
 import com.iris.agent.model.provider.ModelProviderRegistry;
+import com.iris.agent.model.AutoCompactionService;
 import com.iris.workspace.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,7 @@ public class AgentRunLauncher implements ApplicationRunner {
     private final IrisModelProperties model;
     private final WorkspaceService workspace;
     private final RunCancellationRegistry cancellations;
+    private final AutoCompactionService autoCompactions;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
 
     public AgentRunLauncher(
@@ -36,7 +38,8 @@ public class AgentRunLauncher implements ApplicationRunner {
             ModelProviderRegistry providers,
             IrisModelProperties model,
             WorkspaceService workspace,
-            RunCancellationRegistry cancellations
+            RunCancellationRegistry cancellations,
+            AutoCompactionService autoCompactions
     ) {
         this.runs = runs;
         this.facts = facts;
@@ -44,6 +47,7 @@ public class AgentRunLauncher implements ApplicationRunner {
         this.model = model;
         this.workspace = workspace;
         this.cancellations = cancellations;
+        this.autoCompactions = autoCompactions;
     }
 
     public boolean launch(String runId) {
@@ -94,6 +98,7 @@ public class AgentRunLauncher implements ApplicationRunner {
                         stopWakeup
                 );
         advance
+                .doOnSuccess(ignored -> autoCompactions.consider(runId))
                 .doOnError(error -> log.error(
                         "Agentic Run {} stopped unexpectedly",
                         runId,

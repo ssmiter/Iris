@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Optional;
 
 @Repository
 public class ModelContextSnapshotRepository {
@@ -145,6 +146,43 @@ public class ModelContextSnapshotRepository {
             throw new IllegalStateException(
                     "Capability exposure set does not match context snapshot"
             );
+        }
+    }
+
+    public Optional<ContextPressure> latestPressure(String runId) {
+        return jdbc.sql("""
+                SELECT estimated_input_tokens, max_input_tokens,
+                       reserved_output_tokens, dropped_fact_count
+                FROM model_context_snapshot snapshot
+                JOIN agent_round round
+                  ON round.round_id = snapshot.round_id
+                WHERE snapshot.run_id = :runId
+                ORDER BY round.round_index DESC,
+                         snapshot.created_at DESC,
+                         snapshot.context_hash DESC
+                LIMIT 1
+                """)
+                .param("runId", runId)
+                .query((rs, rowNum) -> new ContextPressure(
+                        rs.getInt("estimated_input_tokens"),
+                        rs.getInt("max_input_tokens"),
+                        rs.getInt("reserved_output_tokens"),
+                        rs.getInt("dropped_fact_count")
+                ))
+                .optional();
+    }
+
+    public record ContextPressure(
+            int estimatedInputTokens,
+            int maxInputTokens,
+            int reservedOutputTokens,
+            int droppedFactCount
+    ) {
+        public double inputRatio() {
+            int usable = maxInputTokens - reservedOutputTokens;
+            return usable <= 0
+                    ? 1.0
+                    : (double) estimatedInputTokens / usable;
         }
     }
 

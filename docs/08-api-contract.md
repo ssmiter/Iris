@@ -709,6 +709,7 @@ Idempotency-Key: compact-opaque
   "conversationId": "conv_opaque",
   "branchId": "branch_opaque",
   "phase": "running",
+  "trigger": "manual",
   "compactBoundaryId": null,
   "failure": null,
   "version": 2
@@ -719,7 +720,9 @@ Idempotency-Key: compact-opaque
 GET /api/v1/compactions/{runId}
 ```
 
-刷新时也可从 `ConversationView.compactionsById` 恢复。它经 `compaction.started / completed / failed / cancelled` 事件闭合；失败不产生半截 Boundary。
+`trigger` 为 `manual | auto`；自动整理只由 Backend 在已结算 Turn 后按 Context pressure
+低频触发，不新增另一套状态机。刷新时也可从 `ConversationView.compactionsById` 恢复。
+它经 `compaction.started / completed / failed / cancelled` 事件闭合；失败不产生半截 Boundary。
 
 ## 7. Approval
 

@@ -924,10 +924,16 @@ public class ConversationQueryRepository {
         Map<String, JsonNode> result = new LinkedHashMap<>();
         jdbc.sql("""
                 SELECT run.*, source.fact_count,
-                       source.estimated_tokens
+                       source.estimated_tokens,
+                       CASE
+                         WHEN agent.purpose = 'compact_context_auto'
+                         THEN 'auto'
+                         ELSE 'manual'
+                       END AS trigger
                 FROM compaction_run run
                 JOIN compaction_source_snapshot source
                   ON source.snapshot_id = run.source_snapshot_id
+                JOIN agent_run agent ON agent.run_id = run.run_id
                 WHERE run.conversation_id = :conversationId
                   AND run.branch_id = :branchId
                 ORDER BY run.requested_at, run.run_id
@@ -943,6 +949,7 @@ public class ConversationQueryRepository {
                     );
                     node.put("branchId", rs.getString("branch_id"));
                     node.put("phase", rs.getString("phase"));
+                    node.put("trigger", rs.getString("trigger"));
                     node.put(
                             "parentContextFrameId",
                             rs.getString("parent_frame_id")
