@@ -656,7 +656,7 @@ flowchart LR
 | Definition status | 这个不可变版本是否仍推荐用于新调用 | `active → deprecated → retired` |
 | Registration validation | provider 本次提交能否进入 Registry | `accepted / rejected`，是注册结果而非长期状态 |
 | Binding availability | 当前 executor/provider 能否承接这个版本 | `available / degraded / unavailable`，带 `checkedAt / lastSeenAt` |
-| Capability Exposure | 某个 Context/attempt 实际看到了什么 | 不可变事实：`card / manifest / active_schema` |
+| Capability Exposure | 某个 Context/attempt 实际看到了什么 | 常驻 schema、读取的 Definition 与代理 resolution 分层保存 |
 | ToolExecution | 这次真实调用怎样结束 | docs/13 的 prepare、approval、execute、verify、reconcile 状态机 |
 
 这些轴的 ID 和状态不能互相代替。Definition 不会因为客户端关闭或 provider 暂时缺席而变成 unavailable；变化的是当前 binding。模型没有看到某能力不构成安全边界；binding available 也不代表 schema 必须进入当前上下文；历史 ToolCall 已完成更不意味着其 schema 永久驻留。
@@ -665,53 +665,53 @@ Capability version 不可变。路径是发现位置，不是历史身份；移�
 
 Registry 的当前 binding 来自启动时实际 provider；SQLite 另外保存见过且被历史引用的 Manifest snapshot 与生命周期变更。前者回答“现在能不能执行”，后者保证“过去究竟调用了什么”永远可解释；内存 Catalog 索引可以随时重建。
 
-### 10.2 Capability Working Set
+### 10.2 稳定工具表面与当前能力视野
 
-每个 Model Step 都由 ContextPlanner 从零构造一个有预算的能力工作集：
+每个 Model Step 使用同一份有界、稳定的 Provider 工具表面：
 
 ```text
 始终存在的小型发现原语
 → 搜索/目录返回轻量 Capability Card
 → 模型按需 inspect 少量 Manifest
-→ 对本 Model Step 激活有限 schema lease
-→ 调用、完成或失去相关性后 evict
+→ invoke_capability 提交 path + Manifest hash + arguments
+→ Runtime 解析、核验并执行真实 binding
 ```
 
-大量 search/card 结果作为 ContextFrame 输入或结果 Artifact 的引用保存，不为每张卡制造生命周期记录。只有模型精确 inspect 或激活 schema 时，才持久化 `CapabilityExposure`：
+大量 search/card 结果作为 ContextFrame 输入或结果 Artifact 的引用保存，不为每张卡制造生命周期记录。模型精确 inspect 时持久化 Definition observation；调用时同时保留 Provider 可见代理 Exposure 与真实 resolution：
 
 ```text
 modelStepId
 capabilityId + manifestVersion
-exposureKind: card | manifest | active_schema
+exposureKind: resident_schema | inspected_manifest | proxy_resolution
 source: directory | search | parent_pipeline | explicit_user_choice
 reason / query reference
 tokenCost
 ```
 
-active schema lease 精确绑定：
+代理调用精确绑定：
 
 ```text
-contextFrameId
-+ modelStepId
-+ modelAttemptId
-+ capabilityId / manifestVersion / schemaHash
+modelAttemptId + proxyExposure
++ inspected Definition observation
++ capabilityPath / manifestVersion / manifestHash
++ immutable target resolution
 ```
 
-它允许该 attempt 产生的 ToolCall 在持久化和终结前引用对应 schema。Agentic ToolCall 必须 durable link 到这条 `active_schema` exposure；Pipeline 的冻结依赖不冒充模型 exposure，只有 Pipeline 明确把 schema 注入某个模型 Context 时才记录 `source=parent_pipeline`。新的 provider fallback attempt 必须获得新的 Context Frame/lease，旧 attempt 的迟到输出不能执行。
+Provider transcript 始终保留 `invoke_capability` 的名称和参数，审批、Evidence、ToolExecution 与前端呈现则使用真实目标。Pipeline 的冻结依赖不冒充模型 exposure；新的 provider fallback attempt 必须获得新的 Context Frame，旧 attempt 的迟到输出不能执行。
 
-lease 不是权限。Runtime 在 invocation 时仍重查精确 binding、schema、policy、Resource Claims 和目标版本。重启时，已落盘 ToolCall 使用其 exposure 和 pinned Manifest snapshot 恢复；当前 binding 缺失就闭合为 `capability_unavailable`，不能静默换新版本。未提交的模型输出则新建 attempt 和 lease。
+代理也不是权限。Runtime 在 invocation 时仍重查 inspect provenance、精确 binding、schema、policy、Resource Claims 和目标版本。重启时，已落盘 ToolCall 使用其 exposure、resolution 和 pinned Manifest snapshot 恢复；当前 binding 缺失就闭合为 `capability_unavailable`，不能静默换新版本。
 
-ContextPlanner 可以在下一 Model Step 重新激活仍相关的 schema，但必须重新计入预算并检查 version/binding availability。模型调用未在 active lease 中的 Tool 时，Orchestration 返回“先发现并读取 Manifest”的闭合 observation。
+Definition 读取结果位于普通动态历史中；被窗口收敛后可通过完整结果引用读回。模型未 inspect 就调用、提交旧 hash 或目标 binding 已变化时，Runtime 返回闭合 observation，要求重新读取而不是猜测迁移。
 
 ### 10.3 长对话、数百次调用与压缩
 
 一次 Turn 即使调用数百次 Tool，也不能把所有历史 schema 和 raw result 追加进以后每个 prompt：
 
 - canonical history 永久保存 ToolCall、Manifest version、input/result/evidence 引用；
-- Context Frame 只选当前目标需要的结果摘要、Fact/Artifact ref 和 active schema；
+- Context Frame 只选当前目标需要的结果摘要、Fact/Artifact ref 和 Definition observation；
 - canonical ToolCall/Exposure 永久保存完整 provenance；
-- CompactBoundary 只引用 source event range、summary Artifact、结构化 fact refs，以及未来求解明确需要的少量 capability hints；不复制“全部用过的 ID”，也不携带 active lease；
-- 压缩后若仍需要某能力，重新 inspect/activate 当前可用版本；
+- CompactBoundary 只引用 source event range、summary Artifact、结构化 fact refs，以及未来求解明确需要的少量 capability hints；不复制“全部用过的 ID”；
+- 压缩后若 Definition 已不在当前视野，按引用读回或重新 inspect 当前版本；
 - 旧版本已 retired 时保留历史可读性，但新执行必须显式迁移或选择当前版本；
 - Tool 结果进入模型视野也有独立预算，大结果通过结构化摘要和引用按需读取。
 
@@ -863,9 +863,12 @@ SQLite 保存结构化事实及对象引用；Managed Object Store 保存不可�
 Workspace 保存用户可理解、可编辑的文件。三者不能互相伪装，首版不引入外部缓存
 中间件。
 
-### D02-09：Capability schema 使用短期 Working Set
+### D02-09：Capability 使用语义 Definition 与稳定执行代理
 
-Catalog 可以有数千能力，但每个 Model attempt 只激活有预算、绑定精确 Context/版本/schema hash 的少量 schema；Context 压缩不继承所有历史 schema，客户端重启后从 durable definition 和 exposure facts 恢复。
+Catalog 可以有数千能力，但 Provider 只长期看到有界常驻原语。模型按需读取精确
+Definition，再以 path + Manifest hash 通过稳定代理调用；Runtime 保存真实 resolution
+并执行目标策略。Context 压缩不把所有历史 schema 提升为系统能力，客户端重启后从
+durable Definition observation、Exposure、Resolution 和 ToolExecution 恢复。
 
 ### D02-10：Agentic 是基础求解器，生活能力是长期研发对象
 

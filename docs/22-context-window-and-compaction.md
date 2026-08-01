@@ -10,8 +10,9 @@
 ToolObservation 或分支事实。每次实际发送的上下文保存为不可变快照，并由
 `model_attempt.context_hash` 精确引用。
 
-工具定义仍来自本轮 schema lease。预算不足时只能减少历史视野，不能偷偷把全量能力
-目录换成摘要，也不能拆开 `assistant tool call -> tool result`。
+Provider 工具定义来自稳定的常驻闭环原语集。领域 Definition 通过能力读取 observation
+进入动态历史，预算不足时只能减少当前历史视野，不能把全量能力目录换成摘要，也不能
+拆开 `assistant tool call -> tool result`。
 
 Tool output payload、Tool Observation 与 Context projection 是三层不同实体：payload
 保存完整结果，Observation 保存当时实际回注模型的不可变内容，Context projection
@@ -29,11 +30,10 @@ Tool output payload、Tool Observation 与 Context projection 是三层不同实
 Provider Profile 后续可以替换为精确 tokenizer，但替换不改变 Planner 契约。预算和
 估算结果写入 `model_context_snapshot`，便于定位 prompt-too-large 与调整误差系数。
 
-Capability lease 还有一个先于整个窗口规划的子预算。三个发现原语是 required
-Definition，必须完整放入；它们自身超限时 fail-close。其余 Definition 只能来自本
-Run 最近成功的 `read_capability`，按新近程度逐个准入，某个 Definition 过大时跳过
-它并继续检查后续候选。快照 payload 同时记录 schema 预算、估算使用量和遗漏数量；
-数量上限只约束候选查询成本，不能充当 schema 成本估算。
+常驻原语集仍有独立 schema 子预算，必须完整放入；它自身超限时 fail-close。领域
+Definition 不再搬入 Provider tools 数组，而是作为 `read_capability` 的不可变 observation
+接受历史窗口预算；完整结果可由稳定引用读回。快照 payload 记录常驻 schema 的预算与
+估算使用量，数量上限只约束目录查询成本，不能充当 Definition 正文成本估算。
 
 ## 3. 裁剪单位
 
@@ -75,12 +75,12 @@ Provider 能否复用前缀缓存不是实现细节，而是 ModelContext 的可
 - `prefixHash` 只标识稳定 System Prompt 与有序 Tool Definition，动态事实不得进入它。
 
 每个 Context snapshot 同时记录 `promptDefinitionId`、`promptVersion`、`promptHash`、`toolSchemaHash` 和
-`prefixHash`。工具顺序是协议的一部分：同一份 lease 必须保持既有 exposure 顺序，不能为了形式整洁逐轮重新排序。
+`prefixHash`。工具顺序是协议的一部分：常驻 Provider 表面必须保持既有 exposure 顺序，不能为了形式整洁逐轮重新排序。
 Prompt 或 Tool Definition 真正变化时允许形成新的前缀；时间、轮次、预算、审批和环境瞬时状态只能追加在动态尾部。
 
 ModelAttempt 记录 Provider 返回的 input、output、cache hit、cache miss 和 reasoning token。不同 Provider
 的字段形态由 adapter 归一化，不能让 Agent Loop 猜测。缓存命中下降时，先比较相邻 attempt 的
-`promptHash`、`toolSchemaHash` 和 Context rewrite，再决定修改 Prompt、lease 还是压缩策略。
+`promptHash`、`toolSchemaHash` 和 Context rewrite，再决定修改 Prompt、常驻工具表面还是压缩策略。
 SQLite 的 `model_attempt_cache_diagnostic` 视图按 Run 顺序给出这些变化与命中率；它只服务诊断，
 不进入模型上下文，也不要求前端默认展示技术指标。
 

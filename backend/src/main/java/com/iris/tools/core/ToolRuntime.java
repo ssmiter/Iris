@@ -79,37 +79,125 @@ public class ToolRuntime {
     ) {
         requireInvocation(invocation, context);
         return withLock(context.conversationId() + ":" + invocation.toolCallId(), () -> {
-            ToolBinding binding = registry.find(invocation.toolName())
+            ToolBinding visibleBinding = registry.find(invocation.toolName())
                     .orElseThrow(() -> new ToolRuntimeException(
                             "tool_not_found",
                             "找不到工具 " + invocation.toolName()
                                     + "；请先通过能力目录发现精确定义"
                     ));
-            ToolContext boundedContext = withDeadline(
-                    context,
-                    binding.manifest()
-            );
-            requireExactModelExposure(invocation, binding);
+            requireExactModelExposure(invocation, visibleBinding);
             String inputHash = hash(write(input));
             RuntimeResult existing = repository.findByToolCall(
                     context.conversationId(),
                     invocation.toolCallId()
             ).orElse(null);
             if (existing != null) {
-                return requireSameInvocation(existing, binding, inputHash);
+                return requireSameInvocation(existing, inputHash);
             }
 
-            validator.validate(binding.manifest().inputSchema(), input);
+            try {
+                validator.validate(
+                        visibleBinding.manifest().inputSchema(),
+                        input
+                );
+            } catch (Exception exception) {
+                return rejectBeforeResolution(
+                        invocation,
+                        inputHash,
+                        context,
+                        visibleBinding,
+                        errorCode(exception, "invalid_tool_input"),
+                        safeMessage(exception)
+                );
+            }
+
+            ToolBinding binding = visibleBinding;
+            JsonNode effectiveInput = input;
+            ToolCallResolver.ResolvedToolCall resolution = null;
+            if (visibleBinding.tool() instanceof ToolCallResolver resolver) {
+                try {
+                    resolution = resolver.resolve(input.deepCopy(), context);
+                    ToolBinding target = registry.find(
+                                    resolution.targetToolName()
+                            )
+                            .orElseThrow(() -> new ToolRuntimeException(
+                                    "resolved_tool_not_found",
+                                    "解析后的真实工具不存在"
+                            ));
+                    if (!target.capabilityPath().equals(
+                            resolution.targetCapabilityPath()
+                    ) || !target.manifestHash().equals(
+                            resolution.targetManifestHash()
+                    )) {
+                        throw new ToolRuntimeException(
+                                "resolved_tool_binding_changed",
+                                "解析后的真实工具定义已经变化"
+                        );
+                    }
+                    binding = target;
+                    effectiveInput = resolution.arguments();
+                } catch (Exception exception) {
+                    return rejectBeforeResolution(
+                            invocation,
+                            inputHash,
+                            context,
+                            visibleBinding,
+                            errorCode(
+                                    exception,
+                                    "tool_resolution_failed"
+                            ),
+                            safeMessage(exception)
+                    );
+                }
+            }
+
+            ToolContext boundedContext = withDeadline(
+                    context,
+                    binding.manifest()
+            );
             String executionId = id("execution");
             Instant now = clock.instant();
-            transactions.executeWithoutResult(status -> repository.insertClaim(
-                    executionId,
-                    invocation,
-                    context,
-                    binding,
-                    inputHash,
-                    now
-            ));
+            ToolBinding effectiveBinding = binding;
+            ToolCallResolver.ResolvedToolCall effectiveResolution = resolution;
+            JsonNode operationInput = effectiveInput;
+            transactions.executeWithoutResult(status -> {
+                repository.insertClaim(
+                        executionId,
+                        invocation,
+                        context,
+                        effectiveBinding,
+                        inputHash,
+                        now
+                );
+                if (effectiveResolution != null) {
+                    String argumentsJson = write(operationInput);
+                    repository.insertResolution(
+                            invocation.toolCallId(),
+                            visibleBinding.manifest().name(),
+                            effectiveResolution,
+                            argumentsJson,
+                            hash(argumentsJson),
+                            now
+                    );
+                }
+            });
+            if (resolution != null) {
+                try {
+                    validator.validate(
+                            binding.manifest().inputSchema(),
+                            effectiveInput
+                    );
+                } catch (Exception exception) {
+                    completeFailure(
+                            executionId,
+                            ToolOutcome.Kind.FAILED,
+                            errorCode(exception, "invalid_tool_input"),
+                            safeMessage(exception),
+                            List.of()
+                    );
+                    return result(executionId);
+                }
+            }
             CapabilityAvailability currentAvailability =
                     availability.current(binding);
             if (!currentAvailability.executable()) {
@@ -136,7 +224,7 @@ public class ToolRuntime {
             PreparedOperation prepared;
             try {
                 prepared = binding.tool().prepare(
-                        input.deepCopy(),
+                        effectiveInput.deepCopy(),
                         boundedContext
                 );
                 validatePrepared(binding, prepared);
@@ -182,7 +270,7 @@ public class ToolRuntime {
             String normalizedInputJson = write(prepared.normalizedInput());
             String resourcesJson = write(prepared.resources());
             String snapshotHash = hash(
-                    binding.manifestHash()
+                    effectiveBinding.manifestHash()
                             + normalizedInputJson
                             + prepared.impactStatement()
                             + resourcesJson
@@ -192,7 +280,7 @@ public class ToolRuntime {
                 repository.insertSnapshot(
                         snapshotId,
                         executionId,
-                        binding.manifestHash(),
+                        effectiveBinding.manifestHash(),
                         normalizedInputJson,
                         prepared.impactStatement(),
                         resourcesJson,
@@ -201,13 +289,13 @@ public class ToolRuntime {
                         now
                 );
                 repository.markPrepared(executionId, snapshotId, now);
-                if (requiresApproval(binding.manifest())) {
+                if (requiresApproval(effectiveBinding.manifest())) {
                     repository.insertApproval(
                             id("approval"),
                             executionId,
                             snapshotHash,
                             prepared.impactStatement(),
-                            binding.manifest().riskLevel(),
+                            effectiveBinding.manifest().riskLevel(),
                             expiresAt,
                             now
                     );
@@ -609,15 +697,8 @@ public class ToolRuntime {
 
     private RuntimeResult requireSameInvocation(
             RuntimeResult existing,
-            ToolBinding binding,
             String inputHash
     ) {
-        if (!existing.toolName().equals(binding.manifest().name())) {
-            throw new ToolRuntimeException(
-                    "tool_call_id_reused",
-                    "同一 toolCallId 已用于不同工具"
-            );
-        }
         if (!repository.inputHash(existing.executionId()).equals(inputHash)) {
             throw new ToolRuntimeException(
                     "tool_call_id_reused",
@@ -625,6 +706,34 @@ public class ToolRuntime {
             );
         }
         return existing;
+    }
+
+    private RuntimeResult rejectBeforeResolution(
+            Invocation invocation,
+            String inputHash,
+            ToolContext context,
+            ToolBinding visibleBinding,
+            String errorCode,
+            String message
+    ) {
+        String executionId = id("execution");
+        Instant now = clock.instant();
+        transactions.executeWithoutResult(status -> repository.insertClaim(
+                executionId,
+                invocation,
+                context,
+                visibleBinding,
+                inputHash,
+                now
+        ));
+        completeFailure(
+                executionId,
+                ToolOutcome.Kind.FAILED,
+                errorCode,
+                message,
+                List.of()
+        );
+        return result(executionId);
     }
 
     private void requireExactModelExposure(

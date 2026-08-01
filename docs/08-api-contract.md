@@ -1038,22 +1038,30 @@ Backend 内部的发现原语遵循分层响应：
 
 ```text
 list/search → 轻量 card
-inspect → 一个精确 version 的 Definition
-activate → 只在有限 model attempt lease 中提供 Tool schema
+inspect → 一个精确 version 的 Definition observation
+invoke → 用 path + Manifest hash 交给稳定代理
 ```
 
-每个 Context Frame 都有 schema token budget。批量 search/card 结果保存为 ContextFrame input/result Artifact 引用；只有精确 inspect 或 active schema 才产生不可变 `CapabilityExposure`。active lease 精确绑定：
+每个 Context Frame 都有常驻 schema token budget。批量 search/card 结果保存为 ContextFrame input/result Artifact 引用；精确 inspect 产生不可变 Definition observation，代理 ToolCall 产生真实 resolution：
 
 ```text
-contextFrameId + modelStepId + modelAttemptId
-+ capabilityId + manifestVersion + schemaHash
+modelAttemptId + proxyExposure
++ inspectedDefinition + capabilityPath
++ manifestVersion + manifestHash + targetResolution
 ```
 
-Agentic ToolCall 必须 durable link 对应 active-schema Exposure。新的 provider fallback attempt 使用新的 Context Frame/lease，旧 attempt 的迟到输出不得执行。重启时，已提交 ToolCall 使用 Exposure 和 pinned Manifest 恢复；binding 缺失闭合为 `capability_unavailable`，不得静默换版本。lease 不是权限，Runtime 仍重新检查 binding、schema、policy、Resource Claims 和 target version。
+Agentic ToolCall 必须 durable link 对应代理 Exposure；非驻留调用还必须链接 inspect provenance
+与真实 target resolution。新的 provider fallback attempt 使用新的 Context Frame，旧 attempt 的
+迟到输出不得执行。重启时，已提交 ToolCall 使用 Exposure、Resolution 和 pinned Manifest
+恢复；binding 缺失闭合为 `capability_unavailable`，不得静默换版本。代理不是权限，Runtime
+仍重新检查 binding、schema、policy、Resource Claims 和 target version。
 
-曾在早期 Round inspect 的 schema，不会因 SSE、ConversationView 或 Compact 自动永久驻留。Compact 不复制全部用过的 ID，只引用 source range、summary/facts 和少量 capability hints；后续需要时重新 discovery/inspect/activate。
+曾在早期 Round inspect 的 schema，不会因 SSE、ConversationView 或 Compact 自动升级为
+常驻工具。Compact 不复制全部用过的 ID，只引用 source range、summary/facts 和少量
+capability hints；后续需要时按结果引用读回或重新 discovery/inspect。
 
-Frontend 不提交 `loadedTools[]`，也不接收当前模型完整 schema working set。它可以浏览 Catalog，但浏览行为不会直接改变 Model Step 的 active lease。
+Frontend 不提交 `loadedTools[]`，也不接收完整 Catalog schema。它可以浏览 Catalog，但浏览
+行为不会授权代理调用；执行资格由 Backend 的 inspect provenance 与 Runtime 核验决定。
 
 ## 9. Workspace 与 Artifact 读取
 

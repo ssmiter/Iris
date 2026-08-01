@@ -74,7 +74,7 @@ public class ModelContextWindowPlanner {
         int available = budget.maxInputTokens() - fixed;
         if (available <= 0) {
             throw new PromptTooLargeException(
-                    "System instruction and capability lease exceed the input budget"
+                    "System instruction and provider tool surface exceed the input budget"
             );
         }
 

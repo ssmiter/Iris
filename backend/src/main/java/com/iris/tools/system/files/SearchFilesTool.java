@@ -252,8 +252,8 @@ public class SearchFilesTool implements Tool {
                 "unavailable".equals(match.availability()))) {
             return "找到相关 Definition，但当前 binding 均不可用；读取卡片中的 availabilityReason，先补齐对应 Application 或 Environment";
         }
-        return "每个 path 都是精确能力地址；available 命中会在下一轮按预算预激活，"
-                + "工具进入 lease 后可直接调用；仍有歧义时再 read_capability";
+        return "每个 path 都是精确能力地址；选择刚好够用的候选后 read_capability，"
+                + "再把返回的 path、manifestHash 与参数交给 invoke_capability";
     }
 
     private String normalizeNamespace(String value) {

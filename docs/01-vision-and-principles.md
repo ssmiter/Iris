@@ -37,7 +37,7 @@ Iris 前期先建设可靠的 Agentic 求解器，因为能力发现、组合和
 | 生产审批 | snapshot-bound Approval + Commit Gate |
 | 批次追溯 | Run/Round/Event、检查点与恢复事实 |
 
-关键洞察：**工具数量会膨胀，但人类和模型的当前注意力都不会膨胀**。目录树让能力可组织，却不能单独解决几千个能力的版本、可用性、召回和上下文驻留。Iris 还需要可搜索 Catalog、稳定 Capability identity、Definition 生命周期，以及每次模型调用有预算的 Capability Working Set。
+关键洞察：**工具数量会膨胀，但人类和模型的当前注意力都不会膨胀**。目录树让能力可组织，却不能单独解决几千个能力的版本、可用性、召回和上下文驻留。Iris 还需要可搜索 Catalog、稳定 Capability identity、Definition 生命周期，以及有预算的当前能力视野；Provider 工具表面则保持小而稳定。
 
 ## 3. 模型的元认知：先发散，后收敛
 
@@ -53,7 +53,7 @@ Iris 前期先建设可靠的 Agentic 求解器，因为能力发现、组合和
 
 配套禁令：不凭工具名猜参数；不调用没读过 schema 的工具；搜索无果先换关键词而不是放弃。
 
-这套流程把"模型会不会用工具"从运气问题变成了工程问题：目录统计给方向感，schema 按 Model attempt 的短期 lease 注入控成本，澄清机制兜住歧义。对话再长、调用再多，曾经读过的 schema 也不会自动永久驻留；完整 ID/version provenance 留在 canonical ToolCall/Exposure，压缩只引用事实与少量未来求解 hints，需要时重新发现和激活。
+这套流程把"模型会不会用工具"从运气问题变成了工程问题：目录统计给方向感，精确 Definition 按需进入普通动态历史，稳定代理承接真实调用，澄清机制兜住歧义。对话再长、调用再多，曾经读过的 schema 也不会自动永久驻留；完整 ID/version provenance 留在 canonical ToolCall/Exposure/Resolution，压缩只引用事实与少量未来求解 hints，需要时重新发现和读取。
 
 ## 4. 对话即界面：视觉不是装饰
 

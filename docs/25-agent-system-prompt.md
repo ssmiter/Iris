@@ -31,9 +31,10 @@ Prompt 只能介绍当前真实存在且链路已接通的环境。SQL、Sandbox
 
 ### 2.2 教方法，不背工具名单
 
-完整 Tool schema 由 Provider 的 tool definition 通道随短期 Capability Lease 注入。
-System Prompt 不重复 schema，也不列出全量工具名，只解释发现、选择、组合和恢复方法。
-这同时降低 token 成本、避免两份定义漂移，并保持模型面对千级能力时的判断质量。
+高频闭环原语的完整 schema 由 Provider tool definition 通道稳定注入。非驻留能力的
+完整 Definition 通过目录读取成为普通 observation，再由常驻 `invoke_capability` 解析到
+真实 binding；System Prompt 不重复 schema，也不列出全量工具名，只解释发现、选择、
+组合和恢复方法。这同时降低 token 成本、避免两份定义漂移，并保持千级能力下的稳定前缀。
 
 ### 2.3 事实观先于行动 SOP
 
@@ -83,19 +84,16 @@ Capability guidance、Definition 或确定性 Policy，而不是永久堆进全�
 ## 3. Iris 的 Prompt 分层
 
 ```text
-稳定元认知前缀
+Provider 稳定前缀
 ├─ 身份与事实观
 ├─ 行动姿态
 ├─ 能力发现循环
 ├─ 平台组合原则
-└─ 失败恢复与停止条件
+├─ 失败恢复与停止条件
+└─ bounded resident primitives + invoke_capability
 
-Catalog snapshot（Definition 变化时才变化）
-├─ catalog hash
-└─ 顶层目录 + capability 数量
-
-Model Attempt 动态部分
-├─ active Capability schema lease
+Model Attempt 动态尾部
+├─ 按需发现的 Catalog/Definition observations
 ├─ 当前分支的 canonical facts
 ├─ Compact summary / fact refs
 └─ 用户消息与 Tool observations
@@ -103,12 +101,11 @@ Model Attempt 动态部分
 
 当前实现：
 
-- `AgentSystemPrompt` 构造稳定元认知前缀，并从 Registry 生成排序后的 Catalog hash 与
-  顶层目录计数；
-- `AgentContextPolicy` 固定注入两个发现元工具与共享的 `search_files` 原语，并从成功的 `read_capability`
-  observation 计算下一轮候选；
-- `CapabilityLeasePlanner` 在独立 schema token budget 内保留精确定义；
-- `ModelContextAssembler` 把 Prompt、lease 和分支事实冻结为不可变 Context snapshot。
+- `AgentSystemPrompt` 只构造与具体 Catalog 状态无关的稳定元认知前缀；
+- `AgentContextPolicy` 按固定顺序注入有界常驻闭环原语，领域工具不动态改写 Provider tools；
+- `ProviderToolSurfacePlanner` 核验常驻 schema 集合必须完整落入独立 token budget；
+- `ModelContextAssembler` 把 Prompt、常驻工具表面和分支事实冻结为不可变 Context snapshot；
+- Catalog epoch、根目录、Definition 与 availability 只在需要时作为动态 observation 进入历史。
 
 Definition 没有变化时，Prompt 不包含当前时间、随机顺序或逐轮计数，因此前缀逐字节
 稳定。用户状态和对话事实位于其后，不反向污染稳定层。
@@ -137,7 +134,7 @@ Iris 与用户共同把真实目标落实为可核验结果。它不为展示 Ag
 
 1. 把请求翻译为对象、动作和成功证据；
 2. 判断是点状问题，还是包含依赖关系的链状问题；
-3. 当前 lease 已有匹配原语时直接使用，不为已知能力重复搜索；
+3. 当前 Provider tools 已有匹配原语时直接使用，不为常驻能力重复搜索；
 4. 用户已经给出对象或动作词时，第一步使用
    `search_files(namespace="capabilities")`；`list_capabilities` 只用于用户询问能力全景、
    领域词汇未知，或确实需要理解上下游结构的情况；
@@ -148,7 +145,7 @@ Iris 与用户共同把真实目标落实为可核验结果。它不为展示 Ag
    命中的精确能力路径才能交给 `read_capability`；
 7. 对真实候选调用 `read_capability`，不凭名字猜参数；
 8. 核对 availability；unavailable 时处理 Application/Environment 缺口，degraded 时遵守限制；
-9. 工具进入下一轮 active lease 后调用；
+9. 非驻留能力使用读取结果中的 path 与 Manifest hash，通过 invoke_capability 调用；
 10. 用 observation 验证口径，不匹配则带新事实返回发现。
 
 “优先领域能力”是降低口径理解成本的偏好，不是禁止使用底层原语。领域能力缺失、
@@ -156,9 +153,9 @@ Iris 与用户共同把真实目标落实为可核验结果。它不为展示 Ag
 
 工作区的目录观察、搜索、读取、建目录、整文件写入和局部补丁是常驻原语，不需要先经过
 Catalog 发现。这个集合只覆盖高频、跨任务且足以形成最小闭环的操作；复制、移动、删除、
-恢复等仍按需进入 lease。常驻表示 schema 对模型可见，不表示外部资源已经创建，也不绕过
+恢复等通过能力目录读取后交给稳定代理。常驻表示 schema 对模型可见，不表示外部资源已经创建，也不绕过
 写入策略、Checkpoint 或 verify。结果窗口读取与 JSON 选择同样常驻，因为 Context 可能在
-本轮才把旧 observation 收敛为可重取引用；特定失败恢复工具则由 observation 状态自动激活。
+本轮才把旧 observation 收敛为可重取引用；失败恢复通过结构化 recovery 选择常驻原语或重新发现。
 
 ### 4.4 平台组合
 
@@ -228,7 +225,7 @@ WonWork 的工具提示展示了一个重要结构：模型需要同时理解工
 
 | WonWork 中的做法 | Iris 的对应设计 |
 |---|---|
-| Prompt 内列出可见工具与 schema | schema 仅通过 Model Attempt 的 active lease 注入 |
+| Prompt 内列出可见工具与 schema | 只稳定注入闭环原语；领域 Definition 读取后通过代理调用 |
 | MES 工序、SQL Server 和具体库说明 | 放入将来的连接/领域 Capability，不进入全局 Prompt |
 | `/workspace`、Python、WebBridge 的具体决策树 | 只声明当前已闭环的平台对象，后续按能力成熟度加入 |
 | 固定“失败后重试一次” | 使用 `effect + recovery.action + no-progress` 决定恢复 |
@@ -307,7 +304,7 @@ Prompt 优化不以“读起来更完整”为目标，而以真实轨迹指标�
 
 - 找到正确 Capability 的比例；
 - 首次有效 ToolCall 前读取的 Definition 数量；
-- schema 误猜与未 lease 调用次数；
+- schema 误猜、未读取 Definition 与代理解析失败次数；
 - 无依赖只读调用的并行率；
 - 原样重复失败调用次数；
 - `outcome_unknown` 后盲重试次数；

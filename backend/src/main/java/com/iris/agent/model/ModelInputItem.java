@@ -57,7 +57,7 @@ public sealed interface ModelInputItem {
 
     /**
      * Current limitations of executable but degraded capabilities in the
-     * active schema lease. The immutable Tool Definition remains unchanged.
+     * resident provider surface. The immutable Tool Definition remains unchanged.
      */
     record CapabilityRuntimeState(
             java.util.List<CapabilityRuntimeLimit> limitations

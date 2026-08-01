@@ -17,7 +17,7 @@
 3. **P1 原语完备**：先完成文件 `read/list/search → write/patch/move/checkpoint`，
    再补进程、网页与结构化数据。每个原语以客观、正交、充分必要为准，不按数量推进。
 4. **P1 上下文效率**：只清理可重取 Tool Observation 的 micro compact、历史投影
-   决策冻结、稳定 prompt 前缀、Capability lease 逐出和压缩后关键引用回填。
+   决策冻结、稳定 prompt 前缀、Definition 视野收敛和压缩后关键引用回填。
 5. **P2 体验投影**：前端消费相同 Run/Round/Tool/Attention 事实；流式与动画只做
    增量投影，不在 UI 重新推断内核状态。
 
@@ -39,7 +39,7 @@
 
 ## M2 · 工具平台
 - [x] Tool 契约 + Registry + 目录即路径 + 能力树统计
-- [x] 发现三原语 + Capability Working Set / schema lease 的首版实现
+- [x] 文件式能力发现 + 稳定调用代理 + Runtime 精确 binding resolution
 - [x] 审批闸门 + 审批条 UI
 - [x] Tool 完整结果持久化与有界 Observation 分离；超预算结果可按 executionId 读回
 - [ ] 足够闭环的系统原语；业务领域能力只用于验证抽象，不以数量充当效果指标

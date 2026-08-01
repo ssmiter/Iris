@@ -173,6 +173,15 @@ public class ToolRegistry {
         return Optional.ofNullable(byName.get(name));
     }
 
+    public Optional<ToolBinding> findByCapabilityPath(String path) {
+        if (path == null || path.isBlank()) {
+            return Optional.empty();
+        }
+        return byName.values().stream()
+                .filter(binding -> binding.capabilityPath().equals(path))
+                .findFirst();
+    }
+
     public Collection<ToolBinding> all() {
         return List.copyOf(byName.values());
     }

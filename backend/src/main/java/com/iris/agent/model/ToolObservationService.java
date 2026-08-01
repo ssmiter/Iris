@@ -85,6 +85,10 @@ public class ToolObservationService {
                         : source.providerCallId()
         );
         content.put("toolName", source.toolName());
+        if (source.resolvedToolName() != null
+                && !source.resolvedToolName().equals(source.toolName())) {
+            content.put("resolvedToolName", source.resolvedToolName());
+        }
         content.put("status", source.phase());
         content.put("executionId", executionId);
         boolean error = !"succeeded".equals(source.phase());
@@ -191,6 +195,21 @@ public class ToolObservationService {
                     "重新读取必要状态，并用新的工具调用重新准备操作"
             );
         }
+        if ("capability_not_inspected".equals(errorCode)
+                || "capability_definition_changed".equals(errorCode)) {
+            return new Recovery(
+                    "read_definition_then_retry",
+                    true,
+                    "重新 read_capability，并把新返回的 path、manifestHash 与符合 inputSchema 的 arguments 交给新的 invoke_capability 调用"
+            );
+        }
+        if ("resident_tool_requires_direct_call".equals(errorCode)) {
+            return new Recovery(
+                    "call_resident_tool_directly",
+                    true,
+                    "该工具已在 Provider tools 中；使用它自己的名称和 schema 发起新的直接调用"
+            );
+        }
         if (isCancellation(errorCode)) {
             return new Recovery(
                     "stop",
@@ -249,6 +268,7 @@ public class ToolObservationService {
     private boolean isStaleObservation(String errorCode) {
         return errorCode.startsWith("operation_snapshot_")
                 || errorCode.endsWith("_version_changed")
+                || errorCode.endsWith("_definition_changed")
                 || errorCode.endsWith("_target_changed")
                 || errorCode.endsWith("_destination_exists")
                 || errorCode.endsWith("_parent_not_found")

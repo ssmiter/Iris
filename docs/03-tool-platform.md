@@ -12,7 +12,7 @@
 | ~1000 | 全部塞进 | 上下文爆炸、模型选择困难、成本失控 |
 | 10000+ | 塞？ | 物理不可能 |
 
-第一层可扩展答案是：**目录提供稳定地址，模型通过目录、搜索和情境视图逐步发现**。目录之外还需要 Working Set 与 Definition 生命周期，见 §6.1；搜索、对象、来源和个人别名是可重建视图，不必强行归入唯一树形本体。
+第一层可扩展答案是：**目录提供稳定地址，模型通过目录、搜索和情境视图逐步发现**。目录之外还需要当前能力视野与 Definition 生命周期，见 §6.1；搜索、对象、来源和个人别名是可重建视图，不必强行归入唯一树形本体。
 本设计把“如何组织与呈现工具”与“工具本身的实现”解耦。加第 1001 个工具不需要中心路径映射，但绝不是零声明：Manifest 的 schema、风险、幂等、资源和证据字段缺一不可。
 
 ## 2. 工具契约（Tool Contract）
@@ -170,13 +170,13 @@ Tool：
 - 路径表达“业务域 → 工序 → 业务对象”，序号只稳定展示顺序，Capability 的身份仍是
   `capabilityId + definitionVersion`；
 - `CapabilityDirectoryCatalog` 允许语义目录先于具体 Tool 存在；空目录必须带人话说明并
-  返回 `capabilityCount=0`，它只是地图，不产生 schema lease，也不能被调用；
+  返回 `capabilityCount=0`，它只是地图，不产生可调用 Definition，也不能被调用；
 - 样例中的企业、数据库、表、存储过程、物料、设备、人员和真实质量口径全部被替换；
   SQLite 只保存可公开理解的模拟制造数据，不能反推出参考系统；
 - 全部样例能力共用一套数据模型、参数归一化、查询网关和只读工具生命周期；薄的领域
   Tool 只负责固定域、准确描述用户意图与声明 schema，禁止复制 SQL 与边界判断；
-- 领域查询只读、可并行、结果可重取。它们不进入基础 schema lease，只有目录列举、
-  搜索或精确读取 Definition 后才进入当前 Run Working Set；
+- 领域查询只读、结果可重取。它们不进入常驻 Provider 工具表面，精确读取 Definition 后
+  才能通过稳定代理调用；代理首版形成顺序屏障，后续由真实轨迹决定是否开放安全并行；
 - `query_sql` 仍是结构化数据的客观缺口出口；口径稳定、用户高频表达的业务问题才沉淀
   为领域 Capability。领域工具不是把每个页面或每张表机械映射成一个函数；
 - 当前个人模式可观察全部目录。以后登录选域只收窄 Catalog 可见性和 Runtime 执行授权，
@@ -251,32 +251,32 @@ Iris 的唯一实现路径。
 
 `list_capabilities` 与 `read_capability` 位于 `/system/capabilities`；`search_files`
 仍只有 `/system/files` 下的一份 Definition，通过显式 namespace 路由到只读 Catalog
-projection。基础 lease 不再等同于“只给模型一张工具目录”：它固定保留两个目录入口，
+projection。常驻 Provider 工具表面固定保留两个目录入口，
 以及 `list_files / search_files / read_file / make_directory / write_file / apply_patch`
 这组有界的工作区原语，并保留 `read_tool_result / query_tool_result` 两个结果读取原语。
 后者必须与 Context micro-compaction 同时可用，否则系统虽然能把旧结果收敛成引用，模型却
 不能立刻读回。常见的观察、创建与局部编辑因此可以直接开始；复制、移动、删除、恢复等
 低频或影响更大的操作仍按需发现。系统不再注册语义重复的 `tool_search`。
-一次有界的 Capability 搜索会把其 `available` 命中作为下一 Model Step 的预激活候选；
-列举到叶目录时，当前目录直接返回的 `available` items 也形成同一短期候选组，但上层目录
-不会递归激活后代。`read_capability` 的成功 observation 则把精确 Definition 作为更高
-确定性的候选。三者都不直接等于 active lease：候选仍须通过当前 availability 与独立
-schema token budget，只有实际进入 Exposure 的工具才允许调用。基础原语是
-不可逐出的 required 集合；其余候选来自当前 Run 已发生的有界搜索命中、成功 inspect，
-以及本 Run 实际调用过的能力。首版以 Run 作为 Working Set 的稳定作用域：新候选按首次
-激活顺序追加；上一 Round 已形成的不可变 Exposure 是下一轮的 Working Set 基线，
-Run 内不因几个快速 Round 没有使用就抖动或重排，Run 结束后整体释放。
-新 Run 只把同一分支上一 Run 真正调用过的能力及其叶目录作为一次有界暖启动；若本 Run
-没有继续使用，该能力组不会再传给下一 Run。这样“继续刚才的任务”无需重新发现，也不会
-把整个对话曾经出现过的 schema 永久累积到后续上下文。
+一次有界搜索只返回 Card；`read_capability` 才把精确 Definition、Manifest hash 与
+availability 作为不可变 observation 交给模型。非驻留能力不再因“被搜到或被读取”就改写
+Provider 的 tools 数组，而是由常驻 `invoke_capability` 接收精确 path、Manifest hash 与
+arguments。Tool Runtime 只接受当前 Run 更早 Round 中已成功读取且 hash 完全一致的定义，
+然后把代理调用解析到真实 binding；参数校验、availability、风险、审批、并发、取消、
+Operation Snapshot、执行与证据全部使用真实 Manifest。
+
+模型历史保留稳定的代理 ToolCall，Runtime 另存不可变 resolution 事实，因此 Provider
+前缀不会随目录规模和激活数量抖动，审计又能准确回答实际执行了哪个版本。基础原语仍是
+不可逐出的 required 集合，并继续直接暴露精确 schema；代理不是所有工具的统一外壳，
+只承接低频、领域化或规模可能增长的能力。若能力尚未 inspect、hash 已变化或当前不可用，
+Runtime 返回结构化失败 observation，不猜测、不降级到同名新版本。
 浏览器 Session、待审批操作和 outcome_unknown 等活对象另有资源生命周期，后续可用显式
-pin 续接到下一 Run，不能与 schema lease 的释放混为一谈。若上一 Round
-的工作区写入形成 `outcome_unknown` 且确有 Checkpoint，策略会直接激活
-`inspect_workspace_change`，使安全恢复不再额外经过一次目录发现。
-超出预算的 Definition 不进入本轮 Exposure，但不会从目录或历史中删除；后续 Round
-仍可重新 inspect。候选数量上限只用于约束查询成本，不能替代 token budget。这样既
-避免长对话把曾经检查过的所有工具永久泄露进上下文，也避免少数巨型 schema 挤掉
-用户请求和工具观察。
+pin 续接到下一 Run，不能与 Definition observation 的视野混为一谈。工作区写入形成
+`outcome_unknown` 时必须立即可恢复，因此 `inspect_workspace_change` 属于常驻闭环原语，
+不额外经过目录发现。
+Definition 正文仍接受 Context Window 与工具结果预算：过大的读取结果落入完整结果对象，
+模型按窗口继续读取；它不会被复制进全局 Prompt 或 Provider tools 数组。候选数量上限只
+约束目录查询成本，不充当执行授权。这样既避免长对话把曾经检查过的所有 schema 永久泄露
+进上下文，也避免少数巨型 Definition 挤掉用户请求和工具观察。
 
 **搜索索引首版基线**：Java 后端在 Registry 完成校验后编译紧凑的结构化搜索文档
 （name、description、目录段、参数属性名、风险与副作用），查询直接在内存 projection
@@ -284,21 +284,22 @@ pin 续接到下一 Run，不能与 schema lease 的释放混为一谈。若上�
 schema token 成本和延迟观察真实数据；只有规模和轨迹证明线性扫描不够时，才替换为
 倒排、Lucene 或向量混合索引，模型侧契约保持不变。
 
-### 6.1 能力 Working Set 与生命周期
+### 6.1 当前能力视野与生命周期
 
 “加载能力”必须拆成四个独立生命周期，不能用一个布尔值混在一起：
 
 ```text
 常驻轻量 Catalog index
-→ 按需读取 Definition
-→ 当前 Model Step 的 active schema lease
+→ 按需读取并冻结 Definition observation
+→ 稳定 invoke_capability 解析真实 binding
 → 调用时取得 executor 与外部资源
 ```
 
 - Catalog index 像目录项，只保存发现所需的紧凑字段，不意味着 schema、实现或连接都已载入；
 - 少量跨任务高频且可组合的基础原语随每个 Model Step 常驻，其范围由真实轨迹收敛，
   不是把某个完整工具域永久塞入上下文；
-- Definition 可以被预取和缓存，但只有预算明确准入后才进入模型的 active lease；
+- Definition 可以被读取和缓存，但不搬入 Provider tools 数组；调用授权来自当前 Run 中
+  已读取的精确 path + Manifest hash；
 - 无状态 Java executor 可以保持轻量 binding；插件、脚本、远程 Provider 等重实现以后由
   lazy executor handle 在首次调用前物化，不要求 JVM 卸载普通工具 class；
 - 数据库连接、浏览器会话、进程和临时产物在 prepare/execute 时创建或从池中借出，
@@ -307,40 +308,36 @@ schema token 成本和延迟观察真实数据；只有规模和轨迹证明线�
 几千个 Capability 被良好组织，不代表一次长对话可以无限累计 schema。每个 Model Step 从三个层次按需收敛：
 
 ```text
-Capability Card → inspected Manifest → active schema lease
+Capability Card → inspected Manifest → stable proxy invocation
 ```
 
 - Card 只给 ID、path、kind、description、version、risk 与 availability；
 - inspect 一次只读取少量精确 Definition，数量由 schema token budget 和任务歧义决定，不写成协议硬上限；
-- active schema 先受独立 schema token budget 限制，再与历史事实共同接受整个
-  Context Window 预算；预算决策和遗漏数量进入不可变 Context snapshot；
-- 下一 Model Step 重新计算相关性，未继续使用的 schema 逐出；
-- 首版不使用“连续 N 个 Round 未调用”作为淘汰条件；一个 Run 内保持有界且顺序稳定，
-  只在发现边界成批追加，以免多步 Agentic Loop 和 provider 前缀缓存因每轮抖动受损；
+- inspected Definition 作为普通不可变 observation 接受 Context Window 预算，完整正文仍可
+  通过结果引用取回；Provider 侧稳定工具集合不做逐轮装卸；
+- 首版不使用“连续 N 个 Round 未调用”管理模型可见工具；运行时资源按各自 Session/TTL
+  生命周期管理，语义定义与执行资源不共用一个 loaded 布尔值；
 - canonical ToolCall/Exposure 永久保存 provenance；CompactBoundary 只带 source range、summary/fact refs 和明确需要的少量 capability hints，不复制全部历史 ID 或 schema；
 - Pipeline pin 精确 Definition snapshot/hash 和依赖 Manifest version，不依赖模型工作集里“碰巧还留着”；
-- Pipeline 的固定 Tool 依赖不占模型 Working Set；只有某个 model node 实际收到 Tool schema 时才创建 Exposure，每个 tool node 独立创建 ToolCall + ToolExecution。
+- Pipeline 的固定 Tool 依赖不占模型当前能力视野；只有某个 model node 实际收到常驻 schema 时才创建 schema Exposure，读取 Definition 与代理 Resolution 分别保存；每个 tool node 独立创建 ToolCall + ToolExecution。
 
 Definition status 只有 `active / deprecated / retired`；注册校验是一次性的 `accepted / rejected` 结果；当前 binding availability 是独立的 `available / degraded / unavailable + checkedAt / lastSeenAt`。`CapabilityExposure` 又是某个 Context/attempt 实际看到精确 schema 的不可变事实，ToolExecution 则是一次调用状态。历史引用永远可读；客户端重启时重建 Registry/Catalog 和 binding availability，不删除缺席 provider 的历史。
 
-Availability 由当前 Application/Environment probe 产生，并贯穿 Card、Definition、
-active lease 与 Runtime 提交前核对。`unavailable` Definition 仍可发现和读取，以便模型
-解释缺少的连接、进程或会话，但不能进入可调用 lease；`degraded` 可以进入 lease，同时
-必须把限制原因暴露给模型。每个 Model Attempt 根据已经准入的 schema lease 重新读取
-availability；其中 `degraded` 项作为有界 `Capability Runtime State` 放在上下文动态区，
-而不是改写不可变 Manifest 或稳定 System Prompt。这样通过搜索直接激活、上一 Run
-暖启动或环境状态刚发生变化时，模型都能看到当前限制，不依赖较早的 Definition
-observation 仍留在窗口内。Registry 中存在 Java class 只证明 executor binding 已注册，
-不等于它依赖的数据库连接、浏览器 daemon 或编程环境当前可用。
+Availability 由当前 Application/Environment probe 产生，并贯穿 Card、Definition 与
+Runtime 提交前核对。`unavailable` Definition 仍可发现和读取，以便模型解释缺少的连接、
+进程或会话，但代理调用会 fail-close；`degraded` 在读取时说明限制，Runtime 调用前再次核对。
+瞬时环境状态不改写不可变 Manifest、稳定 System Prompt 或代理 schema。Registry 中存在
+Java class 只证明 executor binding 已注册，不等于它依赖的数据库连接、浏览器 daemon 或
+编程环境当前可用。
 
 ### 系统提示中的元认知注入
 
 系统提示必须包含（见 docs/06 §系统提示组装）：
 
-- 一个有界 Catalog snapshot summary（epoch/hash + 少量 top-level roots），以及恒定可用的
-  目录入口和工作区基础原语；它不永久罗列所有已加载域；
+- 恒定可用的目录入口和工作区基础原语；Catalog 的实时 epoch、根目录与可用性由发现
+  observation 返回，不嵌入稳定 System Prompt，也不永久罗列所有已加载域；
 - 发现流程五步法（意图→目录统计→读 schema→必要时澄清→调用）；
-- 禁令：不凭名字猜参数、不调用未获得 active lease 的工具；inspect 数量受 schema token budget 约束。
+- 禁令：不凭名字猜参数；非驻留能力没有精确 Definition observation 就不能交给代理调用。
 
 ## 7. 审批闸门（Approval）
 

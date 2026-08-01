@@ -52,7 +52,7 @@ flowchart LR
 Capability path
 → compact Card
 → exact Definition
-→ active schema lease
+→ stable proxy invocation
 ```
 
 它是面向模型的语义索引，不是 Application 对象数据库。Capability Catalog 不拥有

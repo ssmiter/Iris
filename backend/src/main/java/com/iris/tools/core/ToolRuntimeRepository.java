@@ -169,6 +169,36 @@ public class ToolRuntimeRepository {
                 .update();
     }
 
+    public void insertResolution(
+            String toolCallId,
+            String proxyToolName,
+            ToolCallResolver.ResolvedToolCall resolution,
+            String argumentsJson,
+            String argumentsHash,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO model_tool_call_resolution(
+                    tool_call_id, proxy_tool_name, target_tool_name,
+                    target_capability_path, target_manifest_hash,
+                    target_arguments_json, target_arguments_hash, created_at
+                ) VALUES (
+                    :toolCallId, :proxyToolName, :targetToolName,
+                    :targetPath, :targetManifestHash,
+                    :argumentsJson, :argumentsHash, :now
+                )
+                """)
+                .param("toolCallId", toolCallId)
+                .param("proxyToolName", proxyToolName)
+                .param("targetToolName", resolution.targetToolName())
+                .param("targetPath", resolution.targetCapabilityPath())
+                .param("targetManifestHash", resolution.targetManifestHash())
+                .param("argumentsJson", argumentsJson)
+                .param("argumentsHash", argumentsHash)
+                .param("now", now.toString())
+                .update();
+    }
+
     public void insertSnapshot(
             String snapshotId,
             String executionId,

@@ -39,7 +39,7 @@ Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座�
 
 - 压缩 = 生成 summary Artifact + 画一条线：`{ id, cutoffEventSequence, cutoffMessageId, sourceContextFrameId, summaryArtifactRef, factRefs, pipelineRunId, trigger }`；
 - 线前的记录保持原样；线后的新对话，上下文装配 = 摘要 + 线后原文；
-- ToolCall/Exposure 已在 canonical history 保存 provenance；Boundary 不复制全部用过的 Capability，也不携带 active schema lease；
+- ToolCall/Exposure/Resolution 已在 canonical history 保存 provenance；Boundary 不复制全部用过的 Capability；
 - 压缩进度有细轨道进度条，完成"✓ 已压缩"短暂停留后淡出；
 - 手动 `/compact` 与超长自动压缩同一语义。
 
@@ -79,7 +79,11 @@ Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座�
 4. 当前上下文状态（压缩摘要、激活的项目/技能）
 5. 用户记忆（`/remember` 关键词检索注入）
 
-完整 Tool schema 不属于永久系统提示。每个 Model attempt 只激活 Capability Working Set 中有预算、绑定 `contextFrameId + modelStepId + modelAttemptId + capabilityId/version + schemaHash` 的短期 schema lease；Agentic ToolCall 必须链接对应 Exposure。CompactBoundary 只保留 source range、summary/fact refs 和少量未来求解 hints，不会让曾读过的 schema 跨长对话永久驻留。
+完整领域 Tool schema 不属于永久系统提示，也不因发现结果动态改写 Provider tools 数组。
+每个 Model attempt 只暴露有界常驻原语与稳定 `invoke_capability`；非驻留 ToolCall 必须链接
+代理 Exposure、当前 Run 已读取的精确 Definition observation，以及 Runtime 冻结的真实
+binding resolution。CompactBoundary 只保留 source range、summary/fact refs 和少量未来
+求解 hints，不把曾读过的 schema 提升为永久系统能力。
 
 用户附件属于 User Message 的 canonical fact，但附件正文不常驻模型上下文。上下文只携带
 稳定 Artifact 引用、名称、类型、大小和哈希；Agent 需要观察时分窗读取，需要批处理时把
@@ -130,7 +134,7 @@ event 水位线复制当时可见的状态头；两个分支随后独立推进�
 - active Task work state：目标、步骤、阻塞项和 Evidence/Artifact 引用；
 - explicitly published Artifact context index：只含冻结成果的元数据与 `artifact://`
   引用，不含正文；
-- Capability runtime state：当前 active lease 中降级可用能力的限制原因与检查时间；
+- Capability runtime state：当前常驻 Provider 工具表面中降级能力的限制原因与检查时间；
 - Runtime pulse：当前 Run 的轮次、工具调用和时间预算水位。
 
 它们都位于动态区，不污染稳定 System Prompt；Window Planner 把它们视为当前决策所需

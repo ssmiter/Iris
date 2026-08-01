@@ -25,7 +25,7 @@ Iris 因此采用“持久化状态机驱动下一步”，而不是让一个长
 - **Turn**：一次用户请求的完整生命周期；
 - **Run**：可独立暂停、恢复、核验和产出结果的执行边界；
 - **Round**：Agentic Run 中的一次 `model attempt → actions → observations`；
-- **ModelAttempt**：一次精确 provider/model/context/schema lease 请求；
+- **ModelAttempt**：一次精确 provider/model/context/resident tool surface 请求；
 - **ToolCall**：模型提出的行动意图；
 - **ToolExecution**：Tool Runtime 对该意图的一次 durable execution；
 - **ToolObservation**：回注下一次 ModelAttempt 的安全结果。

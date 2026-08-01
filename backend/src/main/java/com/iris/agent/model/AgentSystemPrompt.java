@@ -1,31 +1,21 @@
 package com.iris.agent.model;
 
-import com.iris.tools.core.ToolRegistry;
-import com.iris.tools.core.ToolRegistry.ToolBinding;
 import org.springframework.stereotype.Component;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
-import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * Agent 的稳定元认知前缀。
  *
- * <p>这里只描述 Iris 当前已经兑现的环境和方法。具体工具契约仍由短期
- * capability lease 注入，动态任务状态位于稳定前缀之后。</p>
+ * <p>这里只描述 Iris 当前已经兑现的环境和方法。常驻工具契约由有序
+ * provider surface 稳定注入，动态任务状态位于稳定前缀之后。</p>
  */
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 1;
+    public static final int VERSION = 3;
 
     private final String instruction;
 
-    public AgentSystemPrompt(ToolRegistry tools) {
-        CatalogSummary catalog = summarize(tools);
+    public AgentSystemPrompt() {
         this.instruction = requireReadable("""
                 你是 Iris。你与用户一起把真实目标落实成可核验的结果，而不只是给出看似合理的文字。
                 表达自然、直接、有判断力；不编造未知事实，不把尚未验证的动作说成已经完成。
@@ -43,16 +33,17 @@ public class AgentSystemPrompt {
                 工具未返回的结果不得猜测；只有 succeeded observation 和相应证据才能证明动作完成。
 
                 ## 能力发现
-                当前 Catalog snapshot 为 %s，顶层目录为 %s。
-                当前 schema lease 中已经存在的工具可以直接使用，不要为它们重复搜索。
+                当前 Provider tools 中的常驻原语可以直接使用，不要为它们重复搜索。
+                Catalog 的实时目录、版本与可用性以发现工具返回的 observation 为准，不把它们猜进稳定提示词。
                 工作区目录观察、搜索、读取、建目录、写文件和局部补丁是常驻闭环原语；其他能力按需发现。
                 1. 把问题翻译为对象、动作、约束和成功证据。
                 2. 用户已给出对象或动作词时，先用 search_files 且 namespace=capabilities 定点搜索；list_files 可用于建立任务所需的工作区事实，但它的结果不是能力目录。不要为具体任务逐层遍历能力目录。
                 3. 只有领域词汇或结构未知、用户询问能力全景，或确实需要理解上下游时才用 list_capabilities。浏览器的已知入口是 /web/browser。
                 4. directories[].path 只是目录；只有 items[].path 或搜索命中的精确能力路径可以交给 read_capability。
-                5. 候选仍有歧义时读取精确定义；不要凭工具名猜参数，也不要调用尚未进入 lease 的工具。
-                6. availability=unavailable 表示当前环境不能承接，按原因补齐环境或说明缺口；degraded 表示必须遵守其限制。
-                7. 找到刚好够用的能力后立即执行并根据 observation 校准；不要为了保险枚举整个目录。
+                5. 候选仍有歧义时读取精确定义；不要凭工具名猜参数。非驻留能力只能把 read_capability 返回的精确 path、manifestHash 和符合 inputSchema 的 arguments 交给 invoke_capability。
+                6. invoke_capability 只接受当前任务更早轮次已读取且版本未变化的定义；不要手写 hash，不要用代理调用常驻原语。
+                7. availability=unavailable 表示当前环境不能承接，按原因补齐环境或说明缺口；degraded 表示必须遵守其限制。
+                8. 找到刚好够用的能力后立即执行并根据 observation 校准；不要为了保险枚举整个目录。
                 优先使用已经表达领域口径的能力；领域能力缺失或不匹配时，再组合更客观的系统原语。
 
                 ## 组合与上下文
@@ -85,7 +76,7 @@ public class AgentSystemPrompt {
                 rejected 或 cancelled：停止该动作，除非用户后来重新明确要求。
                 连续尝试没有带来新事实时，换一条本质不同的路径；充分探索后能力仍不足，就说明已确认事实、缺口和需要的输入。
                 Runtime pulse 中相同输入重复失败不是进展；先重新观察或改变路径。工具或时间预算接近边界时，优先走最短的可核验完成路径，并清楚交付已确认结果与剩余缺口。
-                """.formatted(catalog.hash(), catalog.roots()));
+                """);
     }
 
     public String instruction() {
@@ -100,36 +91,6 @@ public class AgentSystemPrompt {
         return VERSION;
     }
 
-    private CatalogSummary summarize(ToolRegistry tools) {
-        Map<String, Integer> roots = new TreeMap<>();
-        StringBuilder definitions = new StringBuilder();
-        tools.all().stream()
-                .sorted(java.util.Comparator.comparing(
-                        ToolBinding::capabilityPath
-                ))
-                .forEach(binding -> {
-                    String path = binding.capabilityPath();
-                    String[] segments = path.split("/");
-                    String root = segments.length > 1
-                            ? "/" + segments[1]
-                            : path;
-                    roots.merge(root, 1, Integer::sum);
-                    definitions.append(binding.manifest().id())
-                            .append('@')
-                            .append(binding.manifest().version())
-                            .append(':')
-                            .append(binding.manifestHash())
-                            .append('\n');
-                });
-        String rootsText = roots.entrySet().stream()
-                .map(entry -> entry.getKey() + "(" + entry.getValue() + ")")
-                .collect(java.util.stream.Collectors.joining(", "));
-        return new CatalogSummary(
-                hash(definitions.toString()).substring(0, 16),
-                rootsText.isBlank() ? "无可用目录" : rootsText
-        );
-    }
-
     private String requireReadable(String value) {
         if (value.indexOf('\uFFFD') >= 0) {
             throw new IllegalStateException(
@@ -139,18 +100,4 @@ public class AgentSystemPrompt {
         return value;
     }
 
-    private String hash(String value) {
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(
-                            value.getBytes(StandardCharsets.UTF_8)
-                    )
-            );
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 unavailable", exception);
-        }
-    }
-
-    private record CatalogSummary(String hash, String roots) {
-    }
 }

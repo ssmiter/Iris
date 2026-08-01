@@ -34,9 +34,9 @@ public class ReadCapabilityTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.read",
-                "3",
+                "4",
                 "read_capability",
-                "读取一个精确能力路径的版本化定义、参数 schema 与当前运行可用性；决定调用前使用",
+                "读取一个精确能力路径的版本化定义、参数 schema、当前可用性与稳定代理调用身份；调用非驻留能力前使用",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -98,6 +98,14 @@ public class ReadCapabilityTool implements Tool {
                 availability.checkedAt().toString()
         );
         output.set("manifest", objectMapper.valueToTree(binding.manifest()));
+        ObjectNode invocation = output.putObject("invocation");
+        invocation.put("toolName", "invoke_capability");
+        invocation.put("path", binding.capabilityPath());
+        invocation.put("manifestHash", binding.manifestHash());
+        invocation.put(
+                "instruction",
+                "把 path 和 manifestHash 原样复制，并按 manifest.inputSchema 填写 arguments"
+        );
         return ToolOutcome.succeeded(output);
     }
 
@@ -148,6 +156,9 @@ public class ReadCapabilityTool implements Tool {
         properties.putObject("manifest")
                 .put("type", "object")
                 .put("description", "完整版本化 Tool Manifest 与参数 schema");
+        properties.putObject("invocation")
+                .put("type", "object")
+                .put("description", "稳定 invoke_capability 的可复制调用身份；arguments 仍按 Manifest 填写");
         return schema;
     }
 }

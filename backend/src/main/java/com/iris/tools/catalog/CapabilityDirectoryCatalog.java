@@ -9,7 +9,7 @@ import java.util.Optional;
 /**
  * 可以先于具体工具存在的语义目录地图。
  *
- * <p>它只描述“有哪些业务区域值得导航”，不声明工具、不产生 active schema lease，
+ * <p>它只描述“有哪些业务区域值得导航”，不声明工具、不改变 Provider tool surface，
  * 也不拥有执行绑定。Tool 的路径仍只能从其 Java package 派生。</p>
  */
 @Component

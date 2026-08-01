@@ -1074,6 +1074,18 @@ CREATE TABLE IF NOT EXISTS model_tool_call_exposure (
         REFERENCES model_capability_exposure(exposure_id)
 );
 
+CREATE TABLE IF NOT EXISTS model_tool_call_resolution (
+    tool_call_id TEXT PRIMARY KEY,
+    proxy_tool_name TEXT NOT NULL,
+    target_tool_name TEXT NOT NULL,
+    target_capability_path TEXT NOT NULL,
+    target_manifest_hash TEXT NOT NULL,
+    target_arguments_json TEXT NOT NULL,
+    target_arguments_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tool_call_id) REFERENCES model_tool_call(tool_call_id)
+);
+
 CREATE TABLE IF NOT EXISTS tool_observation (
     observation_id TEXT PRIMARY KEY,
     tool_call_id TEXT NOT NULL UNIQUE,

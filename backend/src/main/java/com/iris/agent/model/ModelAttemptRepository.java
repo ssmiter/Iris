@@ -151,8 +151,8 @@ public class ModelAttemptRepository {
                 .query(String.class)
                 .optional()
                 .orElseThrow(() -> new ModelProtocolException(
-                        "tool_not_in_capability_lease",
-                        "Model requested a tool outside the active capability lease"
+                        "tool_not_in_provider_surface",
+                        "Model requested a tool outside the frozen provider surface"
                 ));
         jdbc.sql("""
                 INSERT INTO model_tool_call(
@@ -345,6 +345,7 @@ public class ModelAttemptRepository {
                 SELECT tc.tool_call_id, tc.provider_call_id, tc.tool_name,
                        tc.execution_id AS linked_execution_id,
                        e.execution_id, e.tool_call_id AS execution_tool_call_id,
+                       e.tool_name AS resolved_tool_name,
                        e.phase, e.outcome_kind, e.output_json,
                        e.error_code, e.error_message
                 FROM model_tool_call tc
@@ -360,6 +361,7 @@ public class ModelAttemptRepository {
                         rs.getString("linked_execution_id"),
                         rs.getString("execution_id"),
                         rs.getString("execution_tool_call_id"),
+                        rs.getString("resolved_tool_name"),
                         rs.getString("phase"),
                         rs.getString("outcome_kind"),
                         rs.getString("output_json"),
@@ -591,6 +593,7 @@ public class ModelAttemptRepository {
             String linkedExecutionId,
             String executionId,
             String executionToolCallId,
+            String resolvedToolName,
             String phase,
             String outcomeKind,
             String outputJson,

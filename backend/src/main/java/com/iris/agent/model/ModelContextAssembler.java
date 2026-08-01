@@ -82,10 +82,10 @@ public class ModelContextAssembler {
             throw new IllegalArgumentException("System instruction is required");
         }
         LinkedHashSet<String> uniqueNames =
-                new LinkedHashSet<>(seed.leasedToolNames());
-        if (uniqueNames.size() != seed.leasedToolNames().size()) {
+                new LinkedHashSet<>(seed.providerToolNames());
+        if (uniqueNames.size() != seed.providerToolNames().size()) {
             throw new IllegalArgumentException(
-                    "Capability lease contains duplicate tool names"
+                    "Provider tool surface contains duplicate names"
             );
         }
 
@@ -95,7 +95,7 @@ public class ModelContextAssembler {
         for (String name : uniqueNames) {
             ToolBinding binding = tools.find(name).orElseThrow(
                     () -> new IllegalArgumentException(
-                            "Capability lease references an unknown tool: " + name
+                            "Provider tool surface references an unknown tool: " + name
                     )
             );
             var currentAvailability =
@@ -121,14 +121,14 @@ public class ModelContextAssembler {
         int estimatedCapabilityTokens = tokens.estimate(definitions);
         if (estimatedCapabilityTokens > seed.maxCapabilityTokens()) {
             throw new PromptTooLargeException(
-                    "Capability lease exceeds its schema budget"
+                    "Provider tool surface exceeds its schema budget"
             );
         }
         if (seed.estimatedCapabilityTokens() != 0
                 && seed.estimatedCapabilityTokens()
                 != estimatedCapabilityTokens) {
             throw new IllegalStateException(
-                    "Capability lease changed after planning"
+                    "Provider tool surface changed after planning"
             );
         }
         List<ModelInputItem> allItems = new ArrayList<>(
@@ -315,7 +315,7 @@ public class ModelContextAssembler {
             String systemInstruction,
             String promptDefinitionId,
             int promptVersion,
-            List<String> leasedToolNames,
+            List<String> providerToolNames,
             ContextBudget budget,
             int maxCapabilityTokens,
             int estimatedCapabilityTokens,
@@ -323,13 +323,13 @@ public class ModelContextAssembler {
     ) {
         public ContextSeed(
                 String systemInstruction,
-                List<String> leasedToolNames
+                List<String> providerToolNames
         ) {
             this(
                     systemInstruction,
                     "iris.agent.adhoc",
                     1,
-                    leasedToolNames,
+                    providerToolNames,
                     ContextBudget.defaults(),
                     Integer.MAX_VALUE,
                     0,
@@ -339,14 +339,14 @@ public class ModelContextAssembler {
 
         public ContextSeed(
                 String systemInstruction,
-                List<String> leasedToolNames,
+                List<String> providerToolNames,
                 ContextBudget budget
         ) {
             this(
                     systemInstruction,
                     "iris.agent.adhoc",
                     1,
-                    leasedToolNames,
+                    providerToolNames,
                     budget,
                     Integer.MAX_VALUE,
                     0,
@@ -355,7 +355,7 @@ public class ModelContextAssembler {
         }
 
         public ContextSeed {
-            leasedToolNames = List.copyOf(leasedToolNames);
+            providerToolNames = List.copyOf(providerToolNames);
             budget = budget == null ? ContextBudget.defaults() : budget;
             if (promptDefinitionId == null || promptDefinitionId.isBlank()
                     || promptVersion < 1
@@ -364,7 +364,7 @@ public class ModelContextAssembler {
                     || estimatedCapabilityTokens > maxCapabilityTokens
                     || omittedCapabilityCount < 0) {
                 throw new IllegalArgumentException(
-                        "Invalid capability lease budget metadata"
+                        "Invalid provider tool surface budget metadata"
                 );
             }
         }

@@ -97,7 +97,7 @@ public class ToolProjectionService {
             RoundToolCall call,
             RuntimeResult result
     ) {
-        if (!"publish_artifact".equals(call.toolName())
+        if (!"publish_artifact".equals(result.toolName())
                 || !"succeeded".equals(result.phase())) {
             return null;
         }
@@ -333,7 +333,10 @@ public class ToolProjectionService {
         projection.put("status", visibleToolStatus(result.phase()));
         projection.put("toolCallId", call.toolCallId());
         projection.put("toolExecutionId", result.executionId());
-        projection.put("toolName", call.toolName());
+        projection.put("toolName", result.toolName());
+        if (!result.toolName().equals(call.toolName())) {
+            projection.put("proxyToolName", call.toolName());
+        }
         String summary = toolSummary(result);
         projection.put("summary", summary);
         if ("succeeded".equals(result.phase())) {
@@ -700,7 +703,7 @@ public class ToolProjectionService {
             RuntimeResult result
     ) {
         for (ToolProjectionEnricher enricher : enrichers) {
-            if (!enricher.supports(call.toolName())) {
+            if (!enricher.supports(result.toolName())) {
                 continue;
             }
             try {
@@ -708,7 +711,7 @@ public class ToolProjectionService {
             } catch (RuntimeException exception) {
                 LOGGER.warn(
                         "Tool presentation enrichment failed for {} ({})",
-                        call.toolName(),
+                        result.toolName(),
                         result.executionId(),
                         exception
                 );
