@@ -36,6 +36,25 @@ public record ModelAttemptResult(
     ) {
     }
 
-    public record Usage(int inputTokens, int outputTokens) {
+    public record Usage(
+            int inputTokens,
+            int outputTokens,
+            int cacheReadTokens,
+            int cacheMissTokens,
+            int reasoningTokens
+    ) {
+        public Usage(int inputTokens, int outputTokens) {
+            this(inputTokens, outputTokens, 0, inputTokens, 0);
+        }
+
+        public Usage {
+            if (inputTokens < 0 || outputTokens < 0
+                    || cacheReadTokens < 0 || cacheMissTokens < 0
+                    || reasoningTokens < 0) {
+                throw new IllegalArgumentException(
+                        "Model usage counters cannot be negative"
+                );
+            }
+        }
     }
 }

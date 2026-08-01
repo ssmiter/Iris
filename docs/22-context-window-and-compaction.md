@@ -67,7 +67,27 @@ Planner 从最新事实向前选择原子组：
 - 结果替换决策一旦进入某个 Context Frame 就被冻结；后续组装不得因当前总长度变化
   反复改写旧前缀。这样上下文行为可解释，也让 Provider prompt cache 有稳定前缀。
 
-## 4. 快照
+## 4. 稳定前缀与缓存边界
+
+Provider 能否复用前缀缓存不是实现细节，而是 ModelContext 的可观测属性。Iris 把一次请求拆成两个身份：
+
+- `contextHash` 标识包含当前历史、Runtime pulse 和 Tool Observation 的完整请求视野；
+- `prefixHash` 只标识稳定 System Prompt 与有序 Tool Definition，动态事实不得进入它。
+
+每个 Context snapshot 同时记录 `promptDefinitionId`、`promptVersion`、`promptHash`、`toolSchemaHash` 和
+`prefixHash`。工具顺序是协议的一部分：同一份 lease 必须保持既有 exposure 顺序，不能为了形式整洁逐轮重新排序。
+Prompt 或 Tool Definition 真正变化时允许形成新的前缀；时间、轮次、预算、审批和环境瞬时状态只能追加在动态尾部。
+
+ModelAttempt 记录 Provider 返回的 input、output、cache hit、cache miss 和 reasoning token。不同 Provider
+的字段形态由 adapter 归一化，不能让 Agent Loop 猜测。缓存命中下降时，先比较相邻 attempt 的
+`promptHash`、`toolSchemaHash` 和 Context rewrite，再决定修改 Prompt、lease 还是压缩策略。
+SQLite 的 `model_attempt_cache_diagnostic` 视图按 Run 顺序给出这些变化与命中率；它只服务诊断，
+不进入模型上下文，也不要求前端默认展示技术指标。
+
+压缩是低频、显式的缓存重置点，不是每轮滑动窗口。达到真正水位线前，优先保持已有前缀；旧的可重取
+Tool Observation 可收敛为带完整结果引用的稳定占位，写操作、错误、`outcome_unknown` 和不可重取证据仍受硬保留规则保护。
+
+## 5. 快照
 
 `model_context_snapshot` 保存规范化请求事实、工具租约、估算值、预算和裁剪数量。
 相同 hash 可安全复用；相同 hash 对应不同 payload 时 fail-close。快照不保存密钥、
@@ -79,13 +99,13 @@ Registry 中存在也不能执行。Lease 是模型可见性，不替代 Runtime
 Tool Runtime 还必须把该 Exposure 的 `tool_name + manifest_hash` 与当前 binding 精确
 比对；Definition 已变化时旧 ToolCall fail-close，不能用新 schema 解释旧参数。
 
-## 5. Prompt 过大
+## 6. Prompt 过大
 
 本地 Planner 已判定超限时不请求 Provider。Provider 仍返回 prompt-too-large 时，
 旧 attempt 明确失败；调度器只能创建新的压缩/裁剪决策和新 attempt，不能修改旧
 attempt 的 context hash 后原地重试。
 
-## 6. 水位线与分支
+## 7. 水位线与分支
 
 CompactBoundary 的 `beforeTurnId` 对应一条不可变的
 `turn.accepted.sequence`，该 sequence 就是分支当前的上下文水位线。水位线以下的
@@ -122,7 +142,7 @@ base Frame 的上下文 + base waterline 到目标位置的 canonical facts
 单调水位线”的确定性计算。创建分支、刷新页面或对话压缩都不能改变既有边界的
 适用范围。
 
-## 7. Compact Pipeline
+## 8. Compact Pipeline
 
 手动 Compact 不接受 Frontend 指定 cutoff 或 summary。Backend 在 Conversation lock
 内完成以下 Prepare：
@@ -144,7 +164,7 @@ branch head 推进和 Compaction Run completed 在同一事务中闭合，然后
 改变旧 branch head。进程在 Provider stream 中断时保留 interrupted attempt，并把本次
 Compact 标记失败；用户可用新的幂等命令重新开始。
 
-## 8. 完整对话验证场景
+## 9. 完整对话验证场景
 
 实现阶段不以大量孤立测试替代真实体验。接入实际 Provider 后，按一条连续对话验证：
 

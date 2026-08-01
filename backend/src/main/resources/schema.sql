@@ -938,6 +938,88 @@ CREATE TABLE IF NOT EXISTS model_context_snapshot (
     FOREIGN KEY (round_id) REFERENCES agent_round(round_id)
 );
 
+CREATE TABLE IF NOT EXISTS model_context_prefix (
+    context_hash TEXT PRIMARY KEY,
+    prompt_definition_id TEXT NOT NULL,
+    prompt_version INTEGER NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    tool_schema_hash TEXT NOT NULL,
+    prefix_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (context_hash)
+        REFERENCES model_context_snapshot(context_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_context_prefix_hash
+    ON model_context_prefix(prefix_hash);
+
+CREATE TABLE IF NOT EXISTS model_attempt_usage (
+    attempt_id TEXT PRIMARY KEY,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    cache_miss_tokens INTEGER NOT NULL,
+    reasoning_tokens INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES model_attempt(attempt_id)
+);
+
+CREATE VIEW IF NOT EXISTS model_attempt_cache_diagnostic AS
+WITH ordered AS (
+    SELECT
+        ma.attempt_id,
+        ma.run_id,
+        ma.round_id,
+        ar.round_index,
+        ma.attempt_index,
+        p.prompt_definition_id,
+        p.prompt_version,
+        p.prompt_hash,
+        p.tool_schema_hash,
+        p.prefix_hash,
+        LAG(p.prompt_hash) OVER request_order AS previous_prompt_hash,
+        LAG(p.tool_schema_hash) OVER request_order
+            AS previous_tool_schema_hash,
+        LAG(p.prefix_hash) OVER request_order AS previous_prefix_hash
+    FROM model_attempt ma
+    JOIN agent_round ar ON ar.round_id = ma.round_id
+    JOIN model_context_prefix p ON p.context_hash = ma.context_hash
+    WINDOW request_order AS (
+        PARTITION BY ma.run_id
+        ORDER BY ar.round_index, ma.attempt_index
+    )
+)
+SELECT
+    ordered.*,
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cache_read_tokens,
+    usage.cache_miss_tokens,
+    usage.reasoning_tokens,
+    CASE
+        WHEN usage.cache_read_tokens + usage.cache_miss_tokens = 0 THEN NULL
+        ELSE CAST(usage.cache_read_tokens AS REAL)
+            / (usage.cache_read_tokens + usage.cache_miss_tokens)
+    END AS cache_read_ratio,
+    CASE
+        WHEN ordered.previous_prefix_hash IS NULL THEN NULL
+        WHEN ordered.previous_prefix_hash = ordered.prefix_hash THEN 0
+        ELSE 1
+    END AS prefix_changed,
+    CASE
+        WHEN ordered.previous_prompt_hash IS NULL THEN NULL
+        WHEN ordered.previous_prompt_hash = ordered.prompt_hash THEN 0
+        ELSE 1
+    END AS prompt_changed,
+    CASE
+        WHEN ordered.previous_tool_schema_hash IS NULL THEN NULL
+        WHEN ordered.previous_tool_schema_hash = ordered.tool_schema_hash THEN 0
+        ELSE 1
+    END AS tool_schema_changed
+FROM ordered
+LEFT JOIN model_attempt_usage usage
+  ON usage.attempt_id = ordered.attempt_id;
+
 CREATE TABLE IF NOT EXISTS model_capability_exposure (
     exposure_id TEXT PRIMARY KEY,
     context_hash TEXT NOT NULL,

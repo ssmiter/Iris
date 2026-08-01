@@ -28,8 +28,25 @@ public sealed interface ModelStreamEvent {
     record MessageCompleted(
             String stopReason,
             int inputTokens,
-            int outputTokens
+            int outputTokens,
+            int cacheReadTokens,
+            int cacheMissTokens,
+            int reasoningTokens
     ) implements ModelStreamEvent {
+        public MessageCompleted(
+                String stopReason,
+                int inputTokens,
+                int outputTokens
+        ) {
+            this(
+                    stopReason,
+                    inputTokens,
+                    outputTokens,
+                    0,
+                    inputTokens,
+                    0
+            );
+        }
     }
 
     enum BlockKind {

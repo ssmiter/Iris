@@ -118,7 +118,10 @@ public final class ModelStreamAssembler {
                 completion.stopReason(),
                 new Usage(
                         completion.inputTokens(),
-                        completion.outputTokens()
+                        completion.outputTokens(),
+                        completion.cacheReadTokens(),
+                        completion.cacheMissTokens(),
+                        completion.reasoningTokens()
                 )
         );
     }
@@ -185,7 +188,10 @@ public final class ModelStreamAssembler {
                     "模型消息结束时仍有 content block 未完成"
             );
         }
-        if (event.inputTokens() < 0 || event.outputTokens() < 0) {
+        if (event.inputTokens() < 0 || event.outputTokens() < 0
+                || event.cacheReadTokens() < 0
+                || event.cacheMissTokens() < 0
+                || event.reasoningTokens() < 0) {
             fail("invalid_usage", "模型 token usage 不能为负数");
         }
         completion = event;

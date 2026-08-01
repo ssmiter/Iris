@@ -189,7 +189,7 @@ public class ModelAttemptRepository {
             ModelAttemptResult result,
             Instant now
     ) {
-        return jdbc.sql("""
+        boolean completed = jdbc.sql("""
                 UPDATE model_attempt
                 SET phase = 'completed', stop_reason = :stopReason,
                     input_tokens = :inputTokens, output_tokens = :outputTokens,
@@ -205,6 +205,30 @@ public class ModelAttemptRepository {
                 .param("attemptId", attemptId)
                 .param("expectedVersion", expectedVersion)
                 .update() == 1;
+        if (!completed) {
+            return false;
+        }
+        ModelAttemptResult.Usage usage = result.usage();
+        jdbc.sql("""
+                INSERT INTO model_attempt_usage(
+                    attempt_id, input_tokens, output_tokens,
+                    cache_read_tokens, cache_miss_tokens,
+                    reasoning_tokens, created_at
+                ) VALUES (
+                    :attemptId, :inputTokens, :outputTokens,
+                    :cacheReadTokens, :cacheMissTokens,
+                    :reasoningTokens, :now
+                )
+                """)
+                .param("attemptId", attemptId)
+                .param("inputTokens", usage.inputTokens())
+                .param("outputTokens", usage.outputTokens())
+                .param("cacheReadTokens", usage.cacheReadTokens())
+                .param("cacheMissTokens", usage.cacheMissTokens())
+                .param("reasoningTokens", usage.reasoningTokens())
+                .param("now", now.toString())
+                .update();
+        return true;
     }
 
     public Optional<FinalAnswerSource> finalAnswer(String roundId) {

@@ -41,6 +41,7 @@ public class ModelContextAssembler {
     private final TaskLedgerService taskLedger;
     private final ArtifactService artifacts;
     private final RunRoundRepository runs;
+    private final ModelPromptPrefixService promptPrefixes;
     private final Clock clock = Clock.systemUTC();
 
     public ModelContextAssembler(
@@ -54,7 +55,8 @@ public class ModelContextAssembler {
             ModelTokenEstimator tokens,
             TaskLedgerService taskLedger,
             ArtifactService artifacts,
-            RunRoundRepository runs
+            RunRoundRepository runs,
+            ModelPromptPrefixService promptPrefixes
     ) {
         this.facts = facts;
         this.tools = tools;
@@ -67,6 +69,7 @@ public class ModelContextAssembler {
         this.taskLedger = taskLedger;
         this.artifacts = artifacts;
         this.runs = runs;
+        this.promptPrefixes = promptPrefixes;
     }
 
     public ModelContext assemble(
@@ -199,6 +202,12 @@ public class ModelContextAssembler {
                         .toList()
         ));
         String leaseHash = hash(definitions);
+        ModelPromptPrefix promptPrefix = promptPrefixes.capture(
+                seed.promptDefinitionId(),
+                seed.promptVersion(),
+                seed.systemInstruction(),
+                definitions
+        );
         Projection observationProjection = microCompactor.project(
                 run.conversationId(),
                 seed.systemInstruction(),
@@ -237,6 +246,7 @@ public class ModelContextAssembler {
                 requiredUserFactIds,
                 List.copyOf(requiredObservationIds),
                 definitions,
+                promptPrefix,
                 leaseHash,
                 window.estimatedInputTokens(),
                 window.budget().maxInputTokens(),
@@ -255,6 +265,7 @@ public class ModelContextAssembler {
                 seed.systemInstruction(),
                 window.items(),
                 definitions,
+                promptPrefix,
                 contextHash,
                 leaseHash,
                 window.estimatedInputTokens(),
@@ -302,6 +313,8 @@ public class ModelContextAssembler {
 
     public record ContextSeed(
             String systemInstruction,
+            String promptDefinitionId,
+            int promptVersion,
             List<String> leasedToolNames,
             ContextBudget budget,
             int maxCapabilityTokens,
@@ -314,6 +327,8 @@ public class ModelContextAssembler {
         ) {
             this(
                     systemInstruction,
+                    "iris.agent.adhoc",
+                    1,
                     leasedToolNames,
                     ContextBudget.defaults(),
                     Integer.MAX_VALUE,
@@ -329,6 +344,8 @@ public class ModelContextAssembler {
         ) {
             this(
                     systemInstruction,
+                    "iris.agent.adhoc",
+                    1,
                     leasedToolNames,
                     budget,
                     Integer.MAX_VALUE,
@@ -340,7 +357,9 @@ public class ModelContextAssembler {
         public ContextSeed {
             leasedToolNames = List.copyOf(leasedToolNames);
             budget = budget == null ? ContextBudget.defaults() : budget;
-            if (maxCapabilityTokens < 1
+            if (promptDefinitionId == null || promptDefinitionId.isBlank()
+                    || promptVersion < 1
+                    || maxCapabilityTokens < 1
                     || estimatedCapabilityTokens < 0
                     || estimatedCapabilityTokens > maxCapabilityTokens
                     || omittedCapabilityCount < 0) {
@@ -357,6 +376,7 @@ public class ModelContextAssembler {
             List<String> requiredUserFactIds,
             List<String> requiredObservationIds,
             List<ModelRequest.ToolDefinition> tools,
+            ModelPromptPrefix promptPrefix,
             String capabilityLeaseHash,
             int estimatedInputTokens,
             int maxInputTokens,

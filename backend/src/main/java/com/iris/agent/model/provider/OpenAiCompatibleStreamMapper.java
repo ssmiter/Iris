@@ -34,6 +34,10 @@ public final class OpenAiCompatibleStreamMapper {
     private boolean textCompleted;
     private int inputTokens;
     private int outputTokens;
+    private int cacheReadTokens;
+    private int cacheMissTokens;
+    private int reasoningTokens;
+    private boolean cacheMissReported;
     private String finishReason;
     private boolean usageSeen;
     private boolean messageCompleted;
@@ -232,10 +236,50 @@ public final class OpenAiCompatibleStreamMapper {
         if (usage.has("prompt_tokens")) {
             inputTokens = usage.path("prompt_tokens").asInt();
             usageSeen = true;
+        } else if (usage.has("input_tokens")
+                || usage.has("cache_creation_input_tokens")
+                || usage.has("cache_read_input_tokens")) {
+            inputTokens = usage.path("input_tokens").asInt(0)
+                    + usage.path("cache_creation_input_tokens").asInt(0)
+                    + usage.path("cache_read_input_tokens").asInt(0);
+            usageSeen = true;
         }
         if (usage.has("completion_tokens")) {
             outputTokens = usage.path("completion_tokens").asInt();
             usageSeen = true;
+        } else if (usage.has("output_tokens")) {
+            outputTokens = usage.path("output_tokens").asInt();
+            usageSeen = true;
+        }
+        if (usage.has("prompt_cache_hit_tokens")) {
+            cacheReadTokens = usage.path("prompt_cache_hit_tokens").asInt();
+            usageSeen = true;
+        } else if (usage.path("prompt_tokens_details").has("cached_tokens")) {
+            cacheReadTokens = usage.path("prompt_tokens_details")
+                    .path("cached_tokens").asInt();
+            usageSeen = true;
+        } else if (usage.has("cache_read_input_tokens")) {
+            cacheReadTokens = usage.path("cache_read_input_tokens").asInt();
+            usageSeen = true;
+        }
+        if (usage.has("prompt_cache_miss_tokens")) {
+            cacheMissTokens = usage.path("prompt_cache_miss_tokens").asInt();
+            cacheMissReported = true;
+            usageSeen = true;
+        } else if (usage.has("input_tokens")
+                || usage.has("cache_creation_input_tokens")) {
+            cacheMissTokens = usage.path("input_tokens").asInt(0)
+                    + usage.path("cache_creation_input_tokens").asInt(0);
+            cacheMissReported = true;
+            usageSeen = true;
+        }
+        if (usage.path("completion_tokens_details").has("reasoning_tokens")) {
+            reasoningTokens = usage.path("completion_tokens_details")
+                    .path("reasoning_tokens").asInt();
+            usageSeen = true;
+        }
+        if (!cacheMissReported) {
+            cacheMissTokens = Math.max(0, inputTokens - cacheReadTokens);
         }
     }
 
@@ -244,7 +288,10 @@ public final class OpenAiCompatibleStreamMapper {
         return new MessageCompleted(
                 normalizeFinishReason(finishReason),
                 inputTokens,
-                outputTokens
+                outputTokens,
+                cacheReadTokens,
+                cacheMissTokens,
+                reasoningTokens
         );
     }
 

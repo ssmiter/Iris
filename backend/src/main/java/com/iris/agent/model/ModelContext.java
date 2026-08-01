@@ -6,6 +6,7 @@ public record ModelContext(
         String systemInstruction,
         List<ModelInputItem> items,
         List<ModelRequest.ToolDefinition> tools,
+        ModelPromptPrefix promptPrefix,
         String contextHash,
         String capabilityLeaseHash,
         int estimatedInputTokens,
@@ -16,5 +17,8 @@ public record ModelContext(
     public ModelContext {
         items = List.copyOf(items);
         tools = List.copyOf(tools);
+        if (promptPrefix == null) {
+            throw new IllegalArgumentException("promptPrefix is required");
+        }
     }
 }

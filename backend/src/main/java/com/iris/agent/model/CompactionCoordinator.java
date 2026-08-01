@@ -47,6 +47,8 @@ public final class CompactionCoordinator {
             """;
     private static final int MAX_INPUT_TOKENS = 120_000;
     private static final int RESERVED_OUTPUT_TOKENS = 8_192;
+    private static final String PROMPT_DEFINITION_ID = "iris.pipeline.compaction";
+    private static final int PROMPT_VERSION = 1;
 
     private final CompactionRepository compactions;
     private final CompactionService frames;
@@ -58,6 +60,7 @@ public final class CompactionCoordinator {
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final Clock clock = Clock.systemUTC();
+    private final ModelPromptPrefixService promptPrefixes;
 
     public CompactionCoordinator(
             CompactionRepository compactions,
@@ -68,7 +71,8 @@ public final class CompactionCoordinator {
             ModelTokenEstimator tokens,
             RunRoundRepository runs,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ModelPromptPrefixService promptPrefixes
     ) {
         this.compactions = compactions;
         this.frames = frames;
@@ -79,6 +83,7 @@ public final class CompactionCoordinator {
         this.runs = runs;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.promptPrefixes = promptPrefixes;
     }
 
     public Mono<CompactBoundary> advance(
@@ -235,6 +240,13 @@ public final class CompactionCoordinator {
                 Map.of(
                         "providerProfile", provider.profileId(),
                         "pipeline", "compact_context",
+                        "promptDefinitionId",
+                        context.promptPrefix().promptDefinitionId(),
+                        "promptVersion",
+                        Integer.toString(
+                                context.promptPrefix().promptVersion()
+                        ),
+                        "prefixHash", context.promptPrefix().prefixHash(),
                         "sourceSnapshotId", row.sourceSnapshotId(),
                         "sourceContentHash", row.sourceContentHash()
                 )
@@ -263,10 +275,17 @@ public final class CompactionCoordinator {
         payload.put("capabilityLeaseHash", leaseHash);
         payload.put("estimatedInputTokens", estimated);
         String payloadJson = write(payload);
+        ModelPromptPrefix promptPrefix = promptPrefixes.capture(
+                PROMPT_DEFINITION_ID,
+                PROMPT_VERSION,
+                SYSTEM_INSTRUCTION,
+                List.of()
+        );
         ModelContext context = new ModelContext(
                 SYSTEM_INSTRUCTION,
                 items,
                 List.of(),
+                promptPrefix,
                 hash(payloadJson),
                 leaseHash,
                 estimated,

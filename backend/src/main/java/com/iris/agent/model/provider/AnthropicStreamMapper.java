@@ -19,6 +19,8 @@ import java.util.List;
 public final class AnthropicStreamMapper {
     private int inputTokens;
     private int outputTokens;
+    private int cacheReadTokens;
+    private int cacheMissTokens;
     private boolean messageStarted;
 
     public List<ModelStreamEvent> map(JsonNode event) {
@@ -48,8 +50,7 @@ public final class AnthropicStreamMapper {
         }
         JsonNode message = event.path("message");
         String model = requiredText(message, "model");
-        inputTokens = message.path("usage").path("input_tokens").asInt(0);
-        outputTokens = message.path("usage").path("output_tokens").asInt(0);
+        updateUsage(message.path("usage"));
         messageStarted = true;
         return List.of(new MessageStarted(
                 nullableText(message, "id"),
@@ -121,17 +122,33 @@ public final class AnthropicStreamMapper {
         requireMessageStarted();
         String stopReason = requiredText(event.path("delta"), "stop_reason");
         JsonNode usage = event.path("usage");
-        if (usage.has("output_tokens")) {
-            outputTokens = usage.path("output_tokens").asInt();
-        }
-        if (usage.has("input_tokens")) {
-            inputTokens = usage.path("input_tokens").asInt();
-        }
+        updateUsage(usage);
         return new MessageCompleted(
                 stopReason,
                 inputTokens,
-                outputTokens
+                outputTokens,
+                cacheReadTokens,
+                cacheMissTokens,
+                0
         );
+    }
+
+    private void updateUsage(JsonNode usage) {
+        if (usage == null || usage.isMissingNode()) {
+            return;
+        }
+        int uncached = usage.has("input_tokens")
+                ? usage.path("input_tokens").asInt()
+                : Math.max(0, cacheMissTokens);
+        int created = usage.path("cache_creation_input_tokens").asInt(0);
+        if (usage.has("cache_read_input_tokens")) {
+            cacheReadTokens = usage.path("cache_read_input_tokens").asInt();
+        }
+        cacheMissTokens = uncached + created;
+        inputTokens = cacheMissTokens + cacheReadTokens;
+        if (usage.has("output_tokens")) {
+            outputTokens = usage.path("output_tokens").asInt();
+        }
     }
 
     private int requireIndex(JsonNode event) {

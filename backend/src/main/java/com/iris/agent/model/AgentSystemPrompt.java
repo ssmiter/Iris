@@ -19,6 +19,8 @@ import java.util.TreeMap;
  */
 @Component
 public class AgentSystemPrompt {
+    public static final String DEFINITION_ID = "iris.agent.primary";
+    public static final int VERSION = 1;
 
     private final String instruction;
 
@@ -88,6 +90,14 @@ public class AgentSystemPrompt {
 
     public String instruction() {
         return instruction;
+    }
+
+    public String definitionId() {
+        return DEFINITION_ID;
+    }
+
+    public int version() {
+        return VERSION;
     }
 
     private CatalogSummary summarize(ToolRegistry tools) {

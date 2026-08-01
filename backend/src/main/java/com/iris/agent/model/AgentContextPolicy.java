@@ -85,6 +85,8 @@ public class AgentContextPolicy {
         );
         return new ContextSeed(
                 systemPrompt.instruction(),
+                systemPrompt.definitionId(),
+                systemPrompt.version(),
                 lease.toolNames(),
                 ContextBudget.defaults(),
                 lease.maxSchemaTokens(),

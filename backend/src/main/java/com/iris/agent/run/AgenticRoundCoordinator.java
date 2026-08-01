@@ -157,6 +157,16 @@ public class AgenticRoundCoordinator {
                                     "providerProfile", provider.profileId(),
                                     "providerKind", provider.providerKind(),
                                     "contextHash", context.contextHash(),
+                                    "promptDefinitionId",
+                                    context.promptPrefix()
+                                            .promptDefinitionId(),
+                                    "promptVersion",
+                                    Integer.toString(
+                                            context.promptPrefix()
+                                                    .promptVersion()
+                                    ),
+                                    "prefixHash",
+                                    context.promptPrefix().prefixHash(),
                                     "capabilityLeaseHash",
                                     context.capabilityLeaseHash(),
                                     "estimatedInputTokens",

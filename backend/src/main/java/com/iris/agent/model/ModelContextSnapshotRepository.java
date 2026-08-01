@@ -65,6 +65,47 @@ public class ModelContextSnapshotRepository {
                     "Model context hash collision or non-canonical payload"
             );
         }
+        ModelPromptPrefix prefix = context.promptPrefix();
+        jdbc.sql("""
+                INSERT INTO model_context_prefix(
+                    context_hash, prompt_definition_id, prompt_version,
+                    prompt_hash, tool_schema_hash, prefix_hash, created_at
+                ) VALUES (
+                    :contextHash, :definitionId, :version,
+                    :promptHash, :toolSchemaHash, :prefixHash, :now
+                )
+                ON CONFLICT(context_hash) DO NOTHING
+                """)
+                .param("contextHash", context.contextHash())
+                .param("definitionId", prefix.promptDefinitionId())
+                .param("version", prefix.promptVersion())
+                .param("promptHash", prefix.promptHash())
+                .param("toolSchemaHash", prefix.toolSchemaHash())
+                .param("prefixHash", prefix.prefixHash())
+                .param("now", now.toString())
+                .update();
+        int matchingPrefix = jdbc.sql("""
+                SELECT COUNT(*) FROM model_context_prefix
+                WHERE context_hash = :contextHash
+                  AND prompt_definition_id = :definitionId
+                  AND prompt_version = :version
+                  AND prompt_hash = :promptHash
+                  AND tool_schema_hash = :toolSchemaHash
+                  AND prefix_hash = :prefixHash
+                """)
+                .param("contextHash", context.contextHash())
+                .param("definitionId", prefix.promptDefinitionId())
+                .param("version", prefix.promptVersion())
+                .param("promptHash", prefix.promptHash())
+                .param("toolSchemaHash", prefix.toolSchemaHash())
+                .param("prefixHash", prefix.prefixHash())
+                .query(Integer.class)
+                .single();
+        if (matchingPrefix != 1) {
+            throw new IllegalStateException(
+                    "Model context prefix identity does not match snapshot"
+            );
+        }
         for (int ordinal = 0; ordinal < context.tools().size(); ordinal++) {
             ModelRequest.ToolDefinition tool = context.tools().get(ordinal);
             jdbc.sql("""

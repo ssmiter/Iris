@@ -278,9 +278,11 @@ Prompt 稳定性直接影响模型前缀缓存、首 token 延迟和长对话行
 Catalog 摘要由排序后的 `capability id + version + manifest hash` 计算。新增、删除或修改
 Definition 会自然改变 hash；普通对话不会。
 
-当前 Context snapshot 已持久化完整 `systemInstruction` 与 `contextHash`。后续应增加
-显式 `promptDefinitionId + promptVersion + promptHash`，让轨迹评估能够区分模型变化、
-Prompt 变化和 Tool Definition 变化。
+当前 Context snapshot 同时持久化完整 `systemInstruction`、`contextHash` 与
+`promptDefinitionId + promptVersion + promptHash + toolSchemaHash + prefixHash`。其中
+`contextHash` 追踪完整动态视野，`prefixHash` 只追踪 System Prompt 与有序 Tool Definition。
+轨迹评估因此可以区分 Prompt 变化、Tool Definition 变化与普通对话增长；Provider adapter
+再把 cache hit/miss token 归一化到 ModelAttempt，缓存效果不再只靠首 token 延迟猜测。
 
 ## 8. 如何反复打磨
 
