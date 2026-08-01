@@ -156,6 +156,12 @@ cancellation: cooperative | commit_boundary
   同类调用可以并行；未知、校验失败或未声明一律按 `serial`；
 - 调度器只合并**连续**的 parallel-safe ToolCall，遇到 serial ToolCall 形成屏障，
   不跨越模型给出的 ordinal 猜测依赖；
+- 固定的 `invoke_capability` 只是 Provider 表面。调度前由 Runtime 只读解析它绑定的精确
+  Definition，并使用真实目标的 concurrency；定义未读、版本变化或任何解析不确定性都
+  fail-close 为 serial。真正执行时仍重新核验并进入唯一 Runtime，不把预判当成授权；
+- serial 调用进入 `awaiting_approval` 或其他非终态后，屏障后的 ToolCall 尚未 claim，
+  Round 立即暂停。恢复时先幂等读取该执行的终态，再从下一个 ordinal 继续，不能让后续
+  读取越过尚未提交的写操作；
 - 并行执行可以乱序完成，但 ToolObservation、投影和下一轮模型输入必须按原
   ToolCall ordinal 稳定提交；
 - `cooperative` Tool 在扫描、读取和等待边界重复读取实时 cancellation signal；

@@ -242,7 +242,9 @@ StopRequest 是持久事实，进程内 `RunCancellationRegistry` 只是低延�
 并行批只并发执行 Tool Runtime invocation；结果随后按 ordinal 依次形成 projection 和
 ToolObservation。这样磁盘等待可以重叠，但 provider 协议配对、Conversation 历史和
 下一次模型视野仍完全确定。任何 Manifest 缺失、调度判定异常或未来动态判定不明确都
-fail-close 为串行。
+fail-close 为串行。对于稳定发现代理，分批依据真实目标 Definition，而不是代理自身的
+保守 Manifest；若某个串行调用等待审批，后续 ordinal 不得提前 claim，直到该屏障恢复并
+闭合。这个暂停由 Backend 状态机处理，不增加一次模型决策。
 
 ## 9. 首轮实现边界
 

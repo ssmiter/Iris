@@ -9,7 +9,6 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolManifest.ConcurrencySemantics;
-import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRuntime;
 import com.iris.conversation.application.RunEventEmitter;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,7 +35,6 @@ public class RoundToolCoordinator {
     private final ToolProjectionService projections;
     private final RunEventEmitter lifecycleEvents;
     private final RunCancellationRegistry cancellations;
-    private final ToolRegistry registry;
     private final int maxParallelReadTools;
 
     public RoundToolCoordinator(
@@ -48,7 +46,6 @@ public class RoundToolCoordinator {
             ToolProjectionService projections,
             RunEventEmitter lifecycleEvents,
             RunCancellationRegistry cancellations,
-            ToolRegistry registry,
             @Value("${iris.agent.max-parallel-read-tools:4}")
             int maxParallelReadTools
     ) {
@@ -60,7 +57,6 @@ public class RoundToolCoordinator {
         this.projections = projections;
         this.lifecycleEvents = lifecycleEvents;
         this.cancellations = cancellations;
-        this.registry = registry;
         if (maxParallelReadTools < 1 || maxParallelReadTools > 16) {
             throw new IllegalArgumentException(
                     "max-parallel-read-tools must be between 1 and 16"
@@ -151,25 +147,37 @@ public class RoundToolCoordinator {
         List<CallExecution> executions = new ArrayList<>();
         List<RoundToolCall> parallelBatch = new ArrayList<>();
         for (RoundToolCall call : calls) {
-            if (parallelSafe(call)) {
+            if (parallelSafe(
+                    call,
+                    run,
+                    roundId,
+                    workspaceRoot,
+                    initiallyCancelled
+            )) {
                 parallelBatch.add(call);
                 continue;
             }
-            flushParallel(
+            if (!flushParallel(
                     parallelBatch,
                     executions,
                     run,
                     roundId,
                     workspaceRoot,
                     initiallyCancelled
-            );
-            executions.add(invoke(
+            )) {
+                return List.copyOf(executions);
+            }
+            CallExecution serial = invoke(
                     call,
                     run,
                     roundId,
                     workspaceRoot,
                     initiallyCancelled
-            ));
+            );
+            executions.add(serial);
+            if (!serial.execution().terminal()) {
+                return List.copyOf(executions);
+            }
         }
         flushParallel(
                 parallelBatch,
@@ -182,7 +190,7 @@ public class RoundToolCoordinator {
         return List.copyOf(executions);
     }
 
-    private void flushParallel(
+    private boolean flushParallel(
             List<RoundToolCall> batch,
             List<CallExecution> target,
             RunRow run,
@@ -191,7 +199,7 @@ public class RoundToolCoordinator {
             boolean initiallyCancelled
     ) {
         if (batch.isEmpty()) {
-            return;
+            return true;
         }
         List<CallExecution> completed = Flux.fromIterable(
                         List.copyOf(batch)
@@ -217,6 +225,8 @@ public class RoundToolCoordinator {
         }
         target.addAll(completed);
         batch.clear();
+        return completed.stream()
+                .allMatch(item -> item.execution().terminal());
     }
 
     private CallExecution invoke(
@@ -226,15 +236,11 @@ public class RoundToolCoordinator {
             Path workspaceRoot,
             boolean initiallyCancelled
     ) {
-        BooleanSupplier cancellation = () -> initiallyCancelled
-                || cancellations.isCancelled(run.runId());
-        ToolContext context = new RoundToolContext(
-                run.conversationId(),
-                run.turnId(),
-                run.runId(),
+        ToolContext context = context(
+                run,
                 roundId,
                 workspaceRoot,
-                cancellation
+                initiallyCancelled
         );
         RuntimeResult execution = toolRuntime.invoke(
                 new Invocation(call.toolCallId(), call.toolName()),
@@ -244,11 +250,41 @@ public class RoundToolCoordinator {
         return new CallExecution(call, execution);
     }
 
-    private boolean parallelSafe(RoundToolCall call) {
-        return registry.find(call.toolName())
-                .map(binding -> binding.manifest().concurrency()
-                        == ConcurrencySemantics.PARALLEL_SAFE)
-                .orElse(false);
+    private boolean parallelSafe(
+            RoundToolCall call,
+            RunRow run,
+            String roundId,
+            Path workspaceRoot,
+            boolean initiallyCancelled
+    ) {
+        return toolRuntime.schedulingConcurrency(
+                new Invocation(call.toolCallId(), call.toolName()),
+                call.arguments(),
+                context(
+                        run,
+                        roundId,
+                        workspaceRoot,
+                        initiallyCancelled
+                )
+        ) == ConcurrencySemantics.PARALLEL_SAFE;
+    }
+
+    private ToolContext context(
+            RunRow run,
+            String roundId,
+            Path workspaceRoot,
+            boolean initiallyCancelled
+    ) {
+        BooleanSupplier cancellation = () -> initiallyCancelled
+                || cancellations.isCancelled(run.runId());
+        return new RoundToolContext(
+                run.conversationId(),
+                run.turnId(),
+                run.runId(),
+                roundId,
+                workspaceRoot,
+                cancellation
+        );
     }
 
     public record RoundToolProgress(

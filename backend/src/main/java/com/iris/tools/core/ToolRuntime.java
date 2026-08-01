@@ -10,6 +10,7 @@ import com.iris.tools.core.ToolExecutionViews.ApprovalDecision;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolManifest.SideEffect;
+import com.iris.tools.core.ToolManifest.ConcurrencySemantics;
 import com.iris.tools.core.ToolOutputPayloadService.PendingPayload;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import org.springframework.beans.factory.annotation.Value;
@@ -111,45 +112,30 @@ public class ToolRuntime {
                 );
             }
 
-            ToolBinding binding = visibleBinding;
-            JsonNode effectiveInput = input;
-            ToolCallResolver.ResolvedToolCall resolution = null;
-            if (visibleBinding.tool() instanceof ToolCallResolver resolver) {
-                try {
-                    resolution = resolver.resolve(input.deepCopy(), context);
-                    ToolBinding target = registry.find(
-                                    resolution.targetToolName()
-                            )
-                            .orElseThrow(() -> new ToolRuntimeException(
-                                    "resolved_tool_not_found",
-                                    "解析后的真实工具不存在"
-                            ));
-                    if (!target.capabilityPath().equals(
-                            resolution.targetCapabilityPath()
-                    ) || !target.manifestHash().equals(
-                            resolution.targetManifestHash()
-                    )) {
-                        throw new ToolRuntimeException(
-                                "resolved_tool_binding_changed",
-                                "解析后的真实工具定义已经变化"
-                        );
-                    }
-                    binding = target;
-                    effectiveInput = resolution.arguments();
-                } catch (Exception exception) {
-                    return rejectBeforeResolution(
-                            invocation,
-                            inputHash,
-                            context,
-                            visibleBinding,
-                            errorCode(
-                                    exception,
-                                    "tool_resolution_failed"
-                            ),
-                            safeMessage(exception)
-                    );
-                }
+            ResolvedInvocation resolved;
+            try {
+                resolved = resolveInvocation(
+                        visibleBinding,
+                        input,
+                        context
+                );
+            } catch (Exception exception) {
+                return rejectBeforeResolution(
+                        invocation,
+                        inputHash,
+                        context,
+                        visibleBinding,
+                        errorCode(
+                                exception,
+                                "tool_resolution_failed"
+                        ),
+                        safeMessage(exception)
+                );
             }
+            ToolBinding binding = resolved.binding();
+            JsonNode effectiveInput = resolved.input();
+            ToolCallResolver.ResolvedToolCall resolution =
+                    resolved.resolution();
 
             ToolContext boundedContext = withDeadline(
                     context,
@@ -307,6 +293,78 @@ public class ToolRuntime {
             }
             return execute(executionId, binding, boundedContext);
         });
+    }
+
+    /**
+     * Resolves only enough immutable Definition metadata for host scheduling.
+     * Any uncertainty remains serial; invoke() performs the authoritative
+     * resolution and all policy checks again.
+     */
+    public ConcurrencySemantics schedulingConcurrency(
+            Invocation invocation,
+            JsonNode input,
+            ToolContext context
+    ) {
+        try {
+            requireInvocation(invocation, context);
+            ToolBinding visibleBinding = registry.find(invocation.toolName())
+                    .orElseThrow();
+            requireExactModelExposure(invocation, visibleBinding);
+            validator.validate(
+                    visibleBinding.manifest().inputSchema(),
+                    input
+            );
+            ResolvedInvocation resolved = resolveInvocation(
+                    visibleBinding,
+                    input,
+                    context
+            );
+            validator.validate(
+                    resolved.binding().manifest().inputSchema(),
+                    resolved.input()
+            );
+            return resolved.binding().manifest().concurrency();
+        } catch (Exception ignored) {
+            return ConcurrencySemantics.SERIAL;
+        }
+    }
+
+    private ResolvedInvocation resolveInvocation(
+            ToolBinding visibleBinding,
+            JsonNode input,
+            ToolContext context
+    ) {
+        if (!(visibleBinding.tool() instanceof ToolCallResolver resolver)) {
+            return new ResolvedInvocation(
+                    visibleBinding,
+                    input,
+                    null
+            );
+        }
+        ToolCallResolver.ResolvedToolCall resolution = resolver.resolve(
+                input.deepCopy(),
+                context
+        );
+        ToolBinding target = registry.find(resolution.targetToolName())
+                .orElseThrow(() -> new ToolRuntimeException(
+                        "resolved_tool_not_found",
+                        "解析后的真实工具不存在"
+                ));
+        if (!target.capabilityPath().equals(
+                resolution.targetCapabilityPath()
+        ) || !target.manifestHash().equals(
+                resolution.targetManifestHash()
+        )) {
+            throw new ToolRuntimeException(
+                    "resolved_tool_binding_changed",
+                    "解析后的真实工具定义已经变化"
+            );
+        }
+        return new ResolvedInvocation(
+                target,
+                resolution.arguments(),
+                resolution
+        );
     }
 
     public RuntimeResult decideApproval(
@@ -1046,6 +1104,13 @@ public class ToolRuntime {
 
     private String id(String prefix) {
         return prefix + "_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private record ResolvedInvocation(
+            ToolBinding binding,
+            JsonNode input,
+            ToolCallResolver.ResolvedToolCall resolution
+    ) {
     }
 
     private record DeadlineToolContext(
