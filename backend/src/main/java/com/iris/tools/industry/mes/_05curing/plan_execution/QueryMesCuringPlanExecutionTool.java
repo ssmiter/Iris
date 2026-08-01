@@ -24,7 +24,7 @@ public class QueryMesCuringPlanExecutionTool
                 readManifest(
                         "iris.industry.mes.curing_plan_execution",
                         "query_mes_curing_plan_execution",
-                        "查询脱敏模拟 MES 的硫化计划与生产实绩；核对设备负荷、模具安排、周期和合格产出时使用，不包含质量终检或设备维护",
+                        "查询 MES 域的硫化计划与生产实绩；核对设备负荷、模具安排、周期和合格产出时使用，不包含质量终检或设备维护",
                         processInputSchema(
                                 objectMapper,
                                 TYPES,

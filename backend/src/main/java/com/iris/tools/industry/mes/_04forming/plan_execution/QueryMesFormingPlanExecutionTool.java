@@ -24,7 +24,7 @@ public class QueryMesFormingPlanExecutionTool
                 readManifest(
                         "iris.industry.mes.forming_plan_execution",
                         "query_mes_forming_plan_execution",
-                        "查询脱敏模拟 MES 的成型计划与生产实绩；比较机台计划数量、实际完成和合格损耗时使用，不负责修改排程或报工",
+                        "查询 MES 域的成型计划与生产实绩；比较机台计划数量、实际完成和合格损耗时使用，不负责修改排程或报工",
                         processInputSchema(
                                 objectMapper,
                                 TYPES,

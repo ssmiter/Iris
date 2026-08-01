@@ -29,7 +29,7 @@ public class QueryMesMixingPlansTool extends AbstractMesReadTool {
                 readManifest(
                         "iris.industry.mes.mixing_plans",
                         "query_mes_mixing_plans",
-                        "查询脱敏模拟 MES 的密炼计划、班次、优先级与实际完成进度；判断计划执行情况时使用",
+                        "查询 MES 域的密炼计划、班次、优先级与实际完成进度；判断计划执行情况时使用",
                         inputSchema(objectMapper),
                         IndustrialToolSchemas.output(objectMapper)
                 )
@@ -55,7 +55,7 @@ public class QueryMesMixingPlansTool extends AbstractMesReadTool {
 
     @Override
     protected ObjectNode query(ObjectNode normalized) {
-        return repository.productionPlans(domain(), normalized);
+        return repository.productionPlans(domain(), view(), normalized);
     }
 
     private static ObjectNode inputSchema(ObjectMapper mapper) {

@@ -19,7 +19,7 @@ public class QueryMesProcessRecipesTool extends AbstractMesReferenceQueryTool {
                 readManifest(
                         "iris.industry.mes.process_recipes",
                         "query_mes_process_recipes",
-                        "查询脱敏模拟 MES 的配方版本、启用状态、适用工序和关键摘要；核对生产使用哪个配方或版本是否批准时使用，不返回真实配比明细",
+                        "查询 MES 域的配方版本、启用状态、适用工序和关键摘要；核对生产使用哪个配方或版本是否批准时使用，不返回真实配比明细",
                         referenceInputSchema(
                                 objectMapper,
                                 "配方"

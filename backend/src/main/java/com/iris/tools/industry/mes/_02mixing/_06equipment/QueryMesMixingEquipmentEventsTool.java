@@ -30,7 +30,7 @@ public class QueryMesMixingEquipmentEventsTool
                 readManifest(
                         "iris.industry.mes.mixing_equipment_events",
                         "query_mes_mixing_equipment_events",
-                        "查询脱敏模拟 MES 的密炼设备停机、降速与过程告警事件；定位损失时间和未闭环异常时使用",
+                        "查询 MES 域的密炼设备停机、降速与过程告警事件；定位损失时间和未闭环异常时使用",
                         inputSchema(objectMapper),
                         IndustrialToolSchemas.output(objectMapper)
                 )
@@ -54,6 +54,8 @@ public class QueryMesMixingEquipmentEventsTool
                 "unresolved_only",
                 input.path("unresolved_only").asBoolean(false)
         );
+        // 本工具只覆盖密炼工序；跨工序视角见 _11equipment/events
+        normalized.put("process_code", "mixing");
         return normalized;
     }
 

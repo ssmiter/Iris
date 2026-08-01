@@ -24,7 +24,7 @@ public class QueryMesFinishedQualityRecordsTool
                 readManifest(
                         "iris.industry.mes.finished_quality_records",
                         "query_mes_finished_quality_records",
-                        "查询脱敏模拟 MES 的成品检验批次与质量异常；分析通过数量、缺陷影响范围和待处置问题时使用，不替代密炼胶料测量工具",
+                        "查询 MES 域的成品检验批次与质量异常；分析通过数量、缺陷影响范围和待处置问题时使用，不替代密炼胶料测量工具",
                         processInputSchema(
                                 objectMapper,
                                 TYPES,

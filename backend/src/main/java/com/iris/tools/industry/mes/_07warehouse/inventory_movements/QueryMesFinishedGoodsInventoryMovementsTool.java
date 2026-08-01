@@ -24,7 +24,7 @@ public class QueryMesFinishedGoodsInventoryMovementsTool
                 readManifest(
                         "iris.industry.mes.finished_goods_inventory_movements",
                         "query_mes_finished_goods_inventory_movements",
-                        "查询脱敏模拟 MES 的成品库存与出入库流转；确认可用量、分配冻结或某批装运执行情况时使用，不包含原材料仓库存",
+                        "查询 MES 域的成品库存与出入库流转；确认可用量、分配冻结或某批装运执行情况时使用，不包含原材料仓库存",
                         processInputSchema(
                                 objectMapper,
                                 TYPES,

@@ -30,7 +30,7 @@ public class QueryMesEquipmentStatusTool extends AbstractMesReadTool {
                 readManifest(
                         "iris.industry.mes.equipment_status",
                         "query_mes_equipment_status",
-                        "查询脱敏模拟 MES 的设备状态、利用率、当前计划与最新告警；观察车间运行态势时使用",
+                        "查询 MES 域的设备状态、利用率、当前计划与最新告警；观察车间运行态势时使用",
                         inputSchema(objectMapper),
                         IndustrialToolSchemas.output(objectMapper)
                 )

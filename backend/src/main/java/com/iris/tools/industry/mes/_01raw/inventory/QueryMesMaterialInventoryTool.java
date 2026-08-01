@@ -21,7 +21,7 @@ public class QueryMesMaterialInventoryTool extends AbstractMesReadTool {
                 readManifest(
                         "iris.industry.mes.material_inventory",
                         "query_mes_material_inventory",
-                        "查询脱敏模拟 MES 的原材料可用量、预留量与安全库存；排查缺料或库存风险时使用",
+                        "查询 MES 域的原材料可用量、预留量与安全库存；排查缺料或库存风险时使用",
                         inputSchema(objectMapper),
                         IndustrialToolSchemas.output(objectMapper)
                 )

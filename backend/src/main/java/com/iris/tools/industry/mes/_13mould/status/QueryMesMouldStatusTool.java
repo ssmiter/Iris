@@ -19,7 +19,7 @@ public class QueryMesMouldStatusTool extends AbstractMesReferenceQueryTool {
                 readManifest(
                         "iris.industry.mes.mould_status",
                         "query_mes_mould_status",
-                        "查询脱敏模拟 MES 的模具状态、当前位置、累计使用和维护阈值；判断某制品模具是否可用于排产或是否临近维护时使用",
+                        "查询 MES 域的模具状态、当前位置、累计使用和维护阈值；判断某制品模具是否可用于排产或是否临近维护时使用",
                         referenceInputSchema(
                                 objectMapper,
                                 "模具"

@@ -141,14 +141,20 @@ class 文件目录当持久化数据库。Capability Catalog 是独立的语义�
     /_05curing                    硫化
     /_06quality                   成品质量
     /_07warehouse                 仓储
+    /_08trace                     跨工序批次追溯
+    /_09reports                   确定性聚合报表
+    /_10plan                      需求、计划维护与延误
     /_11equipment/status          设备当前状态
     /_12technology                工艺与配方
     /_13mould                     模具
+    /_14personnel                 班组与班次产出
+    /aps                          主计划、产能、规则与发布
   /mens                           密炼执行系统目录骨架，暂不注册具体工具
 ```
 
-MES 样例采用“一段工序，一个代表性能力”的纵切方式，避免把页面或表逐个映射成近义
-Tool：
+MES 样例优先保留能组成“需求 → 排程 → 发布 → 执行 → 质量 → 仓储 → 追溯”闭环的
+能力，同时避免把页面或表逐个映射成近义 Tool。具体全景、保留边界与写操作守护见
+[27 · 工业业务域全景](27-industrial-domain-panorama.md)：
 
 | 工序目录 | 代表性能力 | 可观察对象 |
 |---|---|---|

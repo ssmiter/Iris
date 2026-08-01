@@ -24,7 +24,7 @@ public class QueryMesSemifinishedProductionInventoryTool
                 readManifest(
                         "iris.industry.mes.semifinished_production_inventory",
                         "query_mes_semifinished_production_inventory",
-                        "查询脱敏模拟 MES 的半制品产出与缓冲库存；判断上游产出能否支撑成型、定位缺料或积压时优先使用，不包含原料和成品库存",
+                        "查询 MES 域的半制品产出与缓冲库存；判断上游产出能否支撑成型、定位缺料或积压时优先使用，不包含原料和成品库存",
                         processInputSchema(
                                 objectMapper,
                                 TYPES,

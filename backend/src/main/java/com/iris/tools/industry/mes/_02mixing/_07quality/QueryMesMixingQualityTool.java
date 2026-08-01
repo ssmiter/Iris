@@ -24,7 +24,7 @@ public class QueryMesMixingQualityTool extends AbstractMesReadTool {
                 readManifest(
                         "iris.industry.mes.mixing_quality",
                         "query_mes_mixing_quality",
-                        "查询脱敏模拟 MES 的胶料检验测量、上下限、判定和通过率；分析批次质量异常时使用",
+                        "查询 MES 域的胶料检验测量、上下限、判定和通过率；分析批次质量异常时使用",
                         inputSchema(objectMapper),
                         IndustrialToolSchemas.output(objectMapper)
                 )
