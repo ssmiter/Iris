@@ -42,15 +42,12 @@ public class CompactionRepository {
 
     public SourceSnapshot buildSource(CompactPlan plan) {
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.put("schemaVersion", 2);
+        payload.put("schemaVersion", 3);
+        payload.put("summaryMode", "incremental");
         payload.put("parentFrameId", plan.parentFrameId());
         payload.put("sourceStartSequence", plan.sourceStartSequence());
         payload.put("waterlineSequence", plan.waterlineSequence());
         payload.put("beforeTurnId", plan.beforeTurnId());
-        priorSummary(plan.parentFrameId()).ifPresentOrElse(
-                value -> payload.put("priorFrameSummary", value),
-                () -> payload.putNull("priorFrameSummary")
-        );
         ArrayNode facts = payload.putArray("facts");
         sourceFacts(plan).forEach(facts::add);
         String json = write(payload);
@@ -107,13 +104,13 @@ public class CompactionRepository {
                     dependency_snapshot_ref, tool_calls_limit,
                     time_limit_ms
                 ) VALUES (
-                    :runId, 'iris.pipeline.compact', '1',
+                    :runId, 'iris.pipeline.compact', '2',
                     :snapshotHash, :inputHash,
                     :sourceRef, 0, 300000
                 )
                 """)
                 .param("runId", runId)
-                .param("snapshotHash", hash("iris.pipeline.compact:1"))
+                .param("snapshotHash", hash("iris.pipeline.compact:2"))
                 .param("inputHash", source.contentHash())
                 .param("sourceRef", source.snapshotId())
                 .update();
@@ -380,22 +377,6 @@ public class CompactionRepository {
                 .param("now", now.toString())
                 .param("runId", runId)
                 .update();
-    }
-
-    private Optional<String> priorSummary(String frameId) {
-        return jdbc.sql("""
-                SELECT summary.summary_text
-                FROM context_frame frame
-                JOIN compact_boundary boundary
-                  ON boundary.frame_id = frame.frame_id
-                JOIN compact_summary summary
-                  ON summary.boundary_id = boundary.boundary_id
-                WHERE frame.frame_id = :frameId
-                  AND frame.frame_kind = 'compact'
-                """)
-                .param("frameId", frameId)
-                .query(String.class)
-                .optional();
     }
 
     private List<JsonNode> sourceFacts(CompactPlan plan) {

@@ -124,11 +124,15 @@ origin(frame, waterline=0)
 
 每个新对话拥有一个空的 origin Frame。每次 Compact 都引用唯一 parent Frame，并把
 source range 固定为 `(parent.waterline, current.waterline)`；Branch 保存创建瞬间选中的
-base Frame。由此模型当前视野始终是：
+base Frame。每条新 Frame 的 summary 只描述自己的 source range，不重写 parent summary；
+读取时沿 parent 链按时间顺序组合这些增量摘要。由此模型当前视野始终是：
 
 ```text
-base Frame 的上下文 + base waterline 到目标位置的 canonical facts
+base Frame 链的增量摘要 + base waterline 到目标位置的 canonical facts
 ```
+
+旧版本产生的累计摘要视为链上的一个 base：读取它之后只追加更新的增量摘要，不再同时
+注入更早的累计摘要。这让格式升级无需改写历史，也避免同一事实重复进入 ModelContext。
 
 - 同一条分支路径上的有效水位线只能向前推进，不能回退或重复。
 - 创建子分支时，从 source Branch 的 Frame 链向上选择严格位于分叉锚点之前的最近
@@ -162,8 +166,8 @@ base Frame 的上下文 + base waterline 到目标位置的 canonical facts
 内完成以下 Prepare：
 
 1. 从当前 head 之后的已闭合可见 Turn 中选择水位线，并保留最近四个 Turn；
-2. 冻结 `parent Frame summary + (parent waterline, new waterline)` 中的 canonical
-   user、assistant、ToolCall 和 ToolObservation；构造摘要输入时，较大的 succeeded
+2. 只冻结 `(parent waterline, new waterline)` 中的 canonical user、assistant、
+   ToolCall 和 ToolObservation，不把 parent summary 再送入模型重写；构造摘要输入时，较大的 succeeded
    可重取结果先机械投影为 `tool-result://` + content hash，错误、写入影响、
    `outcome_unknown` 与不可重取证据保持原样；
 3. 保存带 content hash 的 `compaction_source_snapshot`；

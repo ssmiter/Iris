@@ -63,7 +63,7 @@ public class CompactionService {
      * Chooses the first retained Turn; callers never supply a cutoff.
      * The plan is a hint until record() revalidates the same head and range.
      */
-    public CompactPlan planManual(
+    public CompactPlan planNextBoundary(
             String conversationId,
             String branchId
     ) {

@@ -35,9 +35,9 @@ public final class CompactionCoordinator {
     private static final int MAX_ATTEMPTS = 3;
     private static final String SYSTEM_INSTRUCTION = """
             你正在为 Iris 生成可持久化的 Context Frame。
-            输入是上一条 Frame 摘要（可能为空）和此后到新水位线之间的规范事实。
+            输入只包含上一条 Frame 水位线到新水位线之间的规范事实，不包含更早摘要。
 
-            输出一份可以替代全部输入事实的中文上下文摘要，只输出摘要正文。
+            输出一份只概括这一段增量事实的中文上下文摘要，只输出摘要正文。
             必须保留：用户目标与约束、已经确认的决定、仍未解决的问题、重要实体和
             标识、工具产生的客观证据、文件或外部状态变化及其结果、失败与
             outcome_unknown。不得把推测写成事实，不得声称未发生的动作已经完成。
@@ -48,7 +48,7 @@ public final class CompactionCoordinator {
     private static final int MAX_INPUT_TOKENS = 120_000;
     private static final int RESERVED_OUTPUT_TOKENS = 8_192;
     private static final String PROMPT_DEFINITION_ID = "iris.pipeline.compaction";
-    private static final int PROMPT_VERSION = 1;
+    private static final int PROMPT_VERSION = 2;
 
     private final CompactionRepository compactions;
     private final CompactionService frames;

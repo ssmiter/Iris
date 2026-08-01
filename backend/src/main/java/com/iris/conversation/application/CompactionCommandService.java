@@ -144,7 +144,7 @@ public final class CompactionCommandService {
         }
         CompactPlan plan;
         try {
-            plan = compactions.planManual(
+            plan = compactions.planNextBoundary(
                     conversationId,
                     request.branchId()
             );
@@ -185,7 +185,7 @@ public final class CompactionCommandService {
         }
         CompactPlan plan;
         try {
-            plan = compactions.planManual(conversationId, branchId);
+            plan = compactions.planNextBoundary(conversationId, branchId);
         } catch (IllegalStateException exception) {
             return null;
         }

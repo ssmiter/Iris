@@ -77,32 +77,86 @@ public class ModelContextRepository {
                            ELSE head.frame_id
                          END
                 ),
-                boundary AS (
-                    SELECT cb.boundary_id, cs.summary_text,
-                           head.waterline_sequence AS cutoff_sequence,
-                           bt.started_at AS boundary_time
+                frame_chain(
+                    frame_id, parent_frame_id, frame_kind,
+                    waterline_sequence, depth
+                ) AS (
+                    SELECT frame.frame_id, frame.parent_frame_id,
+                           frame.frame_kind, frame.waterline_sequence, 0
                     FROM context_head head
-                    JOIN compact_boundary cb
-                      ON cb.frame_id = head.frame_id
-                    JOIN compact_summary cs
-                      ON cs.boundary_id = cb.boundary_id
-                    JOIN conversation_turn bt
-                      ON bt.turn_id = cb.before_turn_id
-                    JOIN target t
-                    WHERE cb.conversation_id = :conversationId
-                      AND head.frame_kind = 'compact'
-                      AND head.waterline_sequence <= t.target_sequence
+                    JOIN context_frame frame
+                      ON frame.frame_id = head.frame_id
+
+                    UNION ALL
+
+                    SELECT parent.frame_id, parent.parent_frame_id,
+                           parent.frame_kind, parent.waterline_sequence,
+                           child.depth + 1
+                    FROM frame_chain child
+                    JOIN context_frame parent
+                      ON parent.frame_id = child.parent_frame_id
+                ),
+                summary_candidates AS (
+                    SELECT chain.depth, boundary.boundary_id,
+                           summary.summary_text,
+                           turn.started_at AS boundary_time,
+                           CASE
+                             WHEN json_extract(
+                                      source.payload_json,
+                                      '$.summaryMode'
+                                  ) = 'incremental'
+                             THEN 'incremental'
+                             ELSE 'cumulative'
+                           END AS summary_mode
+                    FROM frame_chain chain
+                    JOIN compact_boundary boundary
+                      ON boundary.frame_id = chain.frame_id
+                    JOIN compact_summary summary
+                      ON summary.boundary_id = boundary.boundary_id
+                    JOIN conversation_turn turn
+                      ON turn.turn_id = boundary.before_turn_id
+                    LEFT JOIN compaction_run run
+                      ON run.compact_boundary_id = boundary.boundary_id
+                     AND run.phase = 'completed'
+                    LEFT JOIN compaction_source_snapshot source
+                      ON source.run_id = run.run_id
+                    JOIN target target
+                    WHERE chain.frame_kind = 'compact'
+                      AND chain.waterline_sequence <= target.target_sequence
+                ),
+                summary_scope AS (
+                    SELECT MIN(depth) AS legacy_base_depth
+                    FROM summary_candidates
+                    WHERE summary_mode = 'cumulative'
+                ),
+                summaries AS (
+                    SELECT candidate.*
+                    FROM summary_candidates candidate
+                    CROSS JOIN summary_scope scope
+                    WHERE (
+                        scope.legacy_base_depth IS NULL
+                        AND candidate.summary_mode = 'incremental'
+                    ) OR (
+                        scope.legacy_base_depth IS NOT NULL
+                        AND (
+                            candidate.depth = scope.legacy_base_depth
+                            OR (
+                                candidate.summary_mode = 'incremental'
+                                AND candidate.depth < scope.legacy_base_depth
+                            )
+                        )
+                    )
                 ),
                 facts AS (
-                    SELECT b.boundary_time AS fact_time,
+                    SELECT summary.boundary_time AS fact_time,
                            -100 AS fact_order,
-                           b.boundary_id AS fact_id,
+                           summary.boundary_id AS fact_id,
                            'history_summary' AS fact_kind,
                            NULL AS source_attempt_id,
                            NULL AS source_provider_profile,
                            NULL AS source_model_id,
                            NULL AS provider_state_key,
-                           b.summary_text AS text_content,
+                           summary.summary_text AS text_content,
                            NULL AS tool_call_id,
                            NULL AS provider_call_id,
                            NULL AS tool_name,
@@ -111,7 +165,7 @@ public class ModelContextRepository {
                            NULL AS execution_id,
                            NULL AS manifest_hash,
                            NULL AS payload_hash
-                    FROM boundary b
+                    FROM summaries summary
 
                     UNION ALL
 
@@ -163,11 +217,8 @@ public class ModelContextRepository {
                                 )
                           )
                       )
-                      AND (
-                          NOT EXISTS (SELECT 1 FROM boundary)
-                          OR me.sequence >= (
-                              SELECT cutoff_sequence FROM boundary
-                          )
+                      AND me.sequence >= (
+                          SELECT waterline_sequence FROM context_head
                       )
 
                     UNION ALL
@@ -215,11 +266,8 @@ public class ModelContextRepository {
                               WHERE state_call.attempt_id = ma.attempt_id
                           )
                       )
-                      AND (
-                          NOT EXISTS (SELECT 1 FROM boundary)
-                          OR ae.sequence >= (
-                              SELECT cutoff_sequence FROM boundary
-                          )
+                      AND ae.sequence >= (
+                          SELECT waterline_sequence FROM context_head
                       )
 
                     UNION ALL
@@ -257,11 +305,8 @@ public class ModelContextRepository {
                           OR ae.sequence < path.cutoff_sequence
                       )
                       AND ma.ended_at < t.target_time
-                      AND (
-                          NOT EXISTS (SELECT 1 FROM boundary)
-                          OR ae.sequence >= (
-                              SELECT cutoff_sequence FROM boundary
-                          )
+                      AND ae.sequence >= (
+                          SELECT waterline_sequence FROM context_head
                       )
 
                     UNION ALL
@@ -298,11 +343,8 @@ public class ModelContextRepository {
                           path.cutoff_sequence IS NULL
                           OR oe.sequence < path.cutoff_sequence
                       )
-                      AND (
-                          NOT EXISTS (SELECT 1 FROM boundary)
-                          OR oe.sequence >= (
-                              SELECT cutoff_sequence FROM boundary
-                          )
+                      AND oe.sequence >= (
+                          SELECT waterline_sequence FROM context_head
                       )
                 )
                 SELECT * FROM facts
