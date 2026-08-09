@@ -48,6 +48,7 @@ public class DelegatedTaskPipeline implements PipelineDefinitionProvider {
                 input,
                 output,
                 600_000,
+                PipelineDefinition.DeliveryPolicy.NOTIFY_PARENT,
                 List.of(new PipelineDefinition.ChildAgentStep(
                         "perform_task",
                         "input:/task",

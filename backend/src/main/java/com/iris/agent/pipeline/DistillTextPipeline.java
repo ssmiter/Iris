@@ -46,6 +46,7 @@ public class DistillTextPipeline implements PipelineDefinitionProvider {
                 input,
                 output,
                 90_000,
+                PipelineDefinition.DeliveryPolicy.NOTIFY_PARENT,
                 List.of(new PipelineDefinition.ModelTransformStep(
                         "distill",
                         "只根据给定原文提炼关键信息。保留明确事实、约束、决定和未决项；删除重复、口头填充和无信息量表述。不要补充原文没有的事实，直接输出精炼正文。",

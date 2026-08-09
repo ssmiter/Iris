@@ -447,12 +447,12 @@ export function ConversationApp() {
     let conversationId = currentConversationId
     let branchId = currentBranchId
     if (!conversationId || !branchId) {
-      const created = await createConversation(text.slice(0, 32))
+      const created = await createConversation()
       conversationId = created.conversationId
       branchId = created.rootBranchId
       conversations.upsertConversation({
         conversationId,
-        title: text.slice(0, 32),
+        title: '新对话',
         updatedAt: new Date().toISOString(),
         activeTurnCount: 0,
         version: created.version,

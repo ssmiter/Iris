@@ -65,6 +65,11 @@ public class PipelineCompletionService {
                     List.of(),
                     clock.instant()
             );
+            boolean notifyParent = run.deliveryPolicy()
+                    == PipelineDefinition.DeliveryPolicy.NOTIFY_PARENT;
+            if (!notifyParent) {
+                return;
+            }
             if (run.parentRunId() == null || run.parentRunId().isBlank()) {
                 return;
             }

@@ -78,6 +78,7 @@ public class PipelineDefinitionRegistry {
                 || definition.inputSchema() == null
                 || definition.outputSchema() == null
                 || definition.steps().isEmpty()
+                || definition.deliveryPolicy() == null
                 || definition.timeLimitMs() < 1) {
             throw new IllegalStateException("Invalid Pipeline Definition");
         }
@@ -93,6 +94,8 @@ public class PipelineDefinitionRegistry {
                 validateSelector(child.taskInputPointer());
             } else if (step instanceof PipelineDefinition.ModelTransformStep transform) {
                 validateSelector(transform.sourceInputPointer());
+            } else if (step instanceof PipelineDefinition.PublishConversationTitleStep publish) {
+                validateSelector(publish.titleSelector());
             }
         }
         return definition;

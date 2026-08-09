@@ -790,6 +790,7 @@ CREATE TABLE IF NOT EXISTS pipeline_run_input (
     input_hash TEXT NOT NULL,
     trigger_kind TEXT NOT NULL,
     trigger_ref TEXT,
+    delivery_policy TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
 );

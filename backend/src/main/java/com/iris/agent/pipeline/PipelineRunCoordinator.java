@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.pipeline.PipelineDefinition.ChildAgentStep;
 import com.iris.agent.pipeline.PipelineDefinition.ModelTransformStep;
+import com.iris.agent.pipeline.PipelineDefinition.PublishConversationTitleStep;
 import com.iris.agent.pipeline.PipelineRunRepository.PipelineRun;
 import com.iris.agent.pipeline.PipelineRunRepository.StepRun;
 import com.iris.agent.run.AgentRunLauncher;
@@ -14,6 +15,7 @@ import com.iris.agent.run.RunPhase;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundService;
 import com.iris.conversation.domain.ConversationViews.FailureView;
+import com.iris.conversation.application.GeneratedConversationTitleService;
 import com.iris.tools.core.ToolInputValidator;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -36,6 +38,7 @@ public class PipelineRunCoordinator {
     private final ObjectMapper objectMapper;
     private final ToolInputValidator schemaValidator;
     private final PipelineValueResolver values;
+    private final GeneratedConversationTitleService generatedTitles;
     private final Clock clock = Clock.systemUTC();
 
     public PipelineRunCoordinator(
@@ -48,7 +51,8 @@ public class PipelineRunCoordinator {
             RunRoundService runStates,
             ObjectMapper objectMapper,
             ToolInputValidator schemaValidator,
-            PipelineValueResolver values
+            PipelineValueResolver values,
+            GeneratedConversationTitleService generatedTitles
     ) {
         this.pipelines = pipelines;
         this.definitions = definitions;
@@ -60,6 +64,7 @@ public class PipelineRunCoordinator {
         this.objectMapper = objectMapper;
         this.schemaValidator = schemaValidator;
         this.values = values;
+        this.generatedTitles = generatedTitles;
     }
 
     public Mono<PipelineAdvance> advance(String runId) {
@@ -125,7 +130,51 @@ public class PipelineRunCoordinator {
         if (definitionStep instanceof ModelTransformStep transformStep) {
             return advanceModelTransform(run, step, transformStep);
         }
+        if (definitionStep instanceof PublishConversationTitleStep publishStep) {
+            return advanceConversationTitle(run, step, publishStep);
+        }
         return fail(run, step, "pipeline_step_kind_unsupported");
+    }
+
+    private PipelineAdvance advanceConversationTitle(
+            PipelineRun run,
+            StepRun step,
+            PublishConversationTitleStep definition
+    ) {
+        if (!"accepted".equals(step.phase())) {
+            return fail(run, step, "invalid_pipeline_publish_phase");
+        }
+        String candidate = values.resolve(
+                run,
+                step,
+                definition.titleSelector()
+        ).asText("");
+        var published = generatedTitles.publish(
+                run.conversationId(),
+                run.runId(),
+                candidate
+        );
+        ObjectNode output = objectMapper.createObjectNode();
+        output.put("title", published.title());
+        output.put("published", published.published());
+        output.put(
+                "summary",
+                published.published()
+                        ? "会话标题已更新为：“" + published.title() + "”。"
+                        : "保留现有会话标题，未覆盖用户命名。"
+        );
+        output.put("reason", published.reason());
+        if (!pipelines.completeImmediateStep(
+                step.stepRunId(),
+                step.version(),
+                output,
+                clock.instant()
+        )) {
+            throw new IllegalStateException(
+                    "Pipeline publish step changed concurrently"
+            );
+        }
+        return advanceDurable(run.runId());
     }
 
     private PipelineAdvance advanceChild(

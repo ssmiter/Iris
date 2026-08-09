@@ -40,9 +40,13 @@ Iris 只保留一套 Agentic 内核。主对话、同步子任务、后台子任
 - `gate`：检查结构化前置条件或等待用户输入；
 - `publish`：把内部结果显式发布为用户可见 Artifact、记忆或技能。
 
-当前已贯通 `child_agent` 与无工具的 `model_transform`：前者覆盖“把一个明确子目标交给同一 Agentic 内核”，后者覆盖标题、选区提炼等一次模型转换。后续新增步骤处理器时不改变 Definition、Run 和事件协议。
+当前已贯通 `child_agent`、无工具的 `model_transform`，以及首个受控发布步骤 `publish_conversation_title`。前者覆盖“把一个明确子目标交给同一 Agentic 内核”，中者覆盖标题、选区提炼等一次模型转换，后者证明内部结果可以在不授予模型任意写权限的前提下发布为持久产品状态。
+
+首轮根 Run 成功且会话仍为“新对话”时，系统事件启动 `conversation_title` Pipeline：短前缀模型只生成标题候选，发布步骤再次检查当前 metadata；用户若已手动命名便保留用户标题。整个过程不新增伪用户消息，也不阻塞原 Turn。
 
 Pipeline 的失败默认只终结本 Pipeline Run，不拖垮仍可继续的父 Agent。只有同步调用明确声明结果是父任务的必要前置条件时，失败才作为结构化 observation 返回父 Agent。
+
+Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent 投递一次有界消息，适用于委派任务；`silent` 只持久化结果并发送产品事件，适用于标题等系统 metadata 流程。交付策略不能由模型在运行中更改。
 
 ## 4. 子 Agent 的隔离边界
 
@@ -98,6 +102,8 @@ Compact、记忆与 Skill 都是“信息经过受约束过程变成另一种长
 
 右键选区、按钮或系统水位线都先生成统一 Invocation，再由各自 Pipeline 定义决定输入如何变换和发布。未来 BERT/Embedding 只负责候选召回；最终是否注入、合并或遗忘由带来源和版本的记忆 Pipeline 决定，向量分数不能直接成为事实。
 
+召回不固定为一种公式，而是可解释的计划：先按对象状态、作用域、类型与来源过滤合法集合；关键词、短语和编号命中提供高精度锚点，归一化向量余弦补足同义、口语和跨语言表达。两路可以并行融合，也可以先用廉价索引粗召回再对小集合语义重排。结果保留 lexical/semantic 分项、模型版本和阈值作为候选证据；模型不可用或超时时降级到关键词，不阻塞主 Agent。向量缓存以内容哈希、模型 identity 和归一化版本为键，不能只用原始文本形成无版本缓存。
+
 Skill 生成 Pipeline 的输入应是主 Run 的“骨架事实”：目标、关键选择、成功工具链、验证证据、失败后修正和 Artifact 引用。它不能复制完整隐藏推理，也不能仅凭一次偶然成功自动发布。
 
 ## 9. 恢复与终态
@@ -110,11 +116,10 @@ Skill 生成 Pipeline 的输入应是主 Run 的“骨架事实”：目标、�
 
 ## 10. 近期实现顺序
 
-1. Pipeline Definition/Run/Step 的持久化骨架与统一触发命令；
-2. 隔离 child Agent Context、同步/后台调度、结果持久化；
-3. durable mailbox、消息/取消工具和 terminal event 唤醒；
-4. Agent 与按钮复用的 Pipeline invocation API；
-5. 标题、Compact 适配、记忆整理与 Skill 候选生成等具体定义；
-6. 有真实体验数据后再决定并行 join、通用 DSL、向量模型和多 Agent 拓扑。
+1. 已完成 Pipeline Definition/Run/Step、隔离 child Agent、durable mailbox 与统一触发入口；
+2. 已完成首个系统 metadata 闭环：标题模型转换与受控发布；
+3. 下一步让固定 Tool 步骤严格复用唯一 Tool Runtime，再适配 Compact；
+4. 建立后端候选召回内核后，再实现可撤销的记忆候选与 Skill 草稿；
+5. 有真实体验数据后再决定并行 join、通用 DSL 和更复杂的多 Agent 拓扑。
 
 这条顺序先保证“同一个内核能自然连接起来”，再增加场景数量。

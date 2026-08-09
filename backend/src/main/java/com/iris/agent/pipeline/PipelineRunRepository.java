@@ -98,10 +98,10 @@ public class PipelineRunRepository {
         jdbc.sql("""
                 INSERT INTO pipeline_run_input(
                     run_id, input_json, input_hash,
-                    trigger_kind, trigger_ref, created_at
+                    trigger_kind, trigger_ref, delivery_policy, created_at
                 ) VALUES (
                     :runId, :input, :inputHash,
-                    :triggerKind, :triggerRef, :now
+                    :triggerKind, :triggerRef, :deliveryPolicy, :now
                 )
                 """)
                 .param("runId", runId)
@@ -109,6 +109,7 @@ public class PipelineRunRepository {
                 .param("inputHash", inputHash)
                 .param("triggerKind", triggerKind)
                 .param("triggerRef", triggerRef, java.sql.Types.VARCHAR)
+                .param("deliveryPolicy", definition.deliveryPolicy().name())
                 .param("now", now.toString())
                 .update();
         for (int index = 0; index < definition.steps().size(); index++) {
@@ -142,7 +143,8 @@ public class PipelineRunRepository {
                        run.conversation_id, run.branch_id, run.turn_id,
                        run.phase, run.version, snapshot.definition_id,
                        snapshot.definition_version,
-                       snapshot.snapshot_hash, input.input_json
+                       snapshot.snapshot_hash, input.input_json,
+                       input.delivery_policy
                 FROM agent_run run
                 JOIN run_definition_snapshot snapshot
                   ON snapshot.run_id = run.run_id
@@ -162,7 +164,10 @@ public class PipelineRunRepository {
                         rs.getString("definition_id"),
                         rs.getString("definition_version"),
                         rs.getString("snapshot_hash"),
-                        read(rs.getString("input_json"))
+                        read(rs.getString("input_json")),
+                        PipelineDefinition.DeliveryPolicy.valueOf(
+                                rs.getString("delivery_policy")
+                        )
                 ))
                 .optional();
     }
@@ -281,6 +286,28 @@ public class PipelineRunRepository {
                 .update() == 1;
     }
 
+    public boolean completeImmediateStep(
+            String stepRunId,
+            long expectedVersion,
+            JsonNode output,
+            Instant now
+    ) {
+        return jdbc.sql("""
+                UPDATE pipeline_step_run
+                SET phase = 'succeeded', output_json = :output,
+                    version = version + 1,
+                    started_at = COALESCE(started_at, :now), ended_at = :now
+                WHERE step_run_id = :stepRunId
+                  AND phase = 'accepted'
+                  AND version = :expectedVersion
+                """)
+                .param("output", write(output))
+                .param("now", now.toString())
+                .param("stepRunId", stepRunId)
+                .param("expectedVersion", expectedVersion)
+                .update() == 1;
+    }
+
     public boolean failStep(
             String stepRunId,
             long expectedVersion,
@@ -348,7 +375,8 @@ public class PipelineRunRepository {
             String definitionId,
             String definitionVersion,
             String snapshotHash,
-            JsonNode input
+            JsonNode input,
+            PipelineDefinition.DeliveryPolicy deliveryPolicy
     ) { }
 
     public record StepRun(

@@ -14,13 +14,22 @@ public record PipelineDefinition(
         JsonNode inputSchema,
         JsonNode outputSchema,
         int timeLimitMs,
+        DeliveryPolicy deliveryPolicy,
         List<Step> steps
 ) {
     public PipelineDefinition {
         steps = List.copyOf(steps);
     }
 
-    public sealed interface Step permits ChildAgentStep, ModelTransformStep {
+    public enum DeliveryPolicy {
+        /** Deliver one bounded terminal message to the logical parent Agent. */
+        NOTIFY_PARENT,
+        /** Persist result and emit lifecycle events without adding model context. */
+        SILENT
+    }
+
+    public sealed interface Step permits ChildAgentStep, ModelTransformStep,
+            PublishConversationTitleStep {
         String stepId();
 
         String kind();
@@ -56,6 +65,17 @@ public record PipelineDefinition(
         @Override
         public String kind() {
             return "model_transform";
+        }
+    }
+
+    /** Publishes a generated title only while the conversation has no user title. */
+    public record PublishConversationTitleStep(
+            String stepId,
+            String titleSelector
+    ) implements Step {
+        @Override
+        public String kind() {
+            return "publish_conversation_title";
         }
     }
 }
