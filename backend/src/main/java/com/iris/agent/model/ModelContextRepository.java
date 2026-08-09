@@ -414,6 +414,137 @@ public class ModelContextRepository {
                 .toList();
     }
 
+    /**
+     * Context history for an isolated child Run. It deliberately excludes the
+     * branch transcript and replays only the explicit task plus this Run's own
+     * completed model/tool protocol facts.
+     */
+    public List<ModelInputItem> isolatedRunFactsBeforeRound(
+            String runId,
+            String roundId,
+            String task
+    ) {
+        List<ModelInputItem> items = new java.util.ArrayList<>();
+        items.add(new ModelInputItem.UserText(
+                "isolated-task:" + runId,
+                task
+        ));
+        items.addAll(jdbc.sql("""
+                WITH target AS (
+                    SELECT round_index
+                    FROM agent_round
+                    WHERE round_id = :roundId AND run_id = :runId
+                ),
+                facts AS (
+                    SELECT ar.round_index, 10 + block.block_index AS fact_order,
+                           block.block_id AS fact_id,
+                           block.block_kind AS fact_kind,
+                           attempt.attempt_id,
+                           attempt.provider_profile,
+                           attempt.model_id,
+                           block.provider_block_id,
+                           block.text_content,
+                           call.tool_call_id,
+                           call.provider_call_id,
+                           call.tool_name,
+                           call.arguments_json AS json_content,
+                           NULL AS outcome_kind,
+                           NULL AS execution_id,
+                           NULL AS manifest_hash,
+                           NULL AS payload_hash
+                    FROM model_attempt attempt
+                    JOIN agent_round ar ON ar.round_id = attempt.round_id
+                    JOIN model_content_block block
+                      ON block.attempt_id = attempt.attempt_id
+                    LEFT JOIN model_tool_call call
+                      ON call.block_id = block.block_id
+                    JOIN target
+                    WHERE ar.run_id = :runId
+                      AND ar.round_index < target.round_index
+                      AND attempt.phase = 'completed'
+                      AND block.block_kind IN (
+                          'provider_state', 'text', 'tool_call'
+                      )
+
+                    UNION ALL
+
+                    SELECT ar.round_index, 1000 + call.ordinal AS fact_order,
+                           observation.observation_id AS fact_id,
+                           'tool_result' AS fact_kind,
+                           attempt.attempt_id,
+                           attempt.provider_profile,
+                           attempt.model_id,
+                           NULL, NULL,
+                           call.tool_call_id,
+                           call.provider_call_id,
+                           call.tool_name,
+                           observation.content_json,
+                           observation.outcome_kind,
+                           observation.execution_id,
+                           execution.manifest_hash,
+                           payload.content_hash
+                    FROM tool_observation observation
+                    JOIN model_tool_call call
+                      ON call.tool_call_id = observation.tool_call_id
+                    JOIN model_attempt attempt
+                      ON attempt.attempt_id = call.attempt_id
+                    JOIN agent_round ar ON ar.round_id = attempt.round_id
+                    JOIN tool_execution execution
+                      ON execution.execution_id = observation.execution_id
+                    LEFT JOIN tool_output_payload payload
+                      ON payload.execution_id = observation.execution_id
+                    JOIN target
+                    WHERE ar.run_id = :runId
+                      AND ar.round_index < target.round_index
+                )
+                SELECT * FROM facts
+                ORDER BY round_index, fact_order, fact_id
+                """)
+                .param("runId", runId)
+                .param("roundId", roundId)
+                .query((rs, rowNum) -> (ModelInputItem) switch (
+                        rs.getString("fact_kind")
+                ) {
+                    case "provider_state" ->
+                            new ModelInputItem.AssistantProviderState(
+                                    rs.getString("attempt_id"),
+                                    rs.getString("fact_id"),
+                                    rs.getString("provider_profile"),
+                                    rs.getString("model_id"),
+                                    rs.getString("provider_block_id"),
+                                    rs.getString("text_content")
+                            );
+                    case "text" -> new ModelInputItem.AssistantText(
+                            rs.getString("attempt_id"),
+                            rs.getString("fact_id"),
+                            rs.getString("text_content")
+                    );
+                    case "tool_call" -> new ModelInputItem.AssistantToolCall(
+                            rs.getString("attempt_id"),
+                            rs.getString("tool_call_id"),
+                            rs.getString("provider_call_id"),
+                            rs.getString("tool_name"),
+                            read(rs.getString("json_content"))
+                    );
+                    case "tool_result" -> new ModelInputItem.ToolResult(
+                            rs.getString("attempt_id"),
+                            rs.getString("fact_id"),
+                            rs.getString("tool_call_id"),
+                            rs.getString("provider_call_id"),
+                            rs.getString("execution_id"),
+                            rs.getString("outcome_kind"),
+                            rs.getString("manifest_hash"),
+                            rs.getString("payload_hash"),
+                            read(rs.getString("json_content"))
+                    );
+                    default -> throw new IllegalStateException(
+                            "Unknown isolated context fact kind"
+                    );
+                })
+                .list());
+        return List.copyOf(items);
+    }
+
     private ModelInputItem.UserText withAttachments(
             ModelInputItem.UserText user,
             String conversationId
@@ -522,6 +653,34 @@ public class ModelContextRepository {
                 ORDER BY observation.created_at, observation.observation_id
                 """)
                 .param("turnId", turnId)
+                .param("roundId", roundId)
+                .query(String.class)
+                .list();
+    }
+
+    public List<String> runObservationIdsBeforeRound(
+            String runId,
+            String roundId
+    ) {
+        return jdbc.sql("""
+                SELECT observation.observation_id
+                FROM tool_observation observation
+                JOIN model_tool_call call
+                  ON call.tool_call_id = observation.tool_call_id
+                JOIN model_attempt attempt
+                  ON attempt.attempt_id = call.attempt_id
+                JOIN agent_round source_round
+                  ON source_round.round_id = attempt.round_id
+                JOIN agent_round target_round
+                  ON target_round.round_id = :roundId
+                WHERE source_round.run_id = :runId
+                  AND target_round.run_id = :runId
+                  AND source_round.round_index < target_round.round_index
+                ORDER BY source_round.round_index,
+                         observation.created_at,
+                         observation.observation_id
+                """)
+                .param("runId", runId)
                 .param("roundId", roundId)
                 .query(String.class)
                 .list();

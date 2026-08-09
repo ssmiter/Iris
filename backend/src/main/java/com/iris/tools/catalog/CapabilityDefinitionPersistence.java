@@ -9,6 +9,7 @@ import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.CapabilityAvailabilityService;
+import com.iris.agent.pipeline.PipelineDefinitionRegistry;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -38,6 +39,7 @@ public class CapabilityDefinitionPersistence
     private final ManagedObjectStore objects;
     private final JdbcClient jdbc;
     private final TransactionTemplate transactions;
+    private final PipelineDefinitionRegistry pipelines;
     private final Clock clock = Clock.systemUTC();
 
     public CapabilityDefinitionPersistence(
@@ -46,7 +48,8 @@ public class CapabilityDefinitionPersistence
             ObjectMapper objectMapper,
             ManagedObjectStore objects,
             JdbcClient jdbc,
-            TransactionTemplate transactions
+            TransactionTemplate transactions,
+            PipelineDefinitionRegistry pipelines
     ) {
         this.registry = registry;
         this.availability = availability;
@@ -54,6 +57,7 @@ public class CapabilityDefinitionPersistence
         this.objects = objects;
         this.jdbc = jdbc;
         this.transactions = transactions;
+        this.pipelines = pipelines;
     }
 
     @Override
@@ -61,6 +65,9 @@ public class CapabilityDefinitionPersistence
         Instant now = clock.instant();
         List<DefinitionSnapshot> snapshots = new ArrayList<>();
         for (ToolBinding binding : registry.all()) {
+            snapshots.add(snapshot(binding));
+        }
+        for (PipelineDefinitionRegistry.Binding binding : pipelines.all()) {
             snapshots.add(snapshot(binding));
         }
         transactions.executeWithoutResult(status -> {
@@ -93,6 +100,7 @@ public class CapabilityDefinitionPersistence
         StoredObject stored = objects.putUtf8(json);
         CapabilityAvailability current = availability.current(binding);
         return new DefinitionSnapshot(
+                "tool",
                 binding.manifest().id(),
                 binding.manifest().version(),
                 binding.manifest().name(),
@@ -103,6 +111,39 @@ public class CapabilityDefinitionPersistence
                 stored.objectRef(),
                 stored.contentHash(),
                 current.value()
+        );
+    }
+
+    private DefinitionSnapshot snapshot(
+            PipelineDefinitionRegistry.Binding binding
+    ) throws IOException {
+        var pipeline = binding.definition();
+        ObjectNode definition = objectMapper.createObjectNode();
+        definition.put("kind", "pipeline");
+        definition.put("capabilityPath", pipeline.capabilityPath());
+        definition.set("manifest", objectMapper.valueToTree(pipeline));
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(definition);
+        } catch (JsonProcessingException exception) {
+            throw new IOException(
+                    "Pipeline Definition cannot be serialized",
+                    exception
+            );
+        }
+        StoredObject stored = objects.putUtf8(json);
+        return new DefinitionSnapshot(
+                "pipeline",
+                pipeline.id(),
+                pipeline.version(),
+                pipeline.name(),
+                pipeline.capabilityPath(),
+                pipeline.description(),
+                "standard",
+                binding.snapshotHash(),
+                stored.objectRef(),
+                stored.contentHash(),
+                "available"
         );
     }
 
@@ -118,7 +159,7 @@ public class CapabilityDefinitionPersistence
                     snapshot_object_ref, snapshot_content_hash,
                     first_seen_at, last_seen_at
                 ) VALUES (
-                    :id, :version, 'tool', :name,
+                    :id, :version, :kind, :name,
                     :path, :description, :risk,
                     'active', :manifestHash,
                     :objectRef, :contentHash,
@@ -129,6 +170,7 @@ public class CapabilityDefinitionPersistence
                 """)
                 .param("id", definition.id())
                 .param("version", definition.version())
+                .param("kind", definition.kind())
                 .param("name", definition.name())
                 .param("path", definition.path())
                 .param("description", definition.description())
@@ -215,6 +257,7 @@ public class CapabilityDefinitionPersistence
     }
 
     private record DefinitionSnapshot(
+            String kind,
             String id,
             String version,
             String name,

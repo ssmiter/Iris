@@ -56,6 +56,7 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 
 - `ToolRegistry` 启动时扫描 `tools/<domain>/<dir>/**` 下的 Tool，实现 `manifest.id + version → validated manifest + executor` 精确绑定；
 - `PipelineDefinitionRegistry` 独立保存版本化固定流程及其冻结依赖；Pipeline **禁止实现 Tool 接口**；
+- `/system/agents` 提供有界常驻编排原语：`delegate_task`、`read_agent_result`、`message_agent`、`cancel_agent_run`；已发布 Pipeline 和 Tool 一样进入能力目录，由 `read_capability → invoke_pipeline` 按精确定义调用，不把每条流程 schema 常驻塞给模型；
 - `CapabilityCatalog` 是两个 Registry 加 guidance 等来源的可重建 union view，不拥有执行身份；
 - 注册即校验：name/path 冲突，或缺 description、schema、安全、幂等、资源、超时和证据策略 → 对应 provider registration rejected；其他 provider 仍可继续启动。
 

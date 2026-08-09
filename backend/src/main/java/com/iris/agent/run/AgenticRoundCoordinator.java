@@ -51,6 +51,7 @@ public class AgenticRoundCoordinator {
     private final AnswerStreamProjector answerStreams;
     private final RunEventEmitter lifecycleEvents;
     private final SupplementInjectionService supplementInjections;
+    private final RunMailboxInjectionService mailboxInjections;
     private final TurnStopRepository stopRequests;
     private final RunCancellationRegistry cancellations;
     private final RunFinalizationPolicy finalizationPolicy;
@@ -65,6 +66,7 @@ public class AgenticRoundCoordinator {
             AnswerStreamProjector answerStreams,
             RunEventEmitter lifecycleEvents,
             SupplementInjectionService supplementInjections,
+            RunMailboxInjectionService mailboxInjections,
             TurnStopRepository stopRequests,
             RunCancellationRegistry cancellations,
             RunFinalizationPolicy finalizationPolicy
@@ -78,6 +80,7 @@ public class AgenticRoundCoordinator {
         this.answerStreams = answerStreams;
         this.lifecycleEvents = lifecycleEvents;
         this.supplementInjections = supplementInjections;
+        this.mailboxInjections = mailboxInjections;
         this.stopRequests = stopRequests;
         this.cancellations = cancellations;
         this.finalizationPolicy = finalizationPolicy;
@@ -127,7 +130,13 @@ public class AgenticRoundCoordinator {
     ) {
         ModelProvider provider = providers.require(providerProfile);
         return Mono.fromCallable(() -> {
-                    supplementInjections.injectPending(
+                    if (loaded.run().root()) {
+                        supplementInjections.injectPending(
+                                loaded.run(),
+                                loaded.round()
+                        );
+                    }
+                    mailboxInjections.injectPending(
                             loaded.run(),
                             loaded.round()
                     );
@@ -308,7 +317,8 @@ public class AgenticRoundCoordinator {
         boolean stopRequested = cancelled
                 || cause instanceof RunCancellationException
                 || cancellations.isCancelled(started.run().runId())
-                || stopRequests.requested(started.run().turnId());
+                || (started.run().root()
+                    && stopRequests.requested(started.run().turnId()));
         if (stopRequested) {
             return cancelAttempt(started.attempt())
                     .map(round -> new RoundAdvance(
@@ -349,7 +359,8 @@ public class AgenticRoundCoordinator {
             boolean stopRequested = !elapsed
                     || cancelled
                     || cancellations.isCancelled(failed.run().runId())
-                    || stopRequests.requested(failed.run().turnId());
+                    || (failed.run().root()
+                        && stopRequests.requested(failed.run().turnId()));
             if (stopRequested) {
                 return cancelAttempt(failed.attempt())
                         .map(round -> new RoundAdvance(
@@ -472,11 +483,10 @@ public class AgenticRoundCoordinator {
             boolean cancelled
     ) {
         return Mono.fromCallable(() -> {
-                    boolean stopRequested = stopRequests.requested(
-                            runFacts.findRun(round.runId())
-                                    .orElseThrow()
-                                    .turnId()
-                    );
+                    RunRow run = runFacts.findRun(round.runId())
+                            .orElseThrow();
+                    boolean stopRequested = run.root()
+                            && stopRequests.requested(run.turnId());
                     RoundToolProgress progress = tools.advance(
                             round.roundId(),
                             workspaceRoot,

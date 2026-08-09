@@ -16,6 +16,21 @@ import java.util.Optional;
 public class CapabilityDirectoryCatalog {
     private final List<DirectoryDefinition> definitions = List.of(
             directory(
+                    "/system",
+                    "系统闭环",
+                    "Iris 自身的能力发现、运行协作与固定流程入口"
+            ),
+            directory(
+                    "/system/agents",
+                    "Agent 协作",
+                    "使用同一 Agentic 内核执行有界委派、异步通信与取消"
+            ),
+            directory(
+                    "/system/pipelines",
+                    "固定流程",
+                    "由按钮、系统事件或主对话触发的版本化信息转换流程"
+            ),
+            directory(
                     "/industry",
                     "工业",
                     "制造、质量、设备与供应链等工业能力的总目录"

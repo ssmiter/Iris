@@ -48,6 +48,10 @@ public class RunEventEmitter {
         emitRun("run.updated", runId);
     }
 
+    public void runStarted(String runId) {
+        emitRun("run.started", runId);
+    }
+
     public void runSettled(String runId) {
         emitRun("run.settled", runId);
     }
@@ -103,6 +107,7 @@ public class RunEventEmitter {
                 fact.branchId(),
                 run.turnId(),
                 run.runId(),
+                fact.parentRunId(),
                 "run",
                 run.runId(),
                 run.version(),

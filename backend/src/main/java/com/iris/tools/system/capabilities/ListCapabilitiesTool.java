@@ -134,6 +134,9 @@ public class ListCapabilitiesTool implements Tool {
         itemProperties.putObject("id").put("type", "string");
         itemProperties.putObject("version").put("type", "string");
         itemProperties.putObject("name").put("type", "string");
+        itemProperties.putObject("kind")
+                .put("type", "string")
+                .put("description", "能力类型：tool 或 pipeline");
         itemProperties.putObject("path").put("type", "string");
         itemProperties.putObject("description").put("type", "string");
         itemProperties.putObject("riskLevel").put("type", "string");

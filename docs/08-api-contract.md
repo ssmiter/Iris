@@ -6,6 +6,20 @@
 >
 > 总体职责见 [02 · Iris 总体架构](02-architecture-overview.md)。
 
+## Pipeline 触发
+
+前端按钮、右键动作和结构化功能入口通过同一命令启动版本化 Pipeline：
+
+```http
+POST /api/v1/runs/{parentRunId}/pipelines/{definitionId}
+Idempotency-Key: <stable key>
+Content-Type: application/json
+
+{ "input": { ...definition input... } }
+```
+
+返回 `202 Accepted` 与 `runId / definitionId / definitionVersion / phase`。后续进度只通过会话 SSE 的 `run.updated`、`run.settled`、`run.message.queued` 和 `run.message.injected` 推送，不轮询。主 Agent 发现的 Pipeline 使用常驻 `invoke_pipeline`，最终进入完全相同的命令与 Run 生命周期。
+
 ## 1. 契约原则
 
 1. Frontend 提交人的命令，不提交 provider messages、全量 Tool schema 或“我已经审批”的事实。

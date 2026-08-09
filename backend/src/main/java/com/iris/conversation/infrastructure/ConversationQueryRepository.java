@@ -494,7 +494,7 @@ public class ConversationQueryRepository {
 
     public RunView runView(String runId) {
         return jdbc.sql("""
-                SELECT r.*, d.*,
+                SELECT r.*, d.*, i.invoking_step_run_id,
                        c.run_id AS closure_run_id,
                        c.execution_status AS closure_execution_status,
                        c.task_outcome AS closure_task_outcome,
@@ -531,6 +531,7 @@ public class ConversationQueryRepository {
                        f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_invocation i ON i.run_id = r.run_id
                 LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.run_id = :runId
@@ -543,7 +544,7 @@ public class ConversationQueryRepository {
 
     private List<RunView> runs(String turnId) {
         return jdbc.sql("""
-                SELECT r.*, d.*,
+                SELECT r.*, d.*, i.invoking_step_run_id,
                        c.run_id AS closure_run_id,
                        c.execution_status AS closure_execution_status,
                        c.task_outcome AS closure_task_outcome,
@@ -580,6 +581,7 @@ public class ConversationQueryRepository {
                        f.details_ref AS failure_details_ref
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
+                LEFT JOIN run_invocation i ON i.run_id = r.run_id
                 LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
                 WHERE r.turn_id = :turnId
@@ -597,7 +599,7 @@ public class ConversationQueryRepository {
                 rs.getString("turn_id"),
                 rs.getString("parent_run_id"),
                 rs.getString("root_run_id"),
-                null,
+                rs.getString("invoking_step_run_id"),
                 rs.getString("kind"),
                 new RunDefinition(
                         rs.getString("definition_id"),

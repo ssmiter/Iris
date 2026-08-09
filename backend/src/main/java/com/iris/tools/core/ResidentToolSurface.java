@@ -11,6 +11,7 @@ public final class ResidentToolSurface {
             "list_capabilities",
             "read_capability",
             "invoke_capability",
+            "invoke_pipeline",
             "ask_user",
             "list_files",
             "search_files",
@@ -26,7 +27,23 @@ public final class ResidentToolSurface {
             "read_artifact",
             "read_artifact_text",
             "read_tool_result",
-            "query_tool_result"
+            "query_tool_result",
+            "delegate_task",
+            "read_agent_result",
+            "message_agent",
+            "cancel_agent_run"
+    );
+    private static final Set<String> CHILD_EXCLUDED_NAMES = Set.of(
+            "ask_user",
+            "create_task_ledger",
+            "read_task_ledger",
+            "update_task_ledger",
+            "present_artifact",
+            "delegate_task",
+            "read_agent_result",
+            "message_agent",
+            "cancel_agent_run",
+            "invoke_pipeline"
     );
     private static final Set<String> NAMES = Set.copyOf(ORDERED_NAMES);
 
@@ -39,5 +56,11 @@ public final class ResidentToolSurface {
 
     public static boolean contains(String toolName) {
         return NAMES.contains(toolName);
+    }
+
+    public static List<String> childOrderedNames() {
+        return ORDERED_NAMES.stream()
+                .filter(name -> !CHILD_EXCLUDED_NAMES.contains(name))
+                .toList();
     }
 }

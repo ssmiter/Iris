@@ -220,6 +220,68 @@ public class RunRoundService {
         return settlement;
     }
 
+    /** Completes a non-Agentic Run without requiring a final model answer. */
+    public RunSettlement completePipelineRun(
+            String runId,
+            long expectedVersion
+    ) {
+        RunSettlement settlement = withLock(
+                runId,
+                () -> transactions.execute(status -> {
+                    RunRow current = requireRun(runId);
+                    if (!"pipeline".equals(current.kind())
+                            || current.version() != expectedVersion) {
+                        throw new IllegalStateException(
+                                "Pipeline Run identity or version changed"
+                        );
+                    }
+                    RunStateMachine.requireTransition(
+                            current.phase(),
+                            RunPhase.VERIFYING
+                    );
+                    var now = clock.instant();
+                    if (!repository.transitionRun(
+                            runId,
+                            current.phase(),
+                            RunPhase.VERIFYING,
+                            expectedVersion,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Pipeline verification transition conflicted"
+                        );
+                    }
+                    var facts = closures.inspect(runId);
+                    closures.insert(
+                            runId,
+                            "closed",
+                            "pipeline_completed",
+                            facts,
+                            now
+                    );
+                    RunRow verifying = requireRun(runId);
+                    if (!repository.transitionRun(
+                            runId,
+                            RunPhase.VERIFYING,
+                            RunPhase.SUCCEEDED,
+                            verifying.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Pipeline terminal transition conflicted"
+                        );
+                    }
+                    return new RunSettlement(
+                            requireRun(runId),
+                            "pipeline_completed",
+                            facts.unresolvedProtocolFactCount()
+                    );
+                })
+        );
+        events.runSettled(runId);
+        return settlement;
+    }
+
     public RunRow cancelRun(
             String runId,
             long expectedVersion,

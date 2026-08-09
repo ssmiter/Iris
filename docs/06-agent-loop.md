@@ -35,6 +35,8 @@ Launcher 恢复同一 Run。这样审批、澄清和后续人工接管虽然有�
 表面、预算和返回目标；子 Run 使用自己的 Context Frame，不继承父 Agent 的隐式思考，也
 不再暴露递归委派工具。父子通过 Workspace/Artifact/Tool result/Task work state 等稳定引用
 交换事实，子 Run 结束后只把有界结论与引用作为父 Run observation。共享完整上下文、动态
+
+具体的同步/后台语义、durable mailbox 与 Pipeline 组合协议见 [28-pipeline-child-agent-and-async-runtime.md](28-pipeline-child-agent-and-async-runtime.md)。
 组队、DAG、角色市场和自动状态 Agent 都不进入这一地基阶段；在隔离与返回契约没有兑现前，
 不把 `agent` 暴露为可调用工具。
 

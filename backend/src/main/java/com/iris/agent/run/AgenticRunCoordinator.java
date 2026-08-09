@@ -220,7 +220,7 @@ public class AgenticRunCoordinator {
         if (run.phase().terminal()) {
             return new NextRound(null, view(run, false, null), null);
         }
-        if (stopRequests.requested(run.turnId())) {
+        if (run.root() && stopRequests.requested(run.turnId())) {
             toolRuntime.cancelBeforeExecution(runId);
             RoundRow latest = facts.latestRound(runId).orElse(null);
             if (latest != null
@@ -345,8 +345,9 @@ public class AgenticRunCoordinator {
             RoundAdvance progress
     ) {
         if (progress.waitingForAttention()) {
-            if (stopRequests.requested(
-                    requireRun(runId).turnId()
+            RunRow currentRun = requireRun(runId);
+            if (currentRun.root() && stopRequests.requested(
+                    currentRun.turnId()
             )) {
                 return step(
                         runId,
@@ -394,8 +395,10 @@ public class AgenticRunCoordinator {
                             run.version(),
                             failure
                     );
-                    facts.settleTurn(run.turnId(), "failed", clock.instant());
-                    lifecycleEvents.turnUpdated(run.turnId());
+                    if (run.root()) {
+                        facts.settleTurn(run.turnId(), "failed", clock.instant());
+                        lifecycleEvents.turnUpdated(run.turnId());
+                    }
                     cancellations.clear(runId);
                     return view(
                             failed,
@@ -493,14 +496,16 @@ public class AgenticRunCoordinator {
                 run.version()
         );
         RunRow terminal = settlement.run();
-        facts.settleTurn(
-                run.turnId(),
-                terminal.phase() == RunPhase.SUCCEEDED
-                        ? "settled"
-                        : "failed",
-                clock.instant()
-        );
-        lifecycleEvents.turnUpdated(run.turnId());
+        if (run.root()) {
+            facts.settleTurn(
+                    run.turnId(),
+                    terminal.phase() == RunPhase.SUCCEEDED
+                            ? "settled"
+                            : "failed",
+                    clock.instant()
+            );
+            lifecycleEvents.turnUpdated(run.turnId());
+        }
         cancellations.clear(run.runId());
         return view(terminal, false, null);
     }
@@ -519,9 +524,11 @@ public class AgenticRunCoordinator {
                 "user_cancelled"
         );
         Instant now = clock.instant();
-        facts.settleTurn(run.turnId(), "stopped", now);
-        stopRequests.complete(run.turnId(), now);
-        lifecycleEvents.turnUpdated(run.turnId());
+        if (run.root()) {
+            facts.settleTurn(run.turnId(), "stopped", now);
+            stopRequests.complete(run.turnId(), now);
+            lifecycleEvents.turnUpdated(run.turnId());
+        }
         cancellations.clear(run.runId());
         return view(cancelledRun, false, null);
     }

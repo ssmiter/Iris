@@ -12,16 +12,24 @@ import org.springframework.stereotype.Service;
 public final class RunFinalizationPolicy {
     private final TaskLedgerService tasks;
     private final RunRoundRepository rounds;
+    private final AgentRunContextRepository contexts;
 
     public RunFinalizationPolicy(
             TaskLedgerService tasks,
-            RunRoundRepository rounds
+            RunRoundRepository rounds,
+            AgentRunContextRepository contexts
     ) {
         this.tasks = tasks;
         this.rounds = rounds;
+        this.contexts = contexts;
     }
 
     public Decision evaluate(String runId) {
+        if (contexts.find(runId).map(
+                AgentRunContextRepository.RunContext::isolated
+        ).orElse(false)) {
+            return Decision.allowed();
+        }
         FinalizationGap gap = tasks.finalizationGap(runId).orElse(null);
         if (gap == null || rounds.finalAnswerRoundCount(runId) != 1) {
             return Decision.allowed();

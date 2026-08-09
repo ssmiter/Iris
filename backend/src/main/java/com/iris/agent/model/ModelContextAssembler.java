@@ -7,6 +7,8 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunBudget;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.agent.run.RunFinalizationPolicy;
+import com.iris.agent.run.AgentRunContextRepository;
+import com.iris.agent.run.RunMailboxRepository;
 import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.agent.model.ModelContextWindowPlanner.WindowPlan;
 import com.iris.agent.model.ToolObservationMicroCompactor.Projection;
@@ -44,6 +46,8 @@ public class ModelContextAssembler {
     private final RunRoundRepository runs;
     private final RunFinalizationPolicy finalizationPolicy;
     private final ModelPromptPrefixService promptPrefixes;
+    private final AgentRunContextRepository runContexts;
+    private final RunMailboxRepository mailbox;
     private final Clock clock = Clock.systemUTC();
 
     public ModelContextAssembler(
@@ -59,7 +63,9 @@ public class ModelContextAssembler {
             ArtifactService artifacts,
             RunRoundRepository runs,
             RunFinalizationPolicy finalizationPolicy,
-            ModelPromptPrefixService promptPrefixes
+            ModelPromptPrefixService promptPrefixes,
+            AgentRunContextRepository runContexts,
+            RunMailboxRepository mailbox
     ) {
         this.facts = facts;
         this.tools = tools;
@@ -74,6 +80,8 @@ public class ModelContextAssembler {
         this.runs = runs;
         this.finalizationPolicy = finalizationPolicy;
         this.promptPrefixes = promptPrefixes;
+        this.runContexts = runContexts;
+        this.mailbox = mailbox;
     }
 
     public ModelContext assemble(
@@ -135,19 +143,33 @@ public class ModelContextAssembler {
                     "Provider tool surface changed after planning"
             );
         }
+        var isolatedContext = runContexts.find(run.runId())
+                .filter(AgentRunContextRepository.RunContext::isolated)
+                .orElse(null);
         List<ModelInputItem> allItems = new ArrayList<>(
-                facts.branchFactsBeforeRound(
-                        run.conversationId(),
-                        run.branchId(),
-                        round.roundId()
-                )
+                isolatedContext == null
+                        ? facts.branchFactsBeforeRound(
+                                run.conversationId(),
+                                run.branchId(),
+                                round.roundId()
+                        )
+                        : facts.isolatedRunFactsBeforeRound(
+                                run.runId(),
+                                round.roundId(),
+                                isolatedContext.task()
+                        )
         );
-        var artifactIndex = artifacts.modelContextIndex(
-                run.conversationId(),
-                run.branchId(),
-                8
-        );
-        if (!artifactIndex.isEmpty()) {
+        allItems.addAll(mailbox.injectedBeforeOrAt(
+                run.runId(),
+                round.index()
+        ));
+        if (isolatedContext == null) {
+            var artifactIndex = artifacts.modelContextIndex(
+                    run.conversationId(),
+                    run.branchId(),
+                    8
+            );
+            if (!artifactIndex.isEmpty()) {
             var index = objectMapper.createArrayNode();
             artifactIndex.forEach(artifact -> index.addObject()
                     .put("artifactRef", artifact.reference())
@@ -159,28 +181,31 @@ public class ModelContextAssembler {
             allItems.add(new ModelInputItem.ArtifactContextIndex(
                     index.toString()
             ));
+            }
         }
         if (!capabilityLimits.isEmpty()) {
             allItems.add(new ModelInputItem.CapabilityRuntimeState(
                     capabilityLimits
             ));
         }
-        taskLedger.activeForContext(
-                run.conversationId(),
-                run.branchId()
-        ).forEach(task -> allItems.add(new ModelInputItem.TaskWorkState(
-                task.taskId(),
-                task.stateVersion(),
-                taskLedger.toJson(task).toString()
-        )));
-        RunFinalizationPolicy.Decision finalization =
-                finalizationPolicy.evaluate(run.runId());
-        if (finalization.continueRun()) {
-            allItems.add(new ModelInputItem.FinalizationDirective(
-                    finalization.taskId(),
-                    finalization.stateVersion(),
-                    finalization.instruction()
-            ));
+        if (isolatedContext == null) {
+            taskLedger.activeForContext(
+                    run.conversationId(),
+                    run.branchId()
+            ).forEach(task -> allItems.add(new ModelInputItem.TaskWorkState(
+                    task.taskId(),
+                    task.stateVersion(),
+                    taskLedger.toJson(task).toString()
+            )));
+            RunFinalizationPolicy.Decision finalization =
+                    finalizationPolicy.evaluate(run.runId());
+            if (finalization.continueRun()) {
+                allItems.add(new ModelInputItem.FinalizationDirective(
+                        finalization.taskId(),
+                        finalization.stateVersion(),
+                        finalization.instruction()
+                ));
+            }
         }
         RunBudget runtimeBudget = runs.runBudget(run.runId());
         allItems.add(new ModelInputItem.RuntimePulse(
@@ -229,16 +254,25 @@ public class ModelContextAssembler {
                 seed.budget()
         );
         List<String> requiredUserFactIds =
-                facts.requiredUserFactIdsBeforeRound(
-                        run.turnId(),
-                        round.roundId()
-                );
-        LinkedHashSet<String> requiredObservationIds =
-                new LinkedHashSet<>(
-                        facts.currentTurnObservationIdsBeforeRound(
+                isolatedContext == null
+                        ? facts.requiredUserFactIdsBeforeRound(
                                 run.turnId(),
                                 round.roundId()
                         )
+                        : java.util.List.of(
+                                "isolated-task:" + run.runId()
+                        );
+        LinkedHashSet<String> requiredObservationIds =
+                new LinkedHashSet<>(
+                        isolatedContext == null
+                                ? facts.currentTurnObservationIdsBeforeRound(
+                                        run.turnId(),
+                                        round.roundId()
+                                )
+                                : facts.runObservationIdsBeforeRound(
+                                        run.runId(),
+                                        round.roundId()
+                                )
                 );
         requiredObservationIds.retainAll(
                 microCompactor.pinnedObservationIds(

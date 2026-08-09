@@ -189,6 +189,8 @@ SSE 断开只代表观察者离线，不自动等于取消 Turn。停止必须�
 
 ## 5. Pipeline 与 Agentic：两种求解形态，一个运行内核
 
+Pipeline、隔离子 Agent 与后台消息的可执行边界另见 [28-pipeline-child-agent-and-async-runtime.md](28-pipeline-child-agent-and-async-runtime.md)。该设计坚持同一 Agentic Loop，只改变 Context、能力面、预算、交付契约和调度方式。
+
 ### 5.1 不是二选一
 
 Iris 暂时使用以下工作定义：

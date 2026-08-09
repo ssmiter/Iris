@@ -49,7 +49,7 @@ public class ConversationEventAppender {
                             draft.branchId(),
                             draft.turnId(),
                             draft.runId(),
-                            null,
+                            draft.parentRunId(),
                             sequence,
                             new ConversationEvent.AggregateRef(
                                     draft.aggregateKind(),
@@ -88,6 +88,7 @@ public class ConversationEventAppender {
             String branchId,
             String turnId,
             String runId,
+            String parentRunId,
             String aggregateKind,
             String aggregateId,
             long aggregateVersion,
@@ -95,5 +96,33 @@ public class ConversationEventAppender {
             String correlationId,
             JsonNode payload
     ) {
+        public EventDraft(
+                String eventType,
+                String conversationId,
+                String branchId,
+                String turnId,
+                String runId,
+                String aggregateKind,
+                String aggregateId,
+                long aggregateVersion,
+                String causationId,
+                String correlationId,
+                JsonNode payload
+        ) {
+            this(
+                    eventType,
+                    conversationId,
+                    branchId,
+                    turnId,
+                    runId,
+                    null,
+                    aggregateKind,
+                    aggregateId,
+                    aggregateVersion,
+                    causationId,
+                    correlationId,
+                    payload
+            );
+        }
     }
 }

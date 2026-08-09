@@ -14,6 +14,7 @@ import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.VerificationResult;
+import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -34,7 +35,7 @@ public class ReadCapabilityTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.read",
-                "4",
+                "5",
                 "read_capability",
                 "读取一个精确能力路径的版本化定义、参数 schema、当前可用性与稳定代理调用身份；调用非驻留能力前使用",
                 inputSchema(),
@@ -79,10 +80,15 @@ public class ReadCapabilityTool implements Tool {
     ) {
         String path = operation.normalizedInput().path("path").asText();
         ToolBinding binding = capabilities.getObject()
-                .read(path, "personal")
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "找不到能力 " + path
-                ));
+                .read(path, "personal").orElse(null);
+        if (binding == null) {
+            Binding pipeline = capabilities.getObject()
+                    .readPipeline(path, "personal")
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "找不到能力 " + path
+                    ));
+            return ToolOutcome.succeeded(pipelineDefinition(pipeline));
+        }
         ObjectNode output = objectMapper.createObjectNode();
         output.put("kind", "tool");
         output.put("path", binding.capabilityPath());
@@ -109,6 +115,27 @@ public class ReadCapabilityTool implements Tool {
         return ToolOutcome.succeeded(output);
     }
 
+    private ObjectNode pipelineDefinition(Binding binding) {
+        var definition = binding.definition();
+        ObjectNode output = objectMapper.createObjectNode();
+        output.put("kind", "pipeline");
+        output.put("path", definition.capabilityPath());
+        output.put("manifestHash", binding.snapshotHash());
+        ObjectNode availability = output.putObject("availability");
+        availability.put("status", "available");
+        availability.put("reason", "本地 Pipeline Definition 已注册");
+        output.set("manifest", objectMapper.valueToTree(definition));
+        ObjectNode invocation = output.putObject("invocation");
+        invocation.put("toolName", "invoke_pipeline");
+        invocation.put("path", definition.capabilityPath());
+        invocation.put("manifestHash", binding.snapshotHash());
+        invocation.put(
+                "instruction",
+                "原样复制 path 和 manifestHash，并按 inputSchema 填写 input"
+        );
+        return output;
+    }
+
     @Override
     public VerificationResult verify(
             ToolOutcome outcome,
@@ -119,7 +146,7 @@ public class ReadCapabilityTool implements Tool {
                 new VerificationResult.Evidence(
                         "capability_definition",
                         operation.normalizedInput().path("path").asText(),
-                        "定义来自当前精确 Tool Registry binding"
+                        "定义来自当前精确 Capability Registry binding"
                 )
         ));
     }
@@ -143,7 +170,7 @@ public class ReadCapabilityTool implements Tool {
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("kind")
                 .put("type", "string")
-                .put("description", "能力定义类型；当前为 tool");
+                .put("description", "能力定义类型：tool 或 pipeline");
         properties.putObject("path")
                 .put("type", "string")
                 .put("description", "精确能力路径");

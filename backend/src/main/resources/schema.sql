@@ -710,6 +710,114 @@ CREATE TABLE IF NOT EXISTS run_definition_snapshot (
     FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
 );
 
+-- A Run's durable invocation edge is kept separately from agent_run so the
+-- parent/child graph can evolve without turning the lifecycle row into a
+-- polymorphic payload. The edge is also the correlation fact used by SSE.
+CREATE TABLE IF NOT EXISTS run_invocation (
+    run_id TEXT PRIMARY KEY,
+    parent_run_id TEXT,
+    invoking_step_run_id TEXT,
+    trigger_kind TEXT NOT NULL,
+    trigger_ref TEXT,
+    requested_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (parent_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_invocation_parent
+    ON run_invocation(parent_run_id, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_run_invocation_idempotency
+    ON run_invocation(parent_run_id, trigger_kind, trigger_ref)
+    WHERE trigger_ref IS NOT NULL;
+
+-- Run-local context is an explicit input object. Isolated child Agents never
+-- infer their task by replaying their parent's complete conversation.
+CREATE TABLE IF NOT EXISTS agent_run_context (
+    run_id TEXT PRIMARY KEY,
+    context_mode TEXT NOT NULL,
+    task_text TEXT NOT NULL,
+    result_contract TEXT NOT NULL,
+    allowed_tool_names_json TEXT NOT NULL,
+    nesting_depth INTEGER NOT NULL,
+    source_context_ref TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_run_result (
+    run_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    summary_text TEXT NOT NULL,
+    output_ref TEXT,
+    evidence_refs_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
+
+-- Mailbox messages cross asynchronous Run boundaries. Process callbacks only
+-- wake a Run; queued/injected state remains the canonical delivery fact.
+CREATE TABLE IF NOT EXISTS run_mailbox_message (
+    message_id TEXT PRIMARY KEY,
+    target_run_id TEXT NOT NULL,
+    source_run_id TEXT,
+    message_kind TEXT NOT NULL,
+    content TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    injection_round_id TEXT,
+    created_at TEXT NOT NULL,
+    injected_at TEXT,
+    FOREIGN KEY (target_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (injection_round_id) REFERENCES agent_round(round_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_mailbox_delivery
+    ON run_mailbox_message(target_run_id, phase, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_run_terminal_notification
+    ON run_mailbox_message(target_run_id, source_run_id, message_kind)
+    WHERE source_run_id IS NOT NULL
+      AND message_kind IN ('completion', 'cancellation');
+
+-- Pipeline definitions are code-defined in M0; each accepted Run freezes the
+-- serialized definition/input in run_definition_snapshot + this input row.
+CREATE TABLE IF NOT EXISTS pipeline_run_input (
+    run_id TEXT PRIMARY KEY,
+    input_json TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    trigger_kind TEXT NOT NULL,
+    trigger_ref TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_step_run (
+    step_run_id TEXT PRIMARY KEY,
+    pipeline_run_id TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    step_kind TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    child_run_id TEXT,
+    input_json TEXT NOT NULL,
+    output_json TEXT,
+    failure_code TEXT,
+    version INTEGER NOT NULL,
+    started_at TEXT,
+    ended_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (pipeline_run_id, step_id),
+    UNIQUE (pipeline_run_id, step_index),
+    FOREIGN KEY (pipeline_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (child_run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_step_child
+    ON pipeline_step_run(child_run_id, phase);
+
 CREATE TABLE IF NOT EXISTS agent_round (
     round_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,

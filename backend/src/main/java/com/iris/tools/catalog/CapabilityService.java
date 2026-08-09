@@ -6,6 +6,8 @@ import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.CapabilityAvailabilityService;
 import com.iris.tools.catalog.CapabilityDirectoryCatalog.DirectoryDefinition;
+import com.iris.agent.pipeline.PipelineDefinitionRegistry;
+import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -39,21 +41,27 @@ public class CapabilityService {
     private final ToolRegistry registry;
     private final CapabilityAvailabilityService availability;
     private final CapabilityDirectoryCatalog directoryCatalog;
+    private final PipelineDefinitionRegistry pipelines;
     private final List<CatalogDocument> searchDocuments;
 
     public CapabilityService(
             ToolRegistry registry,
             CapabilityAvailabilityService availability,
-            CapabilityDirectoryCatalog directoryCatalog
+            CapabilityDirectoryCatalog directoryCatalog,
+            PipelineDefinitionRegistry pipelines
     ) {
         this.registry = registry;
         this.availability = availability;
         this.directoryCatalog = directoryCatalog;
-        this.searchDocuments = registry.all().stream()
+        this.pipelines = pipelines;
+        this.searchDocuments = java.util.stream.Stream.concat(
+                registry.all().stream()
                 .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
                         binding.manifest().name()
                 ))
-                .map(this::document)
+                .map(this::document),
+                pipelines.all().stream().map(this::document)
+        )
                 .sorted(Comparator.comparing(CatalogDocument::path))
                 .toList();
     }
@@ -72,6 +80,16 @@ public class CapabilityService {
             String path = binding.capabilityPath();
             if (!DomainCatalog.visible(systemCode, path)) continue;
             // 沿路径向上累计每一级目录
+            String[] segs = path.substring(1).split("/");
+            StringBuilder cur = new StringBuilder();
+            for (String seg : segs) {
+                cur.append('/').append(seg);
+                counts.merge(cur.toString(), 1, Integer::sum);
+            }
+        }
+        for (Binding binding : pipelines.all()) {
+            String path = binding.definition().capabilityPath();
+            if (!DomainCatalog.visible(systemCode, path)) continue;
             String[] segs = path.substring(1).split("/");
             StringBuilder cur = new StringBuilder();
             for (String seg : segs) {
@@ -109,6 +127,24 @@ public class CapabilityService {
             if (slash >= 0) {
                 String child = prefix + remainder.substring(0, slash);
                 directories.merge(child, 1, Integer::sum);
+            } else {
+                items.add(card(binding));
+            }
+        }
+        for (Binding binding : pipelines.all()) {
+            String path = binding.definition().capabilityPath();
+            if (!DomainCatalog.visible(systemCode, path)
+                    || !path.startsWith(prefix)) {
+                continue;
+            }
+            String remainder = path.substring(prefix.length());
+            int slash = remainder.indexOf('/');
+            if (slash >= 0) {
+                directories.merge(
+                        prefix + remainder.substring(0, slash),
+                        1,
+                        Integer::sum
+                );
             } else {
                 items.add(card(binding));
             }
@@ -224,6 +260,18 @@ public class CapabilityService {
                 .findFirst();
     }
 
+    public Optional<Binding> readPipeline(
+            String capabilityPath,
+            String systemCode
+    ) {
+        String path = normalizePath(capabilityPath);
+        return pipelines.findByPath(path)
+                .filter(binding -> DomainCatalog.visible(
+                        systemCode,
+                        binding.definition().capabilityPath()
+                ));
+    }
+
     public CapabilityAvailability availability(ToolBinding binding) {
         return availability.current(binding);
     }
@@ -277,15 +325,19 @@ public class CapabilityService {
 
     private CapabilityFileMatch fileMatch(RankedDocument ranked) {
         CatalogDocument document = ranked.document();
-        CapabilityAvailability current =
-                availability.current(document.binding());
+        CapabilityAvailability current = document.binding() == null
+                ? new CapabilityAvailability(
+                        CapabilityAvailability.Status.AVAILABLE,
+                        "本地 Pipeline Definition 已注册",
+                        java.time.Instant.now()
+                )
+                : availability.current(document.binding());
         return new CapabilityFileMatch(
                 document.path(),
                 document.name(),
                 document.description(),
                 ranked.matchedField(),
-                document.binding().manifest().riskLevel()
-                        .name().toLowerCase(Locale.ROOT),
+                document.riskLevel(),
                 current.value(),
                 current.reason()
         );
@@ -304,11 +356,33 @@ public class CapabilityService {
         );
         return new CatalogDocument(
                 binding,
+                "tool",
                 binding.capabilityPath(),
                 binding.manifest().name(),
                 binding.manifest().description(),
                 String.join(" ", parameters),
-                metadata
+                metadata,
+                binding.manifest().riskLevel()
+                        .name().toLowerCase(Locale.ROOT)
+        );
+    }
+
+    private CatalogDocument document(Binding binding) {
+        var definition = binding.definition();
+        java.util.ArrayList<String> parameters = new java.util.ArrayList<>();
+        definition.inputSchema().path("properties")
+                .fieldNames().forEachRemaining(parameters::add);
+        parameters.sort(String::compareTo);
+        return new CatalogDocument(
+                null,
+                "pipeline",
+                definition.capabilityPath(),
+                definition.name(),
+                definition.description(),
+                String.join(" ", parameters),
+                definition.id() + " " + definition.version()
+                        + " pipeline",
+                "standard"
         );
     }
 
@@ -451,12 +525,28 @@ public class CapabilityService {
         return new CapabilityCard(
                 binding.manifest().id(),
                 binding.manifest().version(),
+                "tool",
                 binding.manifest().name(),
                 binding.capabilityPath(),
                 binding.manifest().description(),
                 binding.manifest().riskLevel().name().toLowerCase(),
                 current.value(),
                 current.reason()
+        );
+    }
+
+    private CapabilityCard card(Binding binding) {
+        var definition = binding.definition();
+        return new CapabilityCard(
+                definition.id(),
+                definition.version(),
+                "pipeline",
+                definition.name(),
+                definition.capabilityPath(),
+                definition.description(),
+                "standard",
+                "available",
+                "本地 Pipeline Definition 已注册"
         );
     }
 
@@ -537,6 +627,7 @@ public class CapabilityService {
     public record CapabilityCard(
             String id,
             String version,
+            String kind,
             String name,
             String path,
             String description,
@@ -578,11 +669,13 @@ public class CapabilityService {
 
     private record CatalogDocument(
             ToolBinding binding,
+            String kind,
             String path,
             String name,
             String description,
             String parameterNames,
-            String metadata
+            String metadata,
+            String riskLevel
     ) {
     }
 

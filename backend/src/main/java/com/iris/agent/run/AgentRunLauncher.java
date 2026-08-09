@@ -10,6 +10,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +31,7 @@ public class AgentRunLauncher implements ApplicationRunner {
     private final WorkspaceService workspace;
     private final RunCancellationRegistry cancellations;
     private final AutoCompactionService autoCompactions;
+    private final ApplicationEventPublisher events;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
 
     public AgentRunLauncher(
@@ -39,7 +41,8 @@ public class AgentRunLauncher implements ApplicationRunner {
             IrisModelProperties model,
             WorkspaceService workspace,
             RunCancellationRegistry cancellations,
-            AutoCompactionService autoCompactions
+            AutoCompactionService autoCompactions,
+            ApplicationEventPublisher events
     ) {
         this.runs = runs;
         this.facts = facts;
@@ -48,6 +51,7 @@ public class AgentRunLauncher implements ApplicationRunner {
         this.workspace = workspace;
         this.cancellations = cancellations;
         this.autoCompactions = autoCompactions;
+        this.events = events;
     }
 
     public boolean launch(String runId) {
@@ -98,7 +102,19 @@ public class AgentRunLauncher implements ApplicationRunner {
                         stopWakeup
                 );
         advance
-                .doOnSuccess(ignored -> autoCompactions.consider(runId))
+                .doOnSuccess(result -> {
+                    RunRoundRepository.RunRow completed = facts.findRun(runId)
+                            .orElse(null);
+                    if (completed != null && completed.root()) {
+                        autoCompactions.consider(runId);
+                    }
+                    if (result != null && result.phase().terminal()) {
+                        events.publishEvent(new RunTerminalEvent(
+                                result.runId(),
+                                result.phase()
+                        ));
+                    }
+                })
                 .doOnError(error -> log.error(
                         "Agentic Run {} stopped unexpectedly",
                         runId,
