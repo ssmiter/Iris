@@ -214,6 +214,23 @@ MES 样例优先保留能组成“需求 → 排程 → 发布 → 执行 → �
 外部写入继续由各自对象能力负责。Python 是 Harness 的一个可组合计算环境，不是
 Iris 的唯一实现路径。
 
+### 4.5 `/system/interaction` 与成果呈现
+
+`ask_user` 是 Agent Loop 的持久化澄清原语，不是审批的别名，也不是前端 Promise：
+
+- 只在不同答案会实质改变求解路径、且客观工具无法自行消除歧义时使用；
+- 一次只问一个聚焦问题，给出 2～5 个互斥、人能直接理解的选项，可标记一个推荐项；
+- ToolExecution 进入 `awaiting_input`，问题、选项和版本作为事实落 SQLite，并投影为
+  clarification Attention；用户响应后形成普通 Tool observation，再恢复原 Run；
+- 刷新、进程重启和上下文压缩都不能遗失待回答问题。它不用于批准写入，也不替模型把
+  可发现事实退回给用户。
+
+`present_artifact` 是面向用户的成果提交原语。它把围栏内工作区文件的当前版本冻结、登记
+并发布到 `user_timeline`，由路径推断文件名和预览类别，只要求模型补充一句真正说明成果
+价值的标题。这样常见交付从“登记再发布”缩成一次调用；底层
+`register_workspace_artifact / publish_artifact` 仍保留在能力目录，供模型交接或特殊可见性
+控制按需发现。原始查询结果、日志、浏览器截图和普通中间文件不应被自动升格为成果。
+
 ### 域过滤（FilterBySystem）
 
 每个会话有系统/身份码（个人版默认 `personal`），决定可见域：
@@ -260,6 +277,8 @@ Iris 的唯一实现路径。
 projection。常驻 Provider 工具表面固定保留两个目录入口，
 以及 `list_files / search_files / read_file / make_directory / write_file / apply_patch`
 这组有界的工作区原语，并保留 `read_tool_result / query_tool_result` 两个结果读取原语。
+`ask_user` 与 `present_artifact` 也常驻：前者闭合“缺少关键用户选择”，后者闭合“已有文件但
+用户尚未收到成果”。它们替代多轮绕行，不代表把所有 UI 操作都变成常驻工具。
 后者必须与 Context micro-compaction 同时可用，否则系统虽然能把旧结果收敛成引用，模型却
 不能立刻读回。常见的观察、创建与局部编辑因此可以直接开始；复制、移动、删除、恢复等
 低频或影响更大的操作仍按需发现。系统不再注册语义重复的 `tool_search`。

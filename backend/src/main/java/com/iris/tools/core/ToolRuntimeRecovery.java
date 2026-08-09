@@ -9,7 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Clock;
 
 /**
- * 启动时只处理无法证明安全重试的中间态；waiting approval 保持可恢复。
+ * 启动时只处理无法证明安全重试的中间态；等待审批或用户输入保持可恢复。
  */
 @Component
 @Order(10)

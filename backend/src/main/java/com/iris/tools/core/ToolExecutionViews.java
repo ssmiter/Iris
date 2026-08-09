@@ -22,6 +22,14 @@ public final class ToolExecutionViews {
     ) {
     }
 
+    public record UserInputDecision(
+            String inputRequestId,
+            String decisionKey,
+            long expectedVersion,
+            String answer
+    ) {
+    }
+
     public record RuntimeResult(
             String executionId,
             String toolCallId,

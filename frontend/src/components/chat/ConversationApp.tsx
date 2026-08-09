@@ -11,6 +11,7 @@ import {
   getConversationView,
   IrisApiError,
   listConversations,
+  respondAttention,
   streamConversationEvents,
   stopTurn,
   uploadArtifact,
@@ -381,9 +382,8 @@ export function ConversationApp() {
     ],
   )
   const activeTurn = selectActiveTurn(chat)
-  // 浮动审批条与链内 attention 卡共享同一批事实（docs/24 §7）：
-  // 只接 approval 子型（decideApproval 唯一已接入的决议通路），
-  // clarification/takeover/auth 仍由链内卡陈述。
+  // 浮动审批条只选择 approval；clarification 直接在过程链内回答，
+  // 两者都由后端持久 Attention 事实驱动。
   const waitingApprovals = useMemo(
     () =>
       Object.values(projection.renderNodesById)
@@ -503,20 +503,29 @@ export function ConversationApp() {
     node: AttentionNode,
     action: AttentionAction,
   ) => {
-    if (node.subtype !== 'approval' || !node.approval) {
-      notify.warning('这类响应尚未接入')
-      return
-    }
     try {
-      await decideApproval(
-        node.approval.approvalId,
-        action.id === 'approve' ? 'approve' : 'reject',
-        node.approval.version,
-        node.approval.operationSnapshotHash,
-      )
-      notify.success(action.id === 'approve' ? '已批准，继续执行' : '已拒绝')
+      if (node.subtype === 'approval' && node.approval) {
+        await decideApproval(
+          node.approval.approvalId,
+          action.id === 'approve' ? 'approve' : 'reject',
+          node.approval.version,
+          node.approval.operationSnapshotHash,
+        )
+        notify.success(action.id === 'approve' ? '已批准，继续执行' : '已拒绝')
+        return
+      }
+      if (node.subtype === 'clarification' && node.input) {
+        await respondAttention(
+          node.attentionId,
+          action.id,
+          node.input.version,
+        )
+        notify.success('已收到你的选择，继续处理')
+        return
+      }
+      notify.warning('这类响应尚未接入')
     } catch (error) {
-      notify.error('审批没有提交', {
+      notify.error('响应没有提交', {
         description: (error as Error).message,
       })
     }

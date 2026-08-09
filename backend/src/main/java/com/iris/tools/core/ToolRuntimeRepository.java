@@ -44,6 +44,20 @@ public class ToolRuntimeRepository {
                 .param("runId", runId)
                 .param("now", now.toString())
                 .update();
+        jdbc.sql("""
+                UPDATE tool_user_input_request
+                SET status = 'cancelled', resolved_at = :now,
+                    version = version + 1
+                WHERE status = 'waiting'
+                  AND execution_id IN (
+                      SELECT execution_id FROM tool_execution
+                      WHERE run_id = :runId
+                        AND phase = 'awaiting_input'
+                  )
+                """)
+                .param("runId", runId)
+                .param("now", now.toString())
+                .update();
         return jdbc.sql("""
                 UPDATE tool_execution
                 SET phase = 'failed', outcome_kind = 'failed',
@@ -51,7 +65,10 @@ public class ToolRuntimeRepository {
                     error_message = '用户已停止当前任务，工具未进入副作用阶段。',
                     version = version + 1, updated_at = :now
                 WHERE run_id = :runId
-                  AND phase IN ('claimed', 'prepared', 'awaiting_approval')
+                  AND phase IN (
+                      'claimed', 'prepared', 'awaiting_approval',
+                      'awaiting_input'
+                  )
                 """)
                 .param("runId", runId)
                 .param("now", now.toString())
@@ -288,6 +305,146 @@ public class ToolRuntimeRepository {
                 .update();
     }
 
+    public void insertUserInputRequest(
+            String inputRequestId,
+            String executionId,
+            String question,
+            String optionsJson,
+            String recommendedOptionId,
+            Instant expiresAt,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO tool_user_input_request(
+                    input_request_id, execution_id, question, options_json,
+                    recommended_option_id, status, version,
+                    created_at, expires_at
+                ) VALUES (
+                    :requestId, :executionId, :question, :options,
+                    :recommended, 'waiting', 1,
+                    :now, :expiresAt
+                )
+                """)
+                .param("requestId", inputRequestId)
+                .param("executionId", executionId)
+                .param("question", question)
+                .param("options", optionsJson)
+                .param("recommended", recommendedOptionId, Types.VARCHAR)
+                .param("now", now.toString())
+                .param("expiresAt", expiresAt.toString())
+                .update();
+        jdbc.sql("""
+                UPDATE tool_execution
+                SET phase = 'awaiting_input', version = version + 1,
+                    updated_at = :now
+                WHERE execution_id = :executionId AND phase = 'prepared'
+                """)
+                .param("executionId", executionId)
+                .param("now", now.toString())
+                .update();
+    }
+
+    public Optional<UserInputRow> findUserInput(String inputRequestId) {
+        return jdbc.sql("""
+                SELECT request.*, execution.conversation_id,
+                       execution.tool_name
+                FROM tool_user_input_request request
+                JOIN tool_execution execution
+                  ON execution.execution_id = request.execution_id
+                WHERE request.input_request_id = :requestId
+                """)
+                .param("requestId", inputRequestId)
+                .query(this::mapUserInput)
+                .optional();
+    }
+
+    public Optional<UserInputRow> findUserInputByExecution(
+            String executionId
+    ) {
+        return jdbc.sql("""
+                SELECT request.*, execution.conversation_id,
+                       execution.tool_name
+                FROM tool_user_input_request request
+                JOIN tool_execution execution
+                  ON execution.execution_id = request.execution_id
+                WHERE request.execution_id = :executionId
+                """)
+                .param("executionId", executionId)
+                .query(this::mapUserInput)
+                .optional();
+    }
+
+    public Optional<UserInputExecutionContextRow>
+            executionContextForAttention(String attentionId) {
+        return jdbc.sql("""
+                SELECT request.input_request_id,
+                       execution.conversation_id, execution.turn_id,
+                       execution.run_id, execution.round_id,
+                       execution.tool_call_id
+                FROM user_input_attention_link link
+                JOIN tool_user_input_request request
+                  ON request.input_request_id = link.input_request_id
+                JOIN tool_execution execution
+                  ON execution.execution_id = request.execution_id
+                WHERE link.attention_id = :attentionId
+                """)
+                .param("attentionId", attentionId)
+                .query((rs, rowNum) -> new UserInputExecutionContextRow(
+                        rs.getString("input_request_id"),
+                        rs.getString("conversation_id"),
+                        rs.getString("turn_id"),
+                        rs.getString("run_id"),
+                        rs.getString("round_id"),
+                        rs.getString("tool_call_id")
+                ))
+                .optional();
+    }
+
+    public boolean resolveUserInput(
+            String inputRequestId,
+            long expectedVersion,
+            String decisionKey,
+            String optionId,
+            String answer,
+            Instant now
+    ) {
+        return jdbc.sql("""
+                UPDATE tool_user_input_request
+                SET status = 'answered', decision_key = :decisionKey,
+                    answer_option_id = :optionId, answer_value = :answer,
+                    resolved_at = :now, version = version + 1
+                WHERE input_request_id = :requestId
+                  AND version = :expectedVersion
+                  AND status = 'waiting'
+                  AND expires_at > :now
+                """)
+                .param("decisionKey", decisionKey)
+                .param("optionId", optionId, Types.VARCHAR)
+                .param("answer", answer)
+                .param("now", now.toString())
+                .param("requestId", inputRequestId)
+                .param("expectedVersion", expectedVersion)
+                .update() == 1;
+    }
+
+    public void markUserInputExpired(
+            String inputRequestId,
+            String executionId,
+            Instant now
+    ) {
+        jdbc.sql("""
+                UPDATE tool_user_input_request
+                SET status = 'expired', resolved_at = :now,
+                    version = version + 1
+                WHERE input_request_id = :requestId
+                  AND status = 'waiting'
+                """)
+                .param("requestId", inputRequestId)
+                .param("now", now.toString())
+                .update();
+        updatePhase(executionId, "awaiting_input", "expired", now);
+    }
+
     public Optional<ApprovalRow> findApproval(String approvalId) {
         return jdbc.sql("""
                 SELECT a.*, e.tool_name, e.execution_id, e.conversation_id
@@ -412,7 +569,7 @@ public class ToolRuntimeRepository {
                 WHERE execution_id = :executionId
                   AND phase IN (
                       'executing', 'verifying', 'claimed',
-                      'prepared', 'awaiting_approval'
+                      'prepared', 'awaiting_approval', 'awaiting_input'
                   )
                 """)
                 .param("phase", phase)
@@ -595,6 +752,27 @@ public class ToolRuntimeRepository {
         );
     }
 
+    private UserInputRow mapUserInput(
+            java.sql.ResultSet rs,
+            int rowNum
+    ) throws java.sql.SQLException {
+        return new UserInputRow(
+                rs.getString("input_request_id"),
+                rs.getString("execution_id"),
+                rs.getString("conversation_id"),
+                rs.getString("tool_name"),
+                rs.getString("question"),
+                rs.getString("options_json"),
+                rs.getString("recommended_option_id"),
+                rs.getString("status"),
+                rs.getString("answer_option_id"),
+                rs.getString("answer_value"),
+                rs.getString("decision_key"),
+                rs.getLong("version"),
+                Instant.parse(rs.getString("expires_at"))
+        );
+    }
+
     public record ApprovalRow(
             String approvalId,
             String executionId,
@@ -605,6 +783,33 @@ public class ToolRuntimeRepository {
             String decisionKey,
             long version,
             Instant expiresAt
+    ) {
+    }
+
+    public record UserInputRow(
+            String inputRequestId,
+            String executionId,
+            String conversationId,
+            String toolName,
+            String question,
+            String optionsJson,
+            String recommendedOptionId,
+            String status,
+            String answerOptionId,
+            String answerValue,
+            String decisionKey,
+            long version,
+            Instant expiresAt
+    ) {
+    }
+
+    public record UserInputExecutionContextRow(
+            String inputRequestId,
+            String conversationId,
+            String turnId,
+            String runId,
+            String roundId,
+            String toolCallId
     ) {
     }
 

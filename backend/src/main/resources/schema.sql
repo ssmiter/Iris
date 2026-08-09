@@ -1023,6 +1023,35 @@ CREATE TABLE IF NOT EXISTS tool_approval_request (
 CREATE INDEX IF NOT EXISTS idx_tool_approval_waiting
     ON tool_approval_request(status, expires_at);
 
+CREATE TABLE IF NOT EXISTS tool_user_input_request (
+    input_request_id TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL UNIQUE,
+    question TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    recommended_option_id TEXT,
+    status TEXT NOT NULL,
+    answer_option_id TEXT,
+    answer_value TEXT,
+    decision_key TEXT UNIQUE,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_user_input_waiting
+    ON tool_user_input_request(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS user_input_attention_link (
+    input_request_id TEXT PRIMARY KEY,
+    attention_id TEXT NOT NULL UNIQUE,
+    node_id TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (input_request_id)
+        REFERENCES tool_user_input_request(input_request_id),
+    FOREIGN KEY (node_id) REFERENCES render_node_projection(node_id)
+);
+
 CREATE TABLE IF NOT EXISTS tool_evidence (
     evidence_id TEXT PRIMARY KEY,
     execution_id TEXT NOT NULL,

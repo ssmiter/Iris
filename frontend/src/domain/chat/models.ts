@@ -191,6 +191,19 @@ export interface AttentionNode extends RenderNodeBase {
   impact: string
   actions: AttentionAction[]
   expiresAt?: string
+  input?: {
+    inputRequestId: string
+    question: string
+    version: number
+    options: Array<{
+      id: string
+      label: string
+      description?: string
+      recommended: boolean
+    }>
+    answer?: string
+    answerOptionId?: string
+  }
   approval?: {
     approvalId: string
     toolExecutionId: string

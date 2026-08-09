@@ -9,10 +9,14 @@ import com.iris.tools.core.PreparedOperation.ResourceClaim;
 import com.iris.tools.core.ToolExecutionViews.ApprovalDecision;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolExecutionViews.UserInputDecision;
 import com.iris.tools.core.ToolManifest.SideEffect;
 import com.iris.tools.core.ToolManifest.ConcurrencySemantics;
 import com.iris.tools.core.ToolOutputPayloadService.PendingPayload;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
+import com.iris.tools.core.UserInputTool.Option;
+import com.iris.tools.core.UserInputTool.UserInputAnswer;
+import com.iris.tools.core.UserInputTool.UserInputPrompt;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -238,6 +242,26 @@ public class ToolRuntime {
                 return result(executionId);
             }
 
+            UserInputPrompt inputPrompt = null;
+            if (binding.tool() instanceof UserInputTool userInputTool) {
+                try {
+                    inputPrompt = userInputTool.prompt(
+                            prepared,
+                            boundedContext
+                    );
+                    validateUserInputPrompt(binding, inputPrompt);
+                } catch (Exception exception) {
+                    completeFailure(
+                            executionId,
+                            ToolOutcome.Kind.FAILED,
+                            errorCode(exception, "invalid_user_input_prompt"),
+                            safeMessage(exception),
+                            List.of()
+                    );
+                    return result(executionId);
+                }
+            }
+
             Instant expiresAt = prepared.expiresAt() == null
                     ? now.plus(DEFAULT_SNAPSHOT_TTL)
                     : prepared.expiresAt();
@@ -262,6 +286,7 @@ public class ToolRuntime {
                             + resourcesJson
                             + expiresAt
             );
+            UserInputPrompt effectiveInputPrompt = inputPrompt;
             transactions.executeWithoutResult(status -> {
                 repository.insertSnapshot(
                         snapshotId,
@@ -285,10 +310,21 @@ public class ToolRuntime {
                             expiresAt,
                             now
                     );
+                } else if (effectiveInputPrompt != null) {
+                    repository.insertUserInputRequest(
+                            id("input_request"),
+                            executionId,
+                            effectiveInputPrompt.question(),
+                            write(effectiveInputPrompt.options()),
+                            effectiveInputPrompt.recommendedOptionId(),
+                            expiresAt,
+                            now
+                    );
                 }
             });
 
-            if (requiresApproval(binding.manifest())) {
+            if (requiresApproval(binding.manifest())
+                    || inputPrompt != null) {
                 return result(executionId);
             }
             return execute(executionId, binding, boundedContext);
@@ -437,6 +473,122 @@ public class ToolRuntime {
                     approval.executionId(),
                     binding,
                     withDeadline(context, binding.manifest())
+            );
+        });
+    }
+
+    public RuntimeResult decideUserInput(
+            UserInputDecision decision,
+            ToolContext context
+    ) {
+        requireUserInputDecision(decision);
+        return withLock(decision.inputRequestId(), () -> {
+            Instant now = clock.instant();
+            ToolRuntimeRepository.UserInputRow request = repository
+                    .findUserInput(decision.inputRequestId())
+                    .orElseThrow(() -> new ToolRuntimeException(
+                            "user_input_not_found",
+                            "找不到这条用户输入请求"
+                    ));
+            if (!request.conversationId().equals(context.conversationId())) {
+                throw new ToolRuntimeException(
+                        "user_input_not_in_conversation",
+                        "用户输入请求不属于当前对话"
+                );
+            }
+            if (request.decisionKey() != null) {
+                if (!request.decisionKey().equals(decision.decisionKey())) {
+                    throw new ToolRuntimeException(
+                            "user_input_already_resolved",
+                            "这条问题已经由另一条响应处理"
+                    );
+                }
+                return result(request.executionId());
+            }
+            if (!request.expiresAt().isAfter(now)) {
+                transactions.executeWithoutResult(status ->
+                        repository.markUserInputExpired(
+                                request.inputRequestId(),
+                                request.executionId(),
+                                now
+                        )
+                );
+                return result(request.executionId());
+            }
+
+            ToolBinding binding = exactBinding(
+                    request.toolName(),
+                    request.executionId()
+            );
+            if (!(binding.tool() instanceof UserInputTool userInputTool)) {
+                throw new ToolRuntimeException(
+                        "user_input_binding_changed",
+                        "当前工具不再支持用户输入恢复"
+                );
+            }
+            ToolRuntimeRepository.SnapshotRow snapshot = repository.snapshot(
+                    request.executionId()
+            );
+            if (!snapshot.expiresAt().isAfter(now)) {
+                transactions.executeWithoutResult(status ->
+                        repository.markUserInputExpired(
+                                request.inputRequestId(),
+                                request.executionId(),
+                                now
+                        )
+                );
+                return result(request.executionId());
+            }
+            ResolvedUserAnswer answer = resolveUserAnswer(
+                    request,
+                    decision.answer()
+            );
+            CommittedOperation operation = new CommittedOperation(
+                    request.executionId(),
+                    snapshot.snapshotId(),
+                    snapshot.snapshotHash(),
+                    readTree(snapshot.normalizedInputJson()),
+                    readResources(snapshot.resourcesJson())
+            );
+
+            ToolOutcome outcome;
+            VerificationResult verification;
+            try {
+                outcome = userInputTool.resolve(
+                        operation,
+                        new UserInputAnswer(
+                                request.inputRequestId(),
+                                answer.optionId(),
+                                answer.value()
+                        ),
+                        context
+                );
+                if (outcome == null) {
+                    throw new IllegalStateException(
+                            "用户输入工具返回了空 outcome"
+                    );
+                }
+                verification = outcome.kind() == ToolOutcome.Kind.SUCCEEDED
+                        ? userInputTool.verify(outcome, operation, context)
+                        : new VerificationResult(
+                                VerificationResult.Status.FAILED,
+                                List.of(),
+                                outcome.message()
+                        );
+            } catch (Exception exception) {
+                throw new ToolRuntimeException(
+                        errorCode(exception, "user_input_resolution_failed"),
+                        safeMessage(exception)
+                );
+            }
+            return completeUserInput(
+                    decision,
+                    request,
+                    binding,
+                    answer,
+                    outcome,
+                    verification,
+                    now
             );
         });
     }
@@ -709,6 +861,140 @@ public class ToolRuntime {
         return result(executionId);
     }
 
+    private RuntimeResult completeUserInput(
+            UserInputDecision decision,
+            ToolRuntimeRepository.UserInputRow request,
+            ToolBinding binding,
+            ResolvedUserAnswer answer,
+            ToolOutcome outcome,
+            VerificationResult verification,
+            Instant now
+    ) {
+        String phase;
+        ToolOutcome.Kind persistedKind;
+        String failureCode = null;
+        String message = verification.message();
+        if (outcome.kind() != ToolOutcome.Kind.SUCCEEDED) {
+            phase = outcome.kind() == ToolOutcome.Kind.OUTCOME_UNKNOWN
+                    ? "outcome_unknown"
+                    : "failed";
+            persistedKind = outcome.kind();
+            failureCode = outcome.errorCode();
+            message = outcome.message();
+        } else if (verification.status()
+                == VerificationResult.Status.CONFIRMED) {
+            phase = "succeeded";
+            persistedKind = ToolOutcome.Kind.SUCCEEDED;
+        } else {
+            phase = "failed";
+            persistedKind = ToolOutcome.Kind.FAILED;
+            failureCode = "user_input_postcondition_failed";
+        }
+        if ((message == null || message.isBlank())
+                && !verification.evidence().isEmpty()) {
+            message = verification.evidence().getFirst().summary();
+        }
+
+        String canonicalOutput = persistedKind == ToolOutcome.Kind.SUCCEEDED
+                ? write(outcome.output())
+                : null;
+        PendingPayload pendingPayload = null;
+        if (canonicalOutput != null) {
+            try {
+                pendingPayload = outputPayloads.writeJson(canonicalOutput);
+            } catch (Exception exception) {
+                throw new ToolRuntimeException(
+                        "tool_output_persistence_failed",
+                        "用户响应结果无法持久化，问题仍保持待回答"
+                );
+            }
+        }
+        String bounded = canonicalOutput == null
+                ? null
+                : boundedOutput(
+                        binding.manifest(),
+                        canonicalOutput,
+                        request.executionId()
+                );
+        String finalFailureCode = failureCode;
+        String finalMessage = message;
+        PendingPayload finalPayload = pendingPayload;
+        Boolean completed = transactions.execute(status -> {
+            boolean resolved = repository.resolveUserInput(
+                    request.inputRequestId(),
+                    decision.expectedVersion(),
+                    decision.decisionKey(),
+                    answer.optionId(),
+                    answer.value(),
+                    now
+            );
+            if (!resolved) {
+                status.setRollbackOnly();
+                return false;
+            }
+            if (finalPayload != null) {
+                outputPayloads.attach(
+                        request.executionId(),
+                        finalPayload,
+                        now
+                );
+            }
+            repository.complete(
+                    request.executionId(),
+                    phase,
+                    persistedKind,
+                    bounded,
+                    finalFailureCode,
+                    finalMessage,
+                    verification.evidence(),
+                    now
+            );
+            return true;
+        });
+        if (!Boolean.TRUE.equals(completed)) {
+            throw new ToolRuntimeException(
+                    "user_input_precondition_failed",
+                    "问题版本或状态已经变化，请刷新后重试"
+            );
+        }
+        return result(request.executionId());
+    }
+
+    private ResolvedUserAnswer resolveUserAnswer(
+            ToolRuntimeRepository.UserInputRow request,
+            String rawAnswer
+    ) {
+        String answer = rawAnswer == null ? "" : rawAnswer.trim();
+        if (answer.isBlank() || answer.length() > 2_000) {
+            throw new ToolRuntimeException(
+                    "invalid_user_input_answer",
+                    "回答必须是 1 到 2000 个字符"
+            );
+        }
+        List<Option> options;
+        try {
+            options = objectMapper.readValue(
+                    request.optionsJson(),
+                    new TypeReference<List<Option>>() {
+                    }
+            );
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "持久化的用户选项不是合法 JSON",
+                    exception
+            );
+        }
+        for (Option option : options) {
+            if (option.id().equals(answer)) {
+                return new ResolvedUserAnswer(
+                        option.id(),
+                        option.label()
+                );
+            }
+        }
+        return new ResolvedUserAnswer(null, answer);
+    }
+
     private boolean passesCommitGate(
             String executionId,
             ToolBinding binding,
@@ -857,6 +1143,47 @@ public class ToolRuntime {
                         "资源声明不完整"
                 );
             }
+        }
+    }
+
+    private void validateUserInputPrompt(
+            ToolBinding binding,
+            UserInputPrompt prompt
+    ) {
+        if (binding.manifest().sideEffect() != SideEffect.INTERNAL_STATE
+                || binding.manifest().riskLevel() != RiskLevel.STANDARD) {
+            throw new ToolRuntimeException(
+                    "invalid_user_input_manifest",
+                    "用户输入工具只能声明为标准级 Iris 内部状态"
+            );
+        }
+        if (prompt == null
+                || prompt.question() == null
+                || prompt.question().isBlank()
+                || prompt.options().size() < 2
+                || prompt.options().size() > 5) {
+            throw new ToolRuntimeException(
+                    "invalid_user_input_prompt",
+                    "用户输入请求必须包含一个问题和 2 到 5 个选项"
+            );
+        }
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (Option option : prompt.options()) {
+            if (option.id() == null || option.id().isBlank()
+                    || option.label() == null || option.label().isBlank()
+                    || !ids.add(option.id())) {
+                throw new ToolRuntimeException(
+                        "invalid_user_input_prompt",
+                        "用户输入选项必须有唯一 ID 和可读标签"
+                );
+            }
+        }
+        if (prompt.recommendedOptionId() != null
+                && !ids.contains(prompt.recommendedOptionId())) {
+            throw new ToolRuntimeException(
+                    "invalid_user_input_prompt",
+                    "推荐项必须引用现有选项"
+            );
         }
     }
 
@@ -1088,6 +1415,22 @@ public class ToolRuntime {
         }
     }
 
+    private void requireUserInputDecision(UserInputDecision decision) {
+        if (decision == null
+                || decision.inputRequestId() == null
+                || decision.inputRequestId().isBlank()
+                || decision.decisionKey() == null
+                || decision.decisionKey().isBlank()
+                || decision.expectedVersion() < 1
+                || decision.answer() == null
+                || decision.answer().isBlank()) {
+            throw new ToolRuntimeException(
+                    "invalid_user_input_decision",
+                    "用户输入响应缺少 request、版本、幂等键或答案"
+            );
+        }
+    }
+
     private <T> T withLock(String key, java.util.concurrent.Callable<T> work) {
         ReentrantLock lock = locks[Math.floorMod(key.hashCode(), locks.length)];
         lock.lock();
@@ -1111,6 +1454,9 @@ public class ToolRuntime {
             JsonNode input,
             ToolCallResolver.ResolvedToolCall resolution
     ) {
+    }
+
+    private record ResolvedUserAnswer(String optionId, String value) {
     }
 
     private record DeadlineToolContext(

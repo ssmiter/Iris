@@ -21,6 +21,23 @@ Turn
 
 Pipeline 与 Agentic 共用 Run、Tool Runtime、审批、证据和事件底座。Agentic 可以探索未知过程，经过多次验证和人工发布后沉淀 Pipeline；Pipeline 遇到声明外的未知分支，可以在安全边界创建有界 Agentic child Run。
 
+### 1.1 用户澄清是可恢复的 Loop 边界
+
+当 `ask_user` 被调用时，当前 Round 保持 `awaiting_tools`，ToolExecution 进入
+`awaiting_input`，root Run 进入 `suspended`。用户选择不是新的任务消息，也不在前端内存中
+临时拼接；它先以版本化 UserInputRequest 决议原工具调用，产生可观察的 Tool result，再由
+Launcher 恢复同一 Run。这样审批、澄清和后续人工接管虽然有不同语义，却共享
+“事实落盘 → Attention 投影 → 用户决议 → observation → 恢复”的运行骨架。
+
+### 1.2 首个 child Agent 边界
+
+首版 child Agent 只考虑隔离、可验证的单任务委派：父 Run 提交自包含任务、允许的窄工具
+表面、预算和返回目标；子 Run 使用自己的 Context Frame，不继承父 Agent 的隐式思考，也
+不再暴露递归委派工具。父子通过 Workspace/Artifact/Tool result/Task work state 等稳定引用
+交换事实，子 Run 结束后只把有界结论与引用作为父 Run observation。共享完整上下文、动态
+组队、DAG、角色市场和自动状态 Agent 都不进入这一地基阶段；在隔离与返回契约没有兑现前，
+不把 `agent` 暴露为可调用工具。
+
 ## 2. 补充注入（Supplement）——不打断的中途指令
 
 用户运行中再输入，不是排队也不是打断：

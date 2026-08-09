@@ -11,6 +11,7 @@ public final class ResidentToolSurface {
             "list_capabilities",
             "read_capability",
             "invoke_capability",
+            "ask_user",
             "list_files",
             "search_files",
             "read_file",
@@ -21,10 +22,9 @@ public final class ResidentToolSurface {
             "create_task_ledger",
             "read_task_ledger",
             "update_task_ledger",
-            "register_workspace_artifact",
+            "present_artifact",
             "read_artifact",
             "read_artifact_text",
-            "publish_artifact",
             "read_tool_result",
             "query_tool_result"
     );

@@ -321,6 +321,31 @@ export function decideApproval(
   })
 }
 
+export function respondAttention(
+  attentionId: string,
+  answer: string,
+  expectedVersion: number,
+) {
+  return requestJson<{
+    attentionId: string
+    inputRequestId: string
+    toolExecutionId: string
+    toolCallId: string
+    phase: string
+    runResumeRequested: boolean
+    executionVersion: number
+    updatedAt: string
+  }>(`/api/v1/attentions/${encodeURIComponent(attentionId)}/response`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify({
+      expectedVersion,
+      kind: 'clarification_answer',
+      answer,
+    }),
+  })
+}
+
 export function createSupplement(
   turnId: string,
   text: string,

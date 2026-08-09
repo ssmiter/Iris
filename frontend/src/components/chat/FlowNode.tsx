@@ -202,7 +202,9 @@ function AttentionBody({
         </div>
       ) : (
         <p className="mt-2 animate-overlay-in text-small text-ink-subtle motion-reduce:animate-none">
-          此请求已经结束，历史影响陈述仍被保留。
+          {node.subtype === 'clarification' && node.input?.answer
+            ? `已选择：${node.input.answer}`
+            : '此请求已经结束，历史影响陈述仍被保留。'}
         </p>
       )}
     </div>

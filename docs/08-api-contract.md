@@ -825,7 +825,13 @@ GET /api/v1/conversations/{conversationId}/approvals?status=pending
   "impact": "需要确认是否把酒店搜索范围扩大到西湖 3 公里内。",
   "actions": ["answer", "cancel"],
   "payload": {
-    "question": "是否扩大搜索范围？"
+    "question": "是否扩大搜索范围？",
+    "inputRequestId": "input_request_opaque",
+    "version": 1,
+    "options": [
+      { "id": "option_1", "label": "扩大到 3 公里", "recommended": true },
+      { "id": "option_2", "label": "保持原范围", "recommended": false }
+    ]
   },
   "expiresAt": null,
   "resolvedAt": null,
@@ -844,9 +850,13 @@ Idempotency-Key: attention-response-opaque
 {
   "expectedVersion": 1,
   "kind": "clarification_answer",
-  "answer": "扩大到 3 公里"
+  "answer": "option_1"
 }
 ```
+
+`answer` 可以是当前选项 ID，也可以是前端显式采集的自由文本；Backend 把选项 ID 解析为
+稳定标签后写入 Tool observation。重复响应必须使用相同 Idempotency-Key，版本变化返回
+precondition failure。澄清成功后更新同一 Attention，并恢复被它挂起的 Run。
 
 首版 response kind：
 
@@ -1166,6 +1176,10 @@ Conversation 水合，也不是模型读取 Artifact 正文的旁路。
 `render_node.added(type=artifact)`。重复发布不会生成第二张成果卡，但每次发布事实都会
 独立持久化，投影可在进程恢复后重建。Sandbox output 在导入 Workspace 前不是正式
 Artifact。
+
+常见最终交付由常驻 `present_artifact(path, caption, origin_execution_id?)` 一次完成冻结、
+登记与 `user_timeline` 发布。`caption` 是用户能理解的成果标题；文件名、媒体类型和预览类别
+由 Backend 根据已核验路径推断。内部模型交接仍可按需发现较低层 Artifact 原语。
 
 ### 9.5 写操作
 

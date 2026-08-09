@@ -62,6 +62,15 @@ public class ToolProjectionService {
             if (result.approvalId() != null) {
                 projectAttention(run, round, result);
             }
+            String inputRequestId = inputRequestId(result.executionId());
+            if (inputRequestId != null) {
+                projectUserInputAttention(
+                        run,
+                        round,
+                        result,
+                        inputRequestId
+                );
+            }
             ObjectNode artifactNode = projectPublishedArtifact(
                     run,
                     round,
@@ -72,7 +81,9 @@ public class ToolProjectionService {
                     run,
                     projectionForTool(call.toolCallId()),
                     result.approvalId() == null
-                            ? null
+                            ? inputRequestId == null
+                                    ? null
+                                    : projectionForUserInput(inputRequestId)
                             : projectionForApproval(result.approvalId()),
                     artifactNode
             );
@@ -97,7 +108,8 @@ public class ToolProjectionService {
             RoundToolCall call,
             RuntimeResult result
     ) {
-        if (!"publish_artifact".equals(result.toolName())
+        if (!("publish_artifact".equals(result.toolName())
+                || "present_artifact".equals(result.toolName()))
                 || !"succeeded".equals(result.phase())) {
             return null;
         }
@@ -230,6 +242,28 @@ public class ToolProjectionService {
                 WHERE approval_id = :approvalId
                 """)
                 .param("approvalId", approvalId)
+                .query(String.class)
+                .single());
+    }
+
+    private String inputRequestId(String executionId) {
+        return jdbc.sql("""
+                SELECT input_request_id
+                FROM tool_user_input_request
+                WHERE execution_id = :executionId
+                """)
+                .param("executionId", executionId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
+    private ObjectNode projectionForUserInput(String inputRequestId) {
+        return projectionByNodeId(jdbc.sql("""
+                SELECT node_id FROM user_input_attention_link
+                WHERE input_request_id = :inputRequestId
+                """)
+                .param("inputRequestId", inputRequestId)
                 .query(String.class)
                 .single());
     }
@@ -528,6 +562,213 @@ public class ToolProjectionService {
         }
     }
 
+    private void projectUserInputAttention(
+            RunRow run,
+            RoundRow round,
+            RuntimeResult result,
+            String inputRequestId
+    ) {
+        AttentionLink link = jdbc.sql("""
+                SELECT attention_id, node_id
+                FROM user_input_attention_link
+                WHERE input_request_id = :inputRequestId
+                """)
+                .param("inputRequestId", inputRequestId)
+                .query((rs, rowNum) -> new AttentionLink(
+                        rs.getString("attention_id"),
+                        rs.getString("node_id")
+                ))
+                .optional()
+                .orElse(null);
+        UserInputProjection input = jdbc.sql("""
+                SELECT question, options_json, recommended_option_id,
+                       status, answer_option_id, answer_value,
+                       version, expires_at, resolved_at
+                FROM tool_user_input_request
+                WHERE input_request_id = :inputRequestId
+                """)
+                .param("inputRequestId", inputRequestId)
+                .query((rs, rowNum) -> new UserInputProjection(
+                        rs.getString("question"),
+                        rs.getString("options_json"),
+                        rs.getString("recommended_option_id"),
+                        rs.getString("status"),
+                        rs.getString("answer_option_id"),
+                        rs.getString("answer_value"),
+                        rs.getLong("version"),
+                        rs.getString("expires_at"),
+                        rs.getString("resolved_at")
+                ))
+                .single();
+        Instant now = clock.instant();
+        String attentionId = link == null ? id("attention") : link.attentionId();
+        String nodeId = link == null ? id("node") : link.nodeId();
+        ExistingNode existing = link == null ? null : existingNode(nodeId);
+        int ordinal = existing == null
+                ? nextOrdinal(run.turnId())
+                : existing.ordinal();
+        int version = existing == null ? 1 : existing.version() + 1;
+        String createdAt = existing == null
+                ? now.toString()
+                : existing.createdAt();
+        String status = switch (input.status()) {
+            case "waiting" -> "waiting";
+            case "expired" -> "expired";
+            case "cancelled" -> "cancelled";
+            default -> "resolved";
+        };
+
+        ObjectNode projection = base(
+                nodeId,
+                run,
+                round,
+                ordinal,
+                version,
+                createdAt,
+                now
+        );
+        projection.put("type", "attention");
+        projection.put("status", status);
+        projection.put("attentionId", attentionId);
+        projection.put("subtype", "clarification");
+        projection.put("impact", input.question());
+        projection.put("expiresAt", input.expiresAt());
+        if (input.resolvedAt() != null) {
+            projection.put("resolvedAt", input.resolvedAt());
+        }
+        ObjectNode inputView = projection.putObject("input");
+        inputView.put("inputRequestId", inputRequestId);
+        inputView.put("question", input.question());
+        inputView.put("version", input.version());
+        ArrayNode options;
+        try {
+            options = (ArrayNode) objectMapper.readTree(input.optionsJson());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Stored user input options are invalid JSON",
+                    exception
+            );
+        }
+        ArrayNode visibleOptions = inputView.putArray("options");
+        ArrayNode actions = projection.putArray("actions");
+        for (com.fasterxml.jackson.databind.JsonNode raw : options) {
+            String optionId = raw.path("id").asText();
+            String label = raw.path("label").asText();
+            boolean recommended = optionId.equals(
+                    input.recommendedOptionId()
+            );
+            ObjectNode option = visibleOptions.addObject();
+            option.put("id", optionId);
+            option.put("label", label);
+            option.put("recommended", recommended);
+            if (raw.hasNonNull("description")) {
+                option.put("description", raw.path("description").asText());
+            }
+            if ("waiting".equals(status)) {
+                action(
+                        actions,
+                        optionId,
+                        label,
+                        recommended ? "primary" : "secondary"
+                );
+            }
+        }
+        if (input.answerValue() != null) {
+            inputView.put("answer", input.answerValue());
+        }
+        if (input.answerOptionId() != null) {
+            inputView.put("answerOptionId", input.answerOptionId());
+        }
+
+        if (existing == null) {
+            insertNode(
+                    nodeId,
+                    run,
+                    round,
+                    "attention",
+                    status,
+                    ordinal,
+                    version,
+                    projection,
+                    now
+            );
+            insertAttentionProjection(
+                    attentionId,
+                    run,
+                    status,
+                    projection,
+                    now
+            );
+            jdbc.sql("""
+                    INSERT INTO user_input_attention_link(
+                        input_request_id, attention_id, node_id
+                    ) VALUES (
+                        :inputRequestId, :attentionId, :nodeId
+                    )
+                    """)
+                    .param("inputRequestId", inputRequestId)
+                    .param("attentionId", attentionId)
+                    .param("nodeId", nodeId)
+                    .update();
+        } else {
+            updateNode(nodeId, status, version, projection, now);
+            updateAttentionProjection(
+                    attentionId,
+                    status,
+                    projection,
+                    now
+            );
+        }
+    }
+
+    private void insertAttentionProjection(
+            String attentionId,
+            RunRow run,
+            String status,
+            ObjectNode projection,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO attention_projection(
+                    attention_id, conversation_id, branch_id, turn_id,
+                    run_id, status, projection_json, version,
+                    created_at, updated_at
+                ) VALUES (
+                    :attentionId, :conversationId, :branchId, :turnId,
+                    :runId, :status, :projection, 1,
+                    :now, :now
+                )
+                """)
+                .param("attentionId", attentionId)
+                .param("conversationId", run.conversationId())
+                .param("branchId", run.branchId())
+                .param("turnId", run.turnId())
+                .param("runId", run.runId())
+                .param("status", status)
+                .param("projection", projection.toString())
+                .param("now", now.toString())
+                .update();
+    }
+
+    private void updateAttentionProjection(
+            String attentionId,
+            String status,
+            ObjectNode projection,
+            Instant now
+    ) {
+        jdbc.sql("""
+                UPDATE attention_projection
+                SET status = :status, projection_json = :projection,
+                    version = version + 1, updated_at = :now
+                WHERE attention_id = :attentionId
+                """)
+                .param("status", status)
+                .param("projection", projection.toString())
+                .param("now", now.toString())
+                .param("attentionId", attentionId)
+                .update();
+    }
+
     private ObjectNode base(
             String nodeId,
             RunRow run,
@@ -656,7 +897,8 @@ public class ToolProjectionService {
     private String visibleToolStatus(String phase) {
         return switch (phase) {
             case "claimed", "prepared" -> "queued";
-            case "awaiting_approval", "verifying" -> "verifying";
+            case "awaiting_approval", "awaiting_input", "verifying" ->
+                    "verifying";
             case "executing" -> "running";
             case "succeeded" -> "succeeded";
             case "outcome_unknown" -> "outcome_unknown";
@@ -691,6 +933,7 @@ public class ToolProjectionService {
         return switch (result.phase()) {
             case "succeeded" -> "工具执行完成";
             case "awaiting_approval" -> "等待批准后执行";
+            case "awaiting_input" -> "等待用户回答后继续";
             case "outcome_unknown" -> "结果未知，需要先核验";
             default -> "工具正在处理";
         };
@@ -755,6 +998,19 @@ public class ToolProjectionService {
             String status,
             String riskLevel,
             String expiresAt
+    ) {
+    }
+
+    private record UserInputProjection(
+            String question,
+            String optionsJson,
+            String recommendedOptionId,
+            String status,
+            String answerOptionId,
+            String answerValue,
+            long version,
+            String expiresAt,
+            String resolvedAt
     ) {
     }
 

@@ -18,51 +18,34 @@ public class RunRoundRepository {
     public Optional<RunRow> findRun(String runId) {
         return jdbc.sql("""
                 SELECT run_id, conversation_id, branch_id, turn_id,
-                       kind, phase, version
+                       parent_run_id, root_run_id, kind, purpose,
+                       phase, version
                 FROM agent_run
                 WHERE run_id = :runId
                 """)
                 .param("runId", runId)
-                .query((rs, rowNum) -> new RunRow(
-                        rs.getString("run_id"),
-                        rs.getString("conversation_id"),
-                        rs.getString("branch_id"),
-                        rs.getString("turn_id"),
-                        rs.getString("kind"),
-                        RunPhase.valueOf(
-                                rs.getString("phase").toUpperCase()
-                        ),
-                        rs.getLong("version")
-                ))
+                .query(this::mapRun)
                 .optional();
     }
 
     public List<RunRow> resumableRuns() {
         return jdbc.sql("""
                 SELECT run_id, conversation_id, branch_id, turn_id,
-                       kind, phase, version
+                       parent_run_id, root_run_id, kind, purpose,
+                       phase, version
                 FROM agent_run
                 WHERE kind = 'agentic' AND phase = 'running'
                 ORDER BY started_at
                 """)
-                .query((rs, rowNum) -> new RunRow(
-                        rs.getString("run_id"),
-                        rs.getString("conversation_id"),
-                        rs.getString("branch_id"),
-                        rs.getString("turn_id"),
-                        rs.getString("kind"),
-                        RunPhase.valueOf(
-                                rs.getString("phase").toUpperCase()
-                        ),
-                        rs.getLong("version")
-                ))
+                .query(this::mapRun)
                 .list();
     }
 
     public List<RunRow> stopRequestedRuns() {
         return jdbc.sql("""
                 SELECT r.run_id, r.conversation_id, r.branch_id, r.turn_id,
-                       r.kind, r.phase, r.version
+                       r.parent_run_id, r.root_run_id, r.kind, r.purpose,
+                       r.phase, r.version
                 FROM agent_run r
                 JOIN turn_stop_request s ON s.root_run_id = r.run_id
                 WHERE r.kind = 'agentic'
@@ -70,28 +53,19 @@ public class RunRoundRepository {
                   AND s.phase IN ('requested', 'draining')
                 ORDER BY s.requested_at
                 """)
-                .query((rs, rowNum) -> new RunRow(
-                        rs.getString("run_id"),
-                        rs.getString("conversation_id"),
-                        rs.getString("branch_id"),
-                        rs.getString("turn_id"),
-                        rs.getString("kind"),
-                        RunPhase.valueOf(
-                                rs.getString("phase").toUpperCase()
-                        ),
-                        rs.getLong("version")
-                ))
+                .query(this::mapRun)
                 .list();
     }
 
     /**
-     * 审批已经形成终态、但进程在 Run 被重新唤醒前退出时的恢复集合。
+     * 审批或用户输入已经形成终态、但进程在 Run 被重新唤醒前退出时的恢复集合。
      * 仍有 waiting/executing 等非终态工具事实的 Run 不能自动继续。
      */
     public List<RunRow> recoverableSuspendedRuns() {
         return jdbc.sql("""
                 SELECT DISTINCT r.run_id, r.conversation_id, r.branch_id,
-                       r.turn_id, r.kind, r.phase, r.version
+                       r.turn_id, r.parent_run_id, r.root_run_id,
+                       r.kind, r.purpose, r.phase, r.version
                 FROM agent_run r
                 JOIN agent_round ar ON ar.run_id = r.run_id
                 WHERE r.kind = 'agentic'
@@ -108,17 +82,7 @@ public class RunRoundRepository {
                   )
                 ORDER BY r.started_at
                 """)
-                .query((rs, rowNum) -> new RunRow(
-                        rs.getString("run_id"),
-                        rs.getString("conversation_id"),
-                        rs.getString("branch_id"),
-                        rs.getString("turn_id"),
-                        rs.getString("kind"),
-                        RunPhase.valueOf(
-                                rs.getString("phase").toUpperCase()
-                        ),
-                        rs.getLong("version")
-                ))
+                .query(this::mapRun)
                 .list();
     }
 
@@ -457,15 +421,37 @@ public class RunRoundRepository {
                 .update() == 1;
     }
 
+    private RunRow mapRun(java.sql.ResultSet rs, int rowNum)
+            throws java.sql.SQLException {
+        return new RunRow(
+                rs.getString("run_id"),
+                rs.getString("conversation_id"),
+                rs.getString("branch_id"),
+                rs.getString("turn_id"),
+                rs.getString("parent_run_id"),
+                rs.getString("root_run_id"),
+                rs.getString("kind"),
+                rs.getString("purpose"),
+                RunPhase.valueOf(rs.getString("phase").toUpperCase()),
+                rs.getLong("version")
+        );
+    }
+
     public record RunRow(
             String runId,
             String conversationId,
             String branchId,
             String turnId,
+            String parentRunId,
+            String rootRunId,
             String kind,
+            String purpose,
             RunPhase phase,
             long version
     ) {
+        public boolean root() {
+            return parentRunId == null;
+        }
     }
 
     public record RoundRow(
