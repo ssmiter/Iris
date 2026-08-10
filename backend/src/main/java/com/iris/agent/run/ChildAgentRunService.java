@@ -54,7 +54,14 @@ public class ChildAgentRunService {
             String task
     ) {
         ChildAssignment assignment = assignment(pipeline, task, step);
-        String runId = createInternal(
+        TaskLink taskLink = assignment.parentTask() == null
+                ? null
+                : new TaskLink(
+                        assignment.parentTask(),
+                        assignment.parentTaskStateVersion(),
+                        "delegate"
+                );
+        return createInternal(
                 pipeline,
                 invokingStepRunId,
                 step,
@@ -62,17 +69,9 @@ public class ChildAgentRunService {
                 assignment.resultContract(),
                 "isolated_" + assignment.workMode(),
                 false,
-                assignment.workMode()
+                assignment.workMode(),
+                taskLink
         );
-        if (assignment.parentTask() != null) {
-            tasks.linkRelatedRun(
-                    runId,
-                    assignment.parentTask(),
-                    "delegate",
-                    assignment.parentTaskStateVersion()
-            );
-        }
-        return runId;
     }
 
     private String createInternal(
@@ -83,7 +82,8 @@ public class ChildAgentRunService {
             String resultContract,
             String contextMode,
             boolean allowEmptyToolSurface,
-            String workMode
+            String workMode,
+            TaskLink taskLink
     ) {
         String normalizedTask = task == null ? "" : task.trim();
         if (normalizedTask.isBlank() || normalizedTask.length() > 50_000) {
@@ -175,8 +175,19 @@ public class ChildAgentRunService {
                     "run:" + pipeline.parentRunId(),
                     now
             );
+            if (taskLink != null) {
+                tasks.linkRelatedRun(
+                        runId,
+                        taskLink.task(),
+                        taskLink.relation(),
+                        taskLink.linkedStateVersion()
+                );
+            }
         });
         events.runStarted(runId);
+        if (taskLink != null) {
+            tasks.publishRelatedRunChange(runId);
+        }
         return runId;
     }
 
@@ -208,7 +219,8 @@ public class ChildAgentRunService {
                 step.resultContract(),
                 "isolated_model",
                 true,
-                "observe"
+                "observe",
+                null
         );
     }
 
@@ -347,5 +359,11 @@ public class ChildAgentRunService {
             String workMode,
             TaskSnapshot parentTask,
             int parentTaskStateVersion
+    ) { }
+
+    private record TaskLink(
+            TaskSnapshot task,
+            int linkedStateVersion,
+            String relation
     ) { }
 }

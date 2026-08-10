@@ -28,6 +28,10 @@ import java.util.regex.Pattern;
 @Service
 public class TaskLedgerService {
     private static final int MAX_CONTEXT_TASKS = 1;
+    private static final int MAX_TASK_ACTIVITIES = 8;
+    private static final int MAX_ACTIVITY_PURPOSE_CHARS = 240;
+    private static final int MAX_ACTIVITY_SUMMARY_CHARS = 480;
+    private static final int MAX_ACTIVITY_EVIDENCE_REFS = 8;
     private static final Pattern EVIDENCE_REF = Pattern.compile(
             "^evidence://(evidence_[a-f0-9]{32})$"
     );
@@ -436,6 +440,40 @@ public class TaskLedgerService {
     }
 
     /**
+     * Reprojects tasks related to a Run without mutating their immutable head.
+     * Used for user-visible background work pulses at start and terminal.
+     */
+    public void publishRelatedRunChange(String runId) {
+        jdbc.sql("""
+                SELECT DISTINCT head.task_id, head.conversation_id,
+                                head.branch_id
+                FROM agent_run_task_link link
+                JOIN agent_task_head head
+                  ON head.task_id = link.task_id
+                 AND head.branch_id = link.branch_id
+                WHERE link.run_id = :runId
+                  AND link.relation IN ('delegate', 'pipeline', 'state_agent')
+                """)
+                .param("runId", runId)
+                .query((rs, row) -> new TaskScope(
+                        rs.getString("task_id"),
+                        rs.getString("conversation_id"),
+                        rs.getString("branch_id")
+                ))
+                .list()
+                .forEach(scope -> find(
+                                scope.taskId(),
+                                scope.conversationId(),
+                                scope.branchId()
+                        )
+                        .ifPresent(task -> events.updated(
+                                task,
+                                toJson(task),
+                                runId
+                        )));
+    }
+
+    /**
      * Returns only an active head whose current state was written by this Run.
      * Older branch tasks must not turn an unrelated short conversation into a
      * readiness loop.
@@ -512,6 +550,7 @@ public class TaskLedgerService {
                     checkpointJson(snapshot.latestCheckpoint())
             );
         }
+        result.set("activities", activityJson(snapshot));
         result.put("updatedAt", snapshot.updatedAt().toString());
         return result;
     }
@@ -550,6 +589,138 @@ public class TaskLedgerService {
                 .list()
                 .forEach(relatedRuns::add);
         return result;
+    }
+
+    private ArrayNode activityJson(TaskSnapshot snapshot) {
+        ArrayNode activities = objectMapper.createArrayNode();
+        jdbc.sql("""
+                SELECT link.run_id, link.relation,
+                       link.linked_state_version,
+                       run.kind, run.purpose, run.phase, run.version,
+                       COALESCE(result.recorded_at, run.ended_at,
+                                link.updated_at) activity_updated_at,
+                       result.status result_status,
+                       result.summary_text, result.output_ref,
+                       result.evidence_refs_json,
+                       failure.code failure_code,
+                       failure.user_message failure_message,
+                       failure.recovery_action,
+                       failure.side_effect_outcome
+                FROM agent_run_task_link link
+                JOIN agent_run run ON run.run_id = link.run_id
+                LEFT JOIN agent_run_result result
+                  ON result.run_id = run.run_id
+                LEFT JOIN run_failure failure
+                  ON failure.failure_id = (
+                    SELECT candidate.failure_id
+                    FROM run_failure candidate
+                    WHERE candidate.run_id = run.run_id
+                    ORDER BY candidate.created_at DESC,
+                             candidate.failure_id DESC
+                    LIMIT 1
+                  )
+                WHERE link.task_id = :taskId
+                  AND link.branch_id = :branchId
+                  AND link.relation IN (
+                    'delegate', 'pipeline', 'state_agent'
+                  )
+                ORDER BY activity_updated_at DESC, link.run_id DESC
+                LIMIT :limit
+                """)
+                .param("taskId", snapshot.taskId())
+                .param("branchId", snapshot.branchId())
+                .param("limit", MAX_TASK_ACTIVITIES)
+                .query((rs, row) -> {
+                    ObjectNode activity = objectMapper.createObjectNode();
+                    activity.put("runId", rs.getString("run_id"));
+                    activity.put("relation", rs.getString("relation"));
+                    activity.put(
+                            "linkedStateVersion",
+                            rs.getInt("linked_state_version")
+                    );
+                    activity.put("kind", rs.getString("kind"));
+                    activity.put(
+                            "purpose",
+                            bounded(
+                                    rs.getString("purpose"),
+                                    MAX_ACTIVITY_PURPOSE_CHARS
+                            )
+                    );
+                    activity.put("phase", rs.getString("phase"));
+                    activity.put("runVersion", rs.getInt("version"));
+                    activity.put(
+                            "updatedAt",
+                            rs.getString("activity_updated_at")
+                    );
+                    String resultStatus = rs.getString("result_status");
+                    if (resultStatus != null) {
+                        activity.put("resultStatus", resultStatus);
+                    }
+                    String summary = rs.getString("summary_text");
+                    if (summary != null && !summary.isBlank()) {
+                        activity.put(
+                                "summary",
+                                bounded(summary, MAX_ACTIVITY_SUMMARY_CHARS)
+                        );
+                    }
+                    String outputRef = rs.getString("output_ref");
+                    if (outputRef != null && !outputRef.isBlank()) {
+                        activity.put("outputRef", outputRef);
+                    }
+                    String evidenceJson = rs.getString(
+                            "evidence_refs_json"
+                    );
+                    if (evidenceJson != null) {
+                        ArrayNode references = activity.putArray(
+                                "evidenceRefs"
+                        );
+                        ArrayNode stored = array(evidenceJson);
+                        for (int index = 0;
+                                index < Math.min(
+                                        stored.size(),
+                                        MAX_ACTIVITY_EVIDENCE_REFS
+                                ); index++) {
+                            references.add(stored.get(index).asText());
+                        }
+                    }
+                    String failureCode = rs.getString("failure_code");
+                    if (failureCode != null) {
+                        ObjectNode failure = activity.putObject("failure");
+                        failure.put("code", failureCode);
+                        failure.put(
+                                "message",
+                                bounded(
+                                        rs.getString("failure_message"),
+                                        MAX_ACTIVITY_SUMMARY_CHARS
+                                )
+                        );
+                        failure.put(
+                                "recoveryAction",
+                                bounded(
+                                        rs.getString("recovery_action"),
+                                        MAX_ACTIVITY_SUMMARY_CHARS
+                                )
+                        );
+                        failure.put(
+                                "sideEffectOutcome",
+                                rs.getString("side_effect_outcome")
+                        );
+                    }
+                    return activity;
+                })
+                .list()
+                .forEach(activities::add);
+        return activities;
+    }
+
+    private String bounded(String value, int maxChars) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.trim();
+        return normalized.length() <= maxChars
+                ? normalized
+                : normalized.substring(0, maxChars) + "…";
     }
 
     private Optional<TaskSnapshot> find(
@@ -922,6 +1093,13 @@ public class TaskLedgerService {
             String conversationId,
             String branchId,
             String requestMessageId
+    ) {
+    }
+
+    private record TaskScope(
+            String taskId,
+            String conversationId,
+            String branchId
     ) {
     }
 

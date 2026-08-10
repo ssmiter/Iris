@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ChevronDown,
   CircleAlert,
@@ -6,7 +6,7 @@ import {
   CircleDot,
   Pause,
 } from 'lucide-react'
-import type { TaskView } from '@/api/irisApi'
+import type { TaskActivityView, TaskView } from '@/api/irisApi'
 import { cn } from '@/lib/cn'
 
 interface TaskBlackboardProps {
@@ -32,6 +32,27 @@ function PhaseIcon({ phase }: { phase: TaskView['phase'] }) {
   return <CircleDot className={className} />
 }
 
+const terminalRunPhases = new Set([
+  'succeeded',
+  'failed',
+  'cancelled',
+])
+
+function activityState(
+  activity: TaskActivityView,
+  taskPhase: TaskView['phase'],
+) {
+  if (!terminalRunPhases.has(activity.phase)) {
+    return { label: '分头处理中', tone: 'text-info' }
+  }
+  if (activity.failure || activity.phase !== 'succeeded') {
+    return taskPhase === 'blocked'
+      ? { label: '卡点已确认', tone: 'text-warning' }
+      : { label: 'Iris 正在处理卡点', tone: 'text-warning' }
+  }
+  return { label: '结果已返回，等待核验', tone: 'text-success' }
+}
+
 export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
   const task = useMemo(
     () =>
@@ -44,13 +65,15 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0],
     [tasks],
   )
-  const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    setExpanded(task?.phase === 'blocked')
-  }, [task?.taskId, task?.phase])
+  const [disclosure, setDisclosure] = useState({
+    taskId: '',
+    expanded: false,
+  })
 
   if (!task) return null
+
+  const expanded = disclosure.taskId === task.taskId
+    && disclosure.expanded
 
   const completed = task.steps.filter(
     (step) => step.status === 'completed' || step.status === 'skipped',
@@ -65,6 +88,11 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
   const detailLabel = task.pendingDecisions.length > 0
     ? '需要确认'
     : '接下来'
+  const activities = task.activities ?? []
+  const latestActivity = activities[0]
+  const latestActivityState = latestActivity
+    ? activityState(latestActivity, task.phase)
+    : null
 
   return (
     <section
@@ -76,7 +104,10 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
           type="button"
           aria-expanded={expanded}
           className="group flex w-full items-center gap-2 rounded-sm px-1.5 py-2 text-left transition-colors duration-fast hover:bg-surface-muted/55 focus-visible:outline-none focus-visible:shadow-focus"
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => setDisclosure({
+            taskId: task.taskId,
+            expanded: !expanded,
+          })}
         >
           <span className={cn('flex items-center gap-1.5 text-caption font-medium', copy.tone)}>
             <PhaseIcon phase={task.phase} />
@@ -88,6 +119,14 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
           {task.pendingDecisions.length > 0 && (
             <span className="shrink-0 text-caption text-warning">
               {task.pendingDecisions.length} 项待确认
+            </span>
+          )}
+          {latestActivityState && task.pendingDecisions.length === 0 && (
+            <span className={cn(
+              'hidden shrink-0 text-caption sm:inline',
+              latestActivityState.tone,
+            )}>
+              {latestActivityState.label}
             </span>
           )}
           {progress && (
@@ -135,6 +174,40 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
                 <p className="mt-2 text-caption text-warning">
                   卡点：{task.blockers.join('；')}
                 </p>
+              )}
+              {activities.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-caption font-medium text-ink-muted">
+                    后台工作
+                  </p>
+                  <ul className="mt-1.5 space-y-2">
+                    {activities.slice(0, 3).map((activity) => {
+                      const state = activityState(activity, task.phase)
+                      const outcome = activity.failure?.message
+                        || activity.summary
+                      return (
+                        <li key={activity.runId} className="min-w-0">
+                          <div className="flex items-baseline gap-2 text-small">
+                            <span className={cn(
+                              'shrink-0 text-caption font-medium',
+                              state.tone,
+                            )}>
+                              {state.label}
+                            </span>
+                            <span className="min-w-0 truncate text-ink-subtle">
+                              {activity.purpose}
+                            </span>
+                          </div>
+                          {outcome && (
+                            <p className="mt-0.5 line-clamp-2 text-caption leading-relaxed text-ink-muted">
+                              {outcome}
+                            </p>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
           </div>

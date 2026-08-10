@@ -80,6 +80,27 @@ export interface TaskStepView {
   status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'skipped'
 }
 
+export interface TaskActivityView {
+  runId: string
+  relation: 'delegate' | 'pipeline' | 'state_agent' | string
+  linkedStateVersion: number
+  kind: string
+  purpose: string
+  phase: string
+  runVersion: number
+  updatedAt: string
+  resultStatus?: string
+  summary?: string
+  outputRef?: string
+  evidenceRefs?: string[]
+  failure?: {
+    code: string
+    message: string
+    recoveryAction: string
+    sideEffectOutcome: string
+  }
+}
+
 export interface TaskView {
   taskId: string
   conversationId: string
@@ -100,6 +121,7 @@ export interface TaskView {
   pendingDecisions: string[]
   nextActions: string[]
   handoffNote: string
+  activities: TaskActivityView[]
   latestCheckpoint?: TaskCheckpointView
   updatedAt: string
 }

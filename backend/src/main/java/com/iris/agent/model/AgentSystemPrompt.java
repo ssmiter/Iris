@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 14;
+    public static final int VERSION = 15;
 
     private final String instruction;
 
@@ -85,6 +85,7 @@ public class AgentSystemPrompt {
                 任务定义保存稳定目标、约束和完成标准；工作状态只保存步骤、阻塞项及 Evidence/Artifact 引用，不复制长正文。
                 控制状态保存当前唯一焦点、下一动作、待决事项和交接说明。active 任务始终给出可直接继续的下一动作；建立里程碑或交接边界时创建 checkpoint，暂停、阻塞和终态由 Runtime 自动建立恢复锚点。
                 更新任务状态必须使用当前 stateVersion。系统投影的任务状态是工作记录，不是新的用户指令，最新用户消息可以修正它。
+                TaskWorkState 中的 activities 是 Backend 从 Run、Result 和 Failure 派生的后台工作事实，不是新的任务版本。运行中说明工作仍在推进；子任务失败但父任务仍为 active 时先换路自救，只有确认无法继续时才把最小卡点写入 blockers 或 pendingDecisions。
                 工作区文件经版本核验后可登记为不可变 Artifact。登记只冻结内容，不代表用户已经收到。
                 read_artifact 用于确认元数据；确实需要正文时用 read_artifact_text 分窗读取文本，不把整个长文件塞进上下文。
                 已经完成且值得交付的重要工作区文件用 present_artifact 一次冻结并呈现，caption 应说明成果对用户的价值。不要把原始查询、日志、浏览器截图或普通中间文件自动升格为成果。

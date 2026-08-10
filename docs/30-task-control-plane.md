@@ -101,6 +101,20 @@ task identity + definition version + state version
 
 首次水合使用任务查询接口；SSE 只负责之后的增量时效。详细 Evidence、Artifact 和 Tool 输出仍按引用懒加载，避免任务黑板成为第二份大结果存储。
 
+### 6.1 Task Activity 是派生事实，不是第二份任务状态
+
+Pipeline 或子 Agent 开始、结束时，不为了“有动静”而推进 Task `stateVersion`。Backend 通过
+Run–Task Link 联结已有的 Run、Result 与 Failure，生成有界 `activities` 投影：正在处理什么、
+是否已经返回、若未完成具体卡在哪里以及建议怎样恢复。长结果仍只保留稳定引用。
+
+活动开始和终止都会追加同版本 `task.updated`，Frontend 允许同一 Task 版本刷新派生投影；
+Task Work State 仍只在目标、步骤、证据、稳定卡点或下一步真正变化时提交新版本。这样用户始终
+能看到三种产品状态之一：任务正常推进、Iris 正在自行解决问题、Iris 已确认无法继续并带着最小
+卡点清单请求协助，而不是看到沉默、堆栈或未经核验的“失败”。
+
+子 Agent 的终态只是父 Run 的 observation。它可以带回结论、证据引用和恢复建议，但不能直接
+完成或阻塞父任务；当前协调 Run 核验后，才决定推进 Task head、换路自救或请求用户。
+
 ## 7. 当前刻意不做
 
 - 不自动把每次对话变成长程任务；
