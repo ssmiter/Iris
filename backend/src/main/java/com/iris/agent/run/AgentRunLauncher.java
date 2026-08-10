@@ -102,6 +102,15 @@ public class AgentRunLauncher implements ApplicationRunner {
                         stopWakeup
                 );
         advance
+                .onErrorResume(error -> {
+                    log.warn(
+                            "Agentic Run {} could not self-recover; "
+                                    + "persisting a visible terminal failure",
+                            runId,
+                            error
+                    );
+                    return runs.failUnexpected(runId, error);
+                })
                 .doOnSuccess(result -> {
                     RunRoundRepository.RunRow completed = facts.findRun(runId)
                             .orElse(null);
@@ -116,7 +125,8 @@ public class AgentRunLauncher implements ApplicationRunner {
                     }
                 })
                 .doOnError(error -> log.error(
-                        "Agentic Run {} stopped unexpectedly",
+                        "Agentic Run {} failed before its terminal state "
+                                + "could be persisted",
                         runId,
                         error
                 ))

@@ -15,6 +15,7 @@ import com.iris.conversation.domain.ConversationViews.FailureView;
 import com.iris.conversation.infrastructure.SupplementRepository;
 import com.iris.conversation.infrastructure.TurnStopRepository;
 import com.iris.tools.core.ToolRuntime;
+import com.iris.storage.SqliteContention;
 import org.springframework.stereotype.Service;
 import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
@@ -136,6 +137,19 @@ public class AgenticRunCoordinator {
                         workspaceRoot,
                         cancelled
                 ));
+    }
+
+    /** Converts an escaped infrastructure fault into a durable Run terminal. */
+    public Mono<RunAdvance> failUnexpected(
+            String runId,
+            Throwable error
+    ) {
+        return failRun(
+                runId,
+                SqliteContention.isBusy(error)
+                        ? "runtime_storage_busy"
+                        : "run_unexpected_failure"
+        );
     }
 
     public Mono<RunAdvance> resume(
@@ -463,6 +477,17 @@ public class AgenticRunCoordinator {
             case "process_interrupted" -> {
                 category = "recovery";
                 message = "Iris 在模型响应期间被中断；半截回答已失效，历史没有丢失。";
+            }
+            case "runtime_storage_busy" -> {
+                category = "runtime_storage";
+                source = "sqlite";
+                recovery = "retry_same";
+                message = "本地任务存储持续繁忙；Iris 已停止这段运行并保留已有状态，可以从当前任务继续。";
+            }
+            case "run_unexpected_failure" -> {
+                category = "agent_kernel";
+                recovery = "retry_same";
+                message = "Iris 的运行内核遇到无法自行恢复的问题；已有步骤和结果已经保留，可以从当前任务继续。";
             }
             default -> {
                 if (code.startsWith("provider_")) {

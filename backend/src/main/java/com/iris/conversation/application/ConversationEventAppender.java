@@ -4,18 +4,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.iris.conversation.domain.ConversationEvent;
 import com.iris.conversation.infrastructure.ConversationEventHub;
 import com.iris.conversation.infrastructure.ConversationRepository;
+import com.iris.storage.SqliteContention;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Appends post-command projection events with a conversation-local sequence.
  */
 @Service
 public class ConversationEventAppender {
+    private static final int MAX_BUSY_RETRIES = 2;
     private final ConversationRepository repository;
     private final ConversationEventHub hub;
     private final ConversationLocks locks;
@@ -37,7 +40,21 @@ public class ConversationEventAppender {
     public ConversationEvent append(EventDraft draft) {
         ConversationEvent event = locks.withLock(
                 draft.conversationId(),
-                () -> transactions.execute(status -> {
+                () -> appendWithBusyRetry(draft)
+        );
+        if (event == null) {
+            throw new IllegalStateException(
+                    "Conversation event transaction returned no result"
+            );
+        }
+        hub.publish(List.of(event));
+        return event;
+    }
+
+    private ConversationEvent appendWithBusyRetry(EventDraft draft) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return transactions.execute(status -> {
                     long sequence = repository.nextEventSequence(
                             draft.conversationId()
                     );
@@ -67,15 +84,17 @@ public class ConversationEventAppender {
                             created.occurredAt()
                     );
                     return created;
-                })
-        );
-        if (event == null) {
-            throw new IllegalStateException(
-                    "Conversation event transaction returned no result"
-            );
+                });
+            } catch (RuntimeException exception) {
+                if (!SqliteContention.isBusy(exception)
+                        || attempt >= MAX_BUSY_RETRIES) {
+                    throw exception;
+                }
+                LockSupport.parkNanos(
+                        java.time.Duration.ofMillis(50L << attempt).toNanos()
+                );
+            }
         }
-        hub.publish(List.of(event));
-        return event;
     }
 
     private String id(String prefix) {

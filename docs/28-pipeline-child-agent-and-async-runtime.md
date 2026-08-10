@@ -152,6 +152,11 @@ WonWork 的 APS 写任务进一步说明了一种可复用但不应硬编码成�
 - 后台取消先写取消意图，再通知进程内句柄；已提交写动作仍走 verify/reconcile。
 - child Run 的部分成果与最终文本先持久化，再发送完成通知。
 - 父 Run、child Run 和 Pipeline Run 分别闭合；child 结束不能提前结算整个 Turn。
+- SQLite 使用 WAL 与有界 `busy_timeout` 吸收正常的短时写竞争；事件追加只对明确的
+  `SQLITE_BUSY` 做少量原地重试，不把普通并发抖动升级为 Agent 问题。
+- Launcher 捕获逃出 Agentic Coordinator 的大故障。有限自恢复后仍失败时，必须把 Run
+  终结为带用户说明和恢复建议的 durable Failure，让 child Result、Pipeline、Mailbox、
+  Task Activity 与 SSE 继续正常汇合；禁止只写日志并留下永久 `running` 的假象。
 
 ## 11. 近期实现顺序
 

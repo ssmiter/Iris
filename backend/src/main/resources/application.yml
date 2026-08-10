@@ -13,6 +13,11 @@ spring:
     hikari:
       maximum-pool-size: 4
       connection-timeout: 5000
+      data-source-properties:
+        busy_timeout: 5000
+        journal_mode: WAL
+        synchronous: NORMAL
+        foreign_keys: true
   sql:
     init:
       mode: always
