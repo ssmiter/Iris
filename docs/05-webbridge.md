@@ -137,6 +137,9 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 - **失败必须表达副作用边界**：元素已消失、已禁用、字段类型不支持等可在动作前确定的失败
   返回 `not_applied`；只有动作已经派发而后续确认中断时才返回 `outcome_unknown`。模型据此
   决定纠参还是先核对，不能把所有异常都当成“可能已经点击”。
+- Backend Connector 保留这一语义：daemon 的 4xx 表示本次请求在提交边界前被拒绝，进入
+  Tool Runtime 时标记为无操作效果；5xx、断连和动作派发后的验证失败仍保持 unknown，不能
+  因为 HTTP 封装丢掉客观事实。
 - **观察引用是水位线**：动作可以声明 `expectedObservationRef`；若页面已经变化，daemon
   返回 `not_applied`，模型重新观察，不在旧页面认知上盲目点击。
 - **动作身份不可重造**：Backend 传入 `toolExecutionId + actionAttemptId + idempotencyKey + expectedObservationRef`；daemon 返回 `applied / not_applied / outcome_unknown + evidenceRef`。响应丢失时只能查询同一动作结果，不能生成新 attempt 再点一次。
@@ -255,6 +258,9 @@ Windows 默认浏览器实现优先发现 Microsoft Edge，再回退到 Chrome/C
   重开会话或请求用户启动浏览器，而不是无限重试；
 - 页面正文、元素和截图受预算约束；完整大对象经 Tool Runtime 落 Managed Object Store，
   Frontend 默认只渲染摘要，需要时再按引用读取。
+- daemon 每个 Session 只保留最近 256 条动作幂等结果，足以覆盖响应丢失后的即时恢复，又
+  避免几百次动作把完整 Observation 常驻内存；Backend 的持久 ToolCall/Evidence 历史不受
+  该运行时窗口影响。
 
 本地开发时，daemon 和 Backend 使用同一个高熵 token，但分别从进程环境和被 Git 忽略
 的本机配置读取：

@@ -606,6 +606,10 @@ public class WebBridgeClient {
                                     + response.statusCode()
                     )
             );
+            if (response.statusCode() >= 400
+                    && response.statusCode() < 500) {
+                throw ToolRuntimeException.beforeCommit(code, message);
+            }
             throw new ToolRuntimeException(code, message);
         }
         return payload;

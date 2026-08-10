@@ -12,6 +12,7 @@ import {
 } from './observation.js'
 
 const sessions = new Map()
+const MAX_ACTION_RESULTS_PER_SESSION = 256
 let chrome = null
 let chromeLaunch = null
 
@@ -1673,6 +1674,10 @@ function storeActionResult(
     requestFingerprint,
     result,
   })
+  while (session.actionResults.size > MAX_ACTION_RESULTS_PER_SESSION) {
+    const oldestKey = session.actionResults.keys().next().value
+    session.actionResults.delete(oldestKey)
+  }
 }
 
 function equivalentUrl(actual, expected) {
