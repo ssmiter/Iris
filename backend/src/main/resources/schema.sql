@@ -1170,6 +1170,114 @@ CREATE TABLE IF NOT EXISTS tool_user_input_request (
     FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
 );
 
+-- User-managed Skills are immutable definitions with one mutable head. A
+-- disabled head disappears from the live Catalog while historical versions
+-- remain addressable through capability_definition.
+CREATE TABLE IF NOT EXISTS skill_definition (
+    skill_id TEXT NOT NULL,
+    definition_version INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    capability_path TEXT NOT NULL,
+    description TEXT NOT NULL,
+    when_to_use TEXT NOT NULL,
+    instructions_object_ref TEXT NOT NULL,
+    instructions_content_hash TEXT NOT NULL,
+    dependencies_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (skill_id, definition_version),
+    UNIQUE (capability_path, definition_version)
+);
+
+CREATE TABLE IF NOT EXISTS skill_head (
+    skill_id TEXT PRIMARY KEY,
+    definition_version INTEGER NOT NULL,
+    lifecycle_status TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (skill_id, definition_version)
+        REFERENCES skill_definition(skill_id, definition_version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_head_active_name
+    ON skill_head(skill_id, lifecycle_status);
+
+-- MCP server configuration is management-plane state. Credentials never
+-- enter SQLite: authorization_env only names an environment variable. The
+-- discovered tool snapshot is replaceable runtime state; immutable
+-- capability_definition rows retain the definitions used by past runs.
+CREATE TABLE IF NOT EXISTS mcp_server (
+    server_id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    authorization_env TEXT,
+    enabled INTEGER NOT NULL,
+    connection_state TEXT NOT NULL,
+    protocol_version TEXT,
+    remote_server_name TEXT,
+    remote_server_version TEXT,
+    instructions TEXT,
+    tool_count INTEGER NOT NULL,
+    last_error TEXT,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    checked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mcp_server_tool (
+    server_id TEXT NOT NULL,
+    remote_name TEXT NOT NULL,
+    local_name TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    capability_path TEXT NOT NULL,
+    description TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    manifest_hash TEXT NOT NULL,
+    active INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (server_id, remote_name),
+    UNIQUE (local_name),
+    FOREIGN KEY (server_id) REFERENCES mcp_server(server_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_server_tool_active
+    ON mcp_server_tool(server_id, active, local_name);
+
+-- Personal memories are versioned facts, not Capability definitions. Their
+-- operating tools live in /personal/memory and enter the normal ToolRuntime.
+CREATE TABLE IF NOT EXISTS personal_memory_definition (
+    memory_id TEXT NOT NULL,
+    definition_version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content_object_ref TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_ref TEXT,
+    confidence REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (memory_id, definition_version)
+);
+
+CREATE TABLE IF NOT EXISTS personal_memory_head (
+    memory_id TEXT PRIMARY KEY,
+    definition_version INTEGER NOT NULL,
+    lifecycle_status TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (memory_id, definition_version)
+        REFERENCES personal_memory_definition(memory_id, definition_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_personal_memory_head_status
+    ON personal_memory_head(lifecycle_status, updated_at);
+
 CREATE INDEX IF NOT EXISTS idx_tool_user_input_waiting
     ON tool_user_input_request(status, expires_at);
 

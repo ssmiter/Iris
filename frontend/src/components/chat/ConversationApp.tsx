@@ -20,6 +20,7 @@ import {
 } from '@/api/irisApi'
 import { ConversationShell } from '@/components/layout'
 import { Badge, Button, ToastHost, notify } from '@/components/ui'
+import { CapabilityCenter } from '@/components/capabilities'
 import type {
   AttentionAction,
   AttentionNode,
@@ -708,6 +709,7 @@ export function ConversationApp() {
                 整理上下文
               </Button>
             )}
+          <CapabilityCenter />
           <Button
             variant="ghost"
             size="icon"

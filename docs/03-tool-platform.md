@@ -178,6 +178,28 @@ MES 样例优先保留能组成“需求 → 排程 → 发布 → 执行 → �
   `capabilityId + definitionVersion`；
 - `CapabilityDirectoryCatalog` 允许语义目录先于具体 Tool 存在；空目录必须带人话说明并
   返回 `capabilityCount=0`，它只是地图，不产生可调用 Definition，也不能被调用；
+
+### 4.4 动态来源：Skill、MCP 与记忆
+
+Capability Catalog 是动态多来源投影，不再假定进程启动时已经知道全部能力。每个来源都提供稳定 Definition、当前 binding availability 和刷新版本；Catalog 在读取/搜索时组合当前快照，而不是把启动时列表永久缓存。
+
+- **Skill** 是 `kind=skill` 的版本化工艺定义：声明适用情境、步骤骨架、依赖能力、验证方法和失败边界。`read_capability` 读取正文后，它作为普通 observation 指导当前 Agent；Skill 本身不冒充 Tool，也没有直接执行入口。草稿、启用、停用与版本升级由 Backend 管理，前端只编辑和展示这些事实。
+- **MCP Server** 是 Connector 配置，不是 Capability。连接成功后，`tools/list` 返回的每个远程 Tool 经 Iris 校验、命名空间化并映射为 `kind=tool` 的 Capability；调用仍进入唯一 Tool Runtime，再由 MCP adapter 执行 `tools/call`。Server 离线时 Definition 历史保留，binding availability 变为 unavailable，不能静默删除或换绑。
+- **记忆对象** 是带来源、作用域、置信边界和版本的用户事实，不是 Capability。`search/read/propose/update/forget` 等记忆操作才是可发现能力；进入模型上下文的是有预算、有来源的候选投影，而不是把全部记忆或管理页内容塞进系统提示词。
+
+动态 Tool 仍必须满足完整 Manifest。MCP 未声明安全注解时按有外部副作用处理；`readOnlyHint` 只能降低到只读候选，Iris Runtime 仍以实际 Manifest、审批与 verification 为准。认证信息只保存安全引用（例如环境变量名），不把 token 写入 SQLite、日志、Capability Definition 或前端响应。
+
+首个实现切面遵守以下运行时约束：
+
+- Skill 使用不可变 Definition + 可变 Head；启用后才投影到 `/skills/**`，更新产生新版本，停用只撤出当前 Catalog，不删除历史；
+- MCP 首版实现 Streamable HTTP。Server 状态区分 `pending / connecting / connected / needs_auth / failed / disabled`；连接成功后整组工具原子替换，工具原名与 Iris 规范化名同时持久化，停用或连接失败会撤销 live binding，不能留下仍可发现但无法调用的幽灵工具；
+- MCP 未声明 `readOnlyHint=true` 的 Tool 默认视为外部写入并等待审批，`destructiveHint=true` 进一步提升风险；远端调用不做不透明自动重试，避免在结果未知时重复写入；
+- 记忆使用不可变 Definition + 可变 Head，保存正文、来源、作用域和置信度。`search_memories` 复用词法与语义向量融合，只返回有界候选和摘要；`read_memory` 才读取精确正文；`remember_memory / forget_memory` 改变个人状态，因此进入审批与验证闭环；
+- 前端管理面是生命周期控制台，不是文件管理器：展示适用条件、来源、连接健康度和当前暴露工具；开关使用版本号乐观并发，服务端失败时回滚视觉状态。
+
+管理 API 首版为 `/api/v1/skills`、`/api/v1/mcp/servers` 与 `/api/v1/memories`。它们只负责管理面；Agent 不通过 Controller 绕过 Catalog 或 Tool Runtime 执行动作。
+
+管理面只提供三类动作：维护版本化 Definition、维护 Connector 配置、查看运行状态。它不能直接调用 executor，也不能用“已启用”代替当前 availability。任何页面变更都应立即反映到同一 Catalog；Agent 和用户看到的是同一事实源。
 - 样例中的企业、数据库、表、存储过程、物料、设备、人员和真实质量口径全部被替换；
   SQLite 只保存可公开理解的模拟制造数据，不能反推出参考系统；
 - 全部样例能力共用一套数据模型、参数归一化、查询网关和只读工具生命周期；薄的领域

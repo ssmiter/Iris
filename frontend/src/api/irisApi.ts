@@ -75,6 +75,203 @@ export class IrisApiError extends Error {
   }
 }
 
+export interface SkillView {
+  skillId: string
+  definitionVersion: number
+  headVersion: number
+  name: string
+  title: string
+  capabilityPath: string
+  description: string
+  whenToUse: string
+  instructions: string
+  instructionsContentHash: string
+  dependencies: string[]
+  enabled: boolean
+  lifecycleStatus: string
+  updatedAt: string
+}
+
+export interface SkillDraft {
+  name: string
+  title: string
+  capabilityPath?: string
+  description: string
+  whenToUse: string
+  instructions: string
+  dependencies: string[]
+  enabled: boolean
+}
+
+export interface McpServerView {
+  serverId: string
+  slug: string
+  displayName: string
+  transport: string
+  endpoint: string
+  authorizationEnv: string | null
+  enabled: boolean
+  connectionState:
+    | 'connected'
+    | 'connecting'
+    | 'pending'
+    | 'needs_auth'
+    | 'failed'
+    | 'disabled'
+  protocolVersion: string | null
+  remoteServerName: string | null
+  remoteServerVersion: string | null
+  instructions: string | null
+  toolCount: number
+  lastError: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  checkedAt: string | null
+}
+
+export interface McpServerDraft {
+  slug: string
+  displayName: string
+  endpoint: string
+  authorizationEnv?: string
+  enabled: boolean
+}
+
+export interface McpToolView {
+  remoteName: string
+  localName: string
+  capabilityPath: string
+  description: string
+  riskLevel: string
+  manifestHash: string
+}
+
+export interface MemorySummary {
+  memoryId: string
+  definitionVersion: number
+  headVersion: number
+  title: string
+  preview: string
+  scope: string
+  sourceKind: string
+  sourceRef: string | null
+  confidence: number
+  enabled: boolean
+  lifecycleStatus: string
+  updatedAt: string
+}
+
+export interface MemoryView extends Omit<MemorySummary, 'preview'> {
+  content: string
+  contentHash: string
+}
+
+export interface MemoryDraft {
+  title: string
+  content: string
+  scope: string
+  sourceKind: string
+  sourceRef?: string
+  confidence: number
+  enabled: boolean
+}
+
+export const capabilityManagementApi = {
+  listSkills: () => requestJson<SkillView[]>('/api/v1/skills'),
+  createSkill: (definition: SkillDraft) =>
+    requestJson<SkillView>('/api/v1/skills', {
+      method: 'POST',
+      body: JSON.stringify(definition),
+    }),
+  updateSkill: (skill: SkillView, definition: SkillDraft) =>
+    requestJson<SkillView>(`/api/v1/skills/${encodeURIComponent(skill.skillId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        expectedHeadVersion: skill.headVersion,
+        definition,
+      }),
+    }),
+  setSkillEnabled: (skill: SkillView, enabled: boolean) =>
+    requestJson<SkillView>(
+      `/api/v1/skills/${encodeURIComponent(skill.skillId)}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          expectedHeadVersion: skill.headVersion,
+          enabled,
+        }),
+      },
+    ),
+  listMcpServers: () =>
+    requestJson<McpServerView[]>('/api/v1/mcp/servers'),
+  createMcpServer: (definition: McpServerDraft) =>
+    requestJson<McpServerView>('/api/v1/mcp/servers', {
+      method: 'POST',
+      body: JSON.stringify(definition),
+    }),
+  updateMcpServer: (server: McpServerView, definition: McpServerDraft) =>
+    requestJson<McpServerView>(
+      `/api/v1/mcp/servers/${encodeURIComponent(server.serverId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          expectedVersion: server.version,
+          definition,
+        }),
+      },
+    ),
+  setMcpServerEnabled: (server: McpServerView, enabled: boolean) =>
+    requestJson<McpServerView>(
+      `/api/v1/mcp/servers/${encodeURIComponent(server.serverId)}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ expectedVersion: server.version, enabled }),
+      },
+    ),
+  refreshMcpServer: (serverId: string) =>
+    requestJson<McpServerView>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
+      { method: 'POST' },
+    ),
+  listMcpTools: (serverId: string) =>
+    requestJson<McpToolView[]>(
+      `/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`,
+    ),
+  listMemories: () => requestJson<MemorySummary[]>('/api/v1/memories'),
+  readMemory: (memoryId: string) =>
+    requestJson<MemoryView>(
+      `/api/v1/memories/${encodeURIComponent(memoryId)}`,
+    ),
+  createMemory: (definition: MemoryDraft) =>
+    requestJson<MemoryView>('/api/v1/memories', {
+      method: 'POST',
+      body: JSON.stringify(definition),
+    }),
+  updateMemory: (memory: MemorySummary, definition: MemoryDraft) =>
+    requestJson<MemoryView>(
+      `/api/v1/memories/${encodeURIComponent(memory.memoryId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          expectedHeadVersion: memory.headVersion,
+          definition,
+        }),
+      },
+    ),
+  setMemoryEnabled: (memory: MemorySummary, enabled: boolean) =>
+    requestJson<MemoryView>(
+      `/api/v1/memories/${encodeURIComponent(memory.memoryId)}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          expectedHeadVersion: memory.headVersion,
+          enabled,
+        }),
+      },
+    ),
+}
+
 export interface ArtifactPreviewView {
   artifactId: string
   artifactRef: string

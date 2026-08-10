@@ -8,6 +8,7 @@ import com.iris.tools.core.CapabilityAvailabilityService;
 import com.iris.tools.catalog.CapabilityDirectoryCatalog.DirectoryDefinition;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
+import com.iris.tools.catalog.CapabilityCatalogSource.Definition;
 import com.iris.retrieval.HybridRetrievalEngine;
 import org.springframework.stereotype.Service;
 
@@ -44,29 +45,44 @@ public class CapabilityService {
     private final CapabilityDirectoryCatalog directoryCatalog;
     private final PipelineDefinitionRegistry pipelines;
     private final HybridRetrievalEngine retrieval;
-    private final List<CatalogDocument> searchDocuments;
+    private final List<CapabilityCatalogSource> extensionSources;
 
     public CapabilityService(
             ToolRegistry registry,
             CapabilityAvailabilityService availability,
             CapabilityDirectoryCatalog directoryCatalog,
             PipelineDefinitionRegistry pipelines,
-            HybridRetrievalEngine retrieval
+            HybridRetrievalEngine retrieval,
+            List<CapabilityCatalogSource> extensionSources
     ) {
         this.registry = registry;
         this.availability = availability;
         this.directoryCatalog = directoryCatalog;
         this.pipelines = pipelines;
         this.retrieval = retrieval;
-        this.searchDocuments = java.util.stream.Stream.concat(
+        this.extensionSources = List.copyOf(extensionSources);
+    }
+
+    private List<CatalogDocument> searchDocuments() {
+        return java.util.stream.Stream.concat(
                 registry.all().stream()
                 .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
                         binding.manifest().name()
                 ))
                 .map(this::document),
-                pipelines.all().stream().map(this::document)
+                java.util.stream.Stream.concat(
+                        pipelines.all().stream().map(this::document),
+                        extensionDefinitions().stream().map(this::document)
+                )
         )
                 .sorted(Comparator.comparing(CatalogDocument::path))
+                .toList();
+    }
+
+    private List<Definition> extensionDefinitions() {
+        return extensionSources.stream()
+                .flatMap(source -> source.definitions().stream())
+                .sorted(Comparator.comparing(Definition::path))
                 .toList();
     }
 
@@ -99,6 +115,17 @@ public class CapabilityService {
             for (String seg : segs) {
                 cur.append('/').append(seg);
                 counts.merge(cur.toString(), 1, Integer::sum);
+            }
+        }
+        for (Definition definition : extensionDefinitions()) {
+            if (!DomainCatalog.visible(systemCode, definition.path())) {
+                continue;
+            }
+            String[] segments = definition.path().substring(1).split("/");
+            StringBuilder current = new StringBuilder();
+            for (String segment : segments) {
+                current.append('/').append(segment);
+                counts.merge(current.toString(), 1, Integer::sum);
             }
         }
         for (DirectoryDefinition directory : directoryCatalog.all()) {
@@ -151,6 +178,24 @@ public class CapabilityService {
                 );
             } else {
                 items.add(card(binding));
+            }
+        }
+        for (Definition definition : extensionDefinitions()) {
+            String path = definition.path();
+            if (!DomainCatalog.visible(systemCode, path)
+                    || !path.startsWith(prefix)) {
+                continue;
+            }
+            String remainder = path.substring(prefix.length());
+            int slash = remainder.indexOf('/');
+            if (slash >= 0) {
+                directories.merge(
+                        prefix + remainder.substring(0, slash),
+                        1,
+                        Integer::sum
+                );
+            } else {
+                items.add(card(definition));
             }
         }
         for (DirectoryDefinition directory : directoryCatalog.all()) {
@@ -216,7 +261,7 @@ public class CapabilityService {
                 caseSensitive
         );
         Pattern globPattern = compileGlob(glob);
-        List<CatalogDocument> candidates = searchDocuments.stream()
+        List<CatalogDocument> candidates = searchDocuments().stream()
                 .filter(document -> DomainCatalog.visible(
                         systemCode,
                         document.path()
@@ -323,6 +368,20 @@ public class CapabilityService {
                 ));
     }
 
+    public Optional<Definition> readExtension(
+            String capabilityPath,
+            String systemCode
+    ) {
+        String path = normalizePath(capabilityPath);
+        if (!DomainCatalog.visible(systemCode, path)) {
+            return Optional.empty();
+        }
+        return extensionSources.stream()
+                .map(source -> source.findByPath(path))
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+
     public CapabilityAvailability availability(ToolBinding binding) {
         return availability.current(binding);
     }
@@ -413,8 +472,10 @@ public class CapabilityService {
         CatalogDocument document = ranked.document();
         CapabilityAvailability current = document.binding() == null
                 ? new CapabilityAvailability(
-                        CapabilityAvailability.Status.AVAILABLE,
-                        "本地 Pipeline Definition 已注册",
+                        CapabilityAvailability.Status.valueOf(
+                                document.availability().toUpperCase(Locale.ROOT)
+                        ),
+                        document.availabilityReason(),
                         java.time.Instant.now()
                 )
                 : availability.current(document.binding());
@@ -454,7 +515,9 @@ public class CapabilityService {
                 String.join(" ", parameters),
                 metadata,
                 binding.manifest().riskLevel()
-                        .name().toLowerCase(Locale.ROOT)
+                        .name().toLowerCase(Locale.ROOT),
+                null,
+                null
         );
     }
 
@@ -473,7 +536,35 @@ public class CapabilityService {
                 String.join(" ", parameters),
                 definition.id() + " " + definition.version()
                         + " pipeline",
-                "standard"
+                "standard",
+                "available",
+                "本地 Pipeline Definition 已注册"
+        );
+    }
+
+    private CatalogDocument document(Definition definition) {
+        List<String> parameters = new ArrayList<>();
+        definition.manifest().path("inputSchema").path("properties")
+                .fieldNames().forEachRemaining(parameters::add);
+        parameters.sort(String::compareTo);
+        String extensionMetadata = String.join(" ",
+                definition.manifest().path("title").asText(""),
+                definition.manifest().path("whenToUse").asText(""),
+                definition.manifest().path("dependencies").toString()
+        );
+        return new CatalogDocument(
+                null,
+                definition.kind(),
+                definition.path(),
+                definition.name(),
+                definition.description(),
+                String.join(" ", parameters),
+                definition.id() + " " + definition.version()
+                        + " " + definition.kind()
+                        + " " + extensionMetadata,
+                definition.riskLevel(),
+                definition.availability(),
+                definition.availabilityReason()
         );
     }
 
@@ -641,6 +732,20 @@ public class CapabilityService {
         );
     }
 
+    private CapabilityCard card(Definition definition) {
+        return new CapabilityCard(
+                definition.id(),
+                definition.version(),
+                definition.kind(),
+                definition.name(),
+                definition.path(),
+                definition.description(),
+                definition.riskLevel(),
+                definition.availability(),
+                definition.availabilityReason()
+        );
+    }
+
     private DirectoryCard directoryCard(String path, int count) {
         Optional<DirectoryDefinition> definition =
                 directoryCatalog.find(path);
@@ -773,7 +878,9 @@ public class CapabilityService {
             String description,
             String parameterNames,
             String metadata,
-            String riskLevel
+            String riskLevel,
+            String availability,
+            String availabilityReason
     ) {
     }
 

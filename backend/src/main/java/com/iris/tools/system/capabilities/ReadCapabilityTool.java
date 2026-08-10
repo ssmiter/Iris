@@ -15,6 +15,7 @@ import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.VerificationResult;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
+import com.iris.tools.catalog.CapabilityCatalogSource.Definition;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -84,10 +85,16 @@ public class ReadCapabilityTool implements Tool {
         if (binding == null) {
             Binding pipeline = capabilities.getObject()
                     .readPipeline(path, "personal")
+                    .orElse(null);
+            if (pipeline != null) {
+                return ToolOutcome.succeeded(pipelineDefinition(pipeline));
+            }
+            Definition extension = capabilities.getObject()
+                    .readExtension(path, "personal")
                     .orElseThrow(() -> new IllegalArgumentException(
                             "找不到能力 " + path
                     ));
-            return ToolOutcome.succeeded(pipelineDefinition(pipeline));
+            return ToolOutcome.succeeded(extensionDefinition(extension));
         }
         ObjectNode output = objectMapper.createObjectNode();
         output.put("kind", "tool");
@@ -136,6 +143,24 @@ public class ReadCapabilityTool implements Tool {
         return output;
     }
 
+    private ObjectNode extensionDefinition(Definition definition) {
+        ObjectNode output = objectMapper.createObjectNode();
+        output.put("kind", definition.kind());
+        output.put("path", definition.path());
+        output.put("manifestHash", definition.manifestHash());
+        ObjectNode availability = output.putObject("availability");
+        availability.put("status", definition.availability());
+        availability.put("reason", definition.availabilityReason());
+        output.set("manifest", definition.manifest());
+        ObjectNode usage = output.putObject("usage");
+        usage.put(
+                "instruction",
+                "这是按需读取的版本化 " + definition.kind()
+                        + " 定义；把正文作为工艺或连接信息使用，不要把它当成已执行的 Tool"
+        );
+        return output;
+    }
+
     @Override
     public VerificationResult verify(
             ToolOutcome outcome,
@@ -170,7 +195,7 @@ public class ReadCapabilityTool implements Tool {
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("kind")
                 .put("type", "string")
-                .put("description", "能力定义类型：tool 或 pipeline");
+                .put("description", "能力定义类型：tool、pipeline、skill 等");
         properties.putObject("path")
                 .put("type", "string")
                 .put("description", "精确能力路径");
