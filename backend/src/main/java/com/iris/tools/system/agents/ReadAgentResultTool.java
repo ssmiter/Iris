@@ -122,6 +122,8 @@ public class ReadAgentResultTool implements Tool {
         if (result.outputRef() != null) {
             output.put("outputRef", result.outputRef());
         }
+        var evidenceRefs = output.putArray("evidenceRefs");
+        result.evidenceRefs().forEach(evidenceRefs::add);
         return ToolOutcome.succeeded(output);
     }
 
@@ -188,6 +190,10 @@ public class ReadAgentResultTool implements Tool {
         properties.putObject("hasMore").put("type", "boolean");
         properties.putObject("text").put("type", "string");
         properties.putObject("outputRef").put("type", "string");
+        properties.putObject("evidenceRefs")
+                .put("type", "array")
+                .putObject("items")
+                .put("type", "string");
         return schema;
     }
 }

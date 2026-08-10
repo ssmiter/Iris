@@ -20,12 +20,34 @@ public class DelegatedTaskPipeline implements PipelineDefinitionProvider {
         ObjectNode input = objectMapper.createObjectNode();
         input.put("type", "object");
         input.put("additionalProperties", false);
-        input.putObject("properties")
-                .putObject("task")
+        ObjectNode inputProperties = input.putObject("properties");
+        inputProperties.putObject("task")
                 .put("type", "string")
                 .put("description", "交给隔离子 Agent 的自包含任务")
                 .put("minLength", 1)
                 .put("maxLength", 12_000);
+        inputProperties.putObject("context")
+                .put("type", "string")
+                .put("description", "完成判断必需的背景、已排除方向和稳定引用；不复制整段父对话")
+                .put("maxLength", 8_000);
+        inputProperties.putObject("deliverable")
+                .put("type", "string")
+                .put("description", "期望交付物与验收标准；省略时返回有界结论、证据和未决项")
+                .put("maxLength", 4_000);
+        inputProperties.putObject("constraints")
+                .put("type", "array")
+                .put("description", "子任务必须遵守的职责边界和限制")
+                .put("maxItems", 12)
+                .putObject("items")
+                .put("type", "string")
+                .put("minLength", 1)
+                .put("maxLength", 1_000);
+        inputProperties.putObject("work_mode")
+                .put("type", "string")
+                .put("description", "observe 只能观察；workspace 才可在工作区内产生变更")
+                .putArray("enum")
+                .add("observe")
+                .add("workspace");
         input.putArray("required").add("task");
 
         ObjectNode output = objectMapper.createObjectNode();
@@ -38,10 +60,21 @@ public class DelegatedTaskPipeline implements PipelineDefinitionProvider {
         outputProperties.putObject("summary")
                 .put("type", "string")
                 .put("description", "子 Agent 的有界最终结论");
+        outputProperties.putObject("status")
+                .put("type", "string")
+                .put("description", "子 Agent 的终态");
+        outputProperties.putObject("outputRef")
+                .put("type", "string")
+                .put("description", "需要继续读取时使用的稳定结果引用");
+        outputProperties.putObject("evidenceRefs")
+                .put("type", "array")
+                .put("description", "从真实工具验证事实汇集的证据引用")
+                .putObject("items")
+                .put("type", "string");
 
         return new PipelineDefinition(
                 "iris.pipeline.delegated_task",
-                "1",
+                "2",
                 "delegated_task",
                 "/system/agents/delegated_task",
                 "把一个可独立完成的明确子目标交给隔离的 Agentic child Run；适合并行探索、资料整理和不依赖父级隐式上下文的工作",

@@ -55,6 +55,25 @@ public sealed interface ModelInputItem {
     ) implements ModelInputItem {
     }
 
+    /** Active isolated Runs projected from durable lifecycle facts. */
+    record AgentRunState(
+            java.util.List<AgentRunStatus> runs
+    ) implements ModelInputItem {
+        public AgentRunState {
+            runs = java.util.List.copyOf(runs);
+        }
+    }
+
+    record AgentRunStatus(
+            String runId,
+            String pipelineRunId,
+            String phase,
+            String workMode,
+            String taskSummary,
+            String startedAt
+    ) {
+    }
+
     /**
      * Current limitations of executable but degraded capabilities in the
      * resident provider surface. The immutable Tool Definition remains unchanged.

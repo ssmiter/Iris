@@ -99,6 +99,47 @@ public class AgentRunContextRepository {
                 .optional();
     }
 
+    public List<ActiveRun> activeForBranch(
+            String conversationId,
+            String branchId,
+            String excludingRunId,
+            int limit
+    ) {
+        if (limit < 1 || limit > 32) {
+            throw new IllegalArgumentException(
+                    "Active Agent Run limit must be between 1 and 32"
+            );
+        }
+        return jdbc.sql("""
+                SELECT run.run_id, run.parent_run_id, run.phase,
+                       context.context_mode, context.task_text,
+                       run.started_at
+                FROM agent_run run
+                JOIN agent_run_context context
+                  ON context.run_id = run.run_id
+                WHERE run.conversation_id = :conversationId
+                  AND run.branch_id = :branchId
+                  AND run.run_id <> :excludingRunId
+                  AND run.phase IN ('running', 'suspended')
+                  AND context.context_mode <> 'isolated_model'
+                ORDER BY run.started_at, run.run_id
+                LIMIT :limit
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .param("excludingRunId", excludingRunId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> new ActiveRun(
+                        rs.getString("run_id"),
+                        rs.getString("parent_run_id"),
+                        rs.getString("phase"),
+                        rs.getString("context_mode"),
+                        rs.getString("task_text"),
+                        Instant.parse(rs.getString("started_at"))
+                ))
+                .list();
+    }
+
     private String write(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -138,5 +179,18 @@ public class AgentRunContextRepository {
         public boolean modelTransform() {
             return "isolated_model".equals(contextMode);
         }
+
+        public boolean externalWritesAllowed() {
+            return "isolated_workspace".equals(contextMode);
+        }
     }
+
+    public record ActiveRun(
+            String runId,
+            String parentRunId,
+            String phase,
+            String contextMode,
+            String task,
+            Instant startedAt
+    ) { }
 }

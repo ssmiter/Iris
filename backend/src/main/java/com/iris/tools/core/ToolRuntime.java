@@ -228,6 +228,17 @@ public class ToolRuntime {
                     return result(executionId);
                 }
             }
+            if (!boundedContext.externalWritesAllowed()
+                    && binding.manifest().sideEffect() != SideEffect.NONE) {
+                completeFailure(
+                        executionId,
+                        ToolOutcome.Kind.FAILED,
+                        "agent_work_mode_read_only",
+                        "这个隔离子任务以 observe 模式运行，不能改变工作区、Iris 控制状态或外部系统",
+                        List.of()
+                );
+                return result(executionId);
+            }
             CapabilityAvailability currentAvailability =
                     availability.current(binding);
             if (!currentAvailability.executable()) {
@@ -1559,6 +1570,11 @@ public class ToolRuntime {
         @Override
         public boolean deadlineExceeded() {
             return !clock.instant().isBefore(deadline);
+        }
+
+        @Override
+        public boolean externalWritesAllowed() {
+            return delegate.externalWritesAllowed();
         }
     }
 }

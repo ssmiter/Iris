@@ -29,4 +29,13 @@ public interface ToolContext {
     default boolean deadlineExceeded() {
         return false;
     }
+
+    /**
+     * Whether this Run may cross an external or workspace mutation boundary.
+     * Root Runs and trusted host orchestration allow it by default; isolated
+     * observe Agents explicitly narrow it in their durable Run context.
+     */
+    default boolean externalWritesAllowed() {
+        return true;
+    }
 }

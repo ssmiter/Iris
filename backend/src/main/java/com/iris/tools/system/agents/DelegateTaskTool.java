@@ -41,7 +41,7 @@ public class DelegateTaskTool implements Tool {
         this.runs = runs;
         this.manifest = new ToolManifest(
                 "iris.system.agents.delegate_task",
-                "1",
+                "2",
                 "delegate_task",
                 "把一个不依赖当前隐式思考、可以独立完成的明确子目标交给后台子 Agent；立即返回稳定 Run 标识，完成或失败后自动向父 Run 发送有界结果通知",
                 inputSchema(),
@@ -73,6 +73,33 @@ public class DelegateTaskTool implements Tool {
         }
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("task", task);
+        copyOptionalText(input, normalized, "context", 8_000);
+        copyOptionalText(input, normalized, "deliverable", 4_000);
+        String workMode = input.path("work_mode").asText("observe").trim();
+        if (!"observe".equals(workMode) && !"workspace".equals(workMode)) {
+            throw new IllegalArgumentException(
+                    "work_mode must be observe or workspace"
+            );
+        }
+        normalized.put("work_mode", workMode);
+        if (input.has("constraints")) {
+            if (!input.path("constraints").isArray()
+                    || input.path("constraints").size() > 12) {
+                throw new IllegalArgumentException(
+                        "constraints must be an array with at most 12 items"
+                );
+            }
+            var constraints = normalized.putArray("constraints");
+            for (JsonNode item : input.path("constraints")) {
+                String value = item.asText("").trim();
+                if (value.isBlank() || value.length() > 1_000) {
+                    throw new IllegalArgumentException(
+                            "each constraint must contain 1 to 1000 characters"
+                    );
+                }
+                constraints.add(value);
+            }
+        }
         return new PreparedOperation(
                 normalized,
                 "创建一个隔离后台子任务；它只改变 Iris 内部运行状态，真实写动作仍由子 Agent 的 Tool Runtime 单独审批",
@@ -149,13 +176,57 @@ public class DelegateTaskTool implements Tool {
         ObjectNode schema = objectMapper.createObjectNode();
         schema.put("type", "object");
         schema.put("additionalProperties", false);
-        schema.putObject("properties").putObject("task")
+        ObjectNode properties = schema.putObject("properties");
+        properties.putObject("task")
                 .put("type", "string")
                 .put("description", "无需父 Agent 隐式思考即可理解的自包含任务；应写清目标、范围和期望结果")
                 .put("minLength", 1)
                 .put("maxLength", 12_000);
+        properties.putObject("context")
+                .put("type", "string")
+                .put("description", "完成判断必需的背景、已排除方向和稳定引用；不要复制整段父对话")
+                .put("maxLength", 8_000);
+        properties.putObject("deliverable")
+                .put("type", "string")
+                .put("description", "期望交付物和验收标准")
+                .put("maxLength", 4_000);
+        properties.putObject("constraints")
+                .put("type", "array")
+                .put("description", "子任务必须遵守的职责边界和限制")
+                .put("maxItems", 12)
+                .putObject("items")
+                .put("type", "string")
+                .put("minLength", 1)
+                .put("maxLength", 1_000);
+        properties.putObject("work_mode")
+                .put("type", "string")
+                .put("description", "observe 只能观察；workspace 才允许在工作区内产生变更，默认 observe")
+                .put("default", "observe")
+                .putArray("enum")
+                .add("observe")
+                .add("workspace");
         schema.putArray("required").add("task");
         return schema;
+    }
+
+    private void copyOptionalText(
+            JsonNode source,
+            ObjectNode target,
+            String field,
+            int maxLength
+    ) {
+        if (!source.has(field)) {
+            return;
+        }
+        String value = source.path(field).asText("").trim();
+        if (value.length() > maxLength) {
+            throw new IllegalArgumentException(
+                    field + " exceeds " + maxLength + " characters"
+            );
+        }
+        if (!value.isBlank()) {
+            target.put(field, value);
+        }
     }
 
     private JsonNode outputSchema() {

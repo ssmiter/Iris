@@ -55,14 +55,21 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 父 Run 创建子 Agent 时必须一次给全：
 
 - `task`：自包含目标，不依赖父 Agent 未公开的思考；
+- `context`：完成判断所需的已知背景、已经排除的方向和稳定引用，而不是整段父对话；
+- `constraints`：职责边界与不可违反的限制；
+- `work_mode`：`observe` 只允许观察，`workspace` 才允许在工作区内产生变更；
 - `allowedTools`：允许的常驻原语子集，不能超过父级权限上限；
-- `resultContract`：完成时应返回什么，以及重要证据/Artifact 如何引用；
+- `resultContract`：完成时应返回什么、怎样算完成，以及重要证据/Artifact 如何引用；
 - `budget`：轮次、工具调用、时间和嵌套深度；
 - `mode`：`join` 或 `background`。
 
 子 Agent 不读取完整父对话，只读取自己的任务、自己的 Model/Tool 历史、被显式送达的消息以及允许的稳定 Artifact/Workspace 引用。它不继承父 Agent 的隐式思考、临时工具曝光或审批决定。
 
 首版子 Agent 禁止再次委派，避免递归失控。以后开放嵌套时仍由后端根据深度和预算核验，不能靠提示词自觉。
+
+`work_mode` 是运行时权限，不是提示词标签。观察型 child 即使发现了写能力，也不能越过 Tool Runtime 的只读边界；工作区型 child 仍需经过路径围栏、审批、commit gate 与 verify。父 Agent 必须显式选择可写模式，不能因为任务描述里出现“修改”就由子 Agent 自行扩大权限。
+
+交付不是一段无法判断真假的散文。child 终态形成有界 Result Envelope：`status`、`summary`、稳定 `outputRef` 与从真实 Tool verification 汇集的 `evidenceRefs`。长正文仍留在 child Run 中按需读取；父 Agent 只消费摘要和引用，并对关键结论负责最终核验。
 
 ## 5. 同步与后台不是两套实现
 
@@ -72,6 +79,8 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 - `background`：调用立即返回 `runId`，child Run 独立推进；完成、失败或取消后写入父 Run mailbox，并通过 SSE 发出 Run 事件。
 
 后台 Run 不因父对话本轮结束或用户停止主 Run 而丢失。若父 Run 仍活动，通知在下一 Round 边界作为普通消息进入上下文；若父 Run 已结束，通知仍作为未消费事实保留，并由同一分支的下一次根 Run 原子领取，绝不静默丢弃，也不为了等待后台任务强行延长当前 Turn。
+
+未终态的 child 也不能在压缩后“消失”。每次根 Agent 组装上下文时，Harness 都从持久 Run 图投影一个有界的 `agent_run_state`，只列出当前分支仍在运行或挂起的 child id、阶段、工作模式和任务摘要。它用于防止重复委派和支持补充/取消，不注入 transcript，也不要求模型轮询进度。
 
 ## 6. Mailbox：异步通信的持久事实
 
@@ -120,6 +129,8 @@ Claude Code 中标题、自动压缩、离开摘要、输入建议、任务摘�
 
 据此，Pipeline 的判断标准不是“这个功能用了模型”，而是同时具备**固定入口、已知的数据变换骨架、明确的持久对象或系统动作**。需要根据新观察自由选择路径的研究、浏览器探索和领域求解继续使用主 Agent 或隔离子 Agent。这样既复用 Agentic 能力，也不会把每个产品功能都包装成另一种小 Agent。
 
+WonWork 的 APS 写任务进一步说明了一种可复用但不应硬编码成通用角色的模式：执行 Agent 负责求解和行动，state Agent 维护的是“可证伪、可预测、可闭环的当前任务态势”，而不是聊天摘要或第二份计划。它应区分观测事实、工作假设、有效决策、预期后果和写后偏差；只有写动作的必要前提或授权边界不成立时才阻断，不能用“不确定”机械否决可逆探索。Iris 首先提供隔离 Context、只读 work mode、稳定 Run/Artifact 引用和结构化交付，具体领域再按真实需求装配 state Pipeline，避免把一个业务范式膨胀成全局多 Agent 框架。
+
 ## 10. 恢复与终态
 
 - Pipeline 重启后从持久化 Step 状态重建；成功步骤不重跑。
@@ -133,8 +144,9 @@ Claude Code 中标题、自动压缩、离开摘要、输入建议、任务摘�
 1. 已完成 Pipeline Definition/Run/Step、隔离 child Agent、durable mailbox 与统一触发入口；
 2. 已完成首个系统 metadata 闭环：标题模型转换与受控发布；
 3. 已完成固定 Tool 步骤复用唯一 Tool Runtime，并以工作区成品生成与 Artifact 呈现打通动作闭环；
-4. 已建立可降级的混合候选召回内核；下一步先让既有 Compact 接入统一调度事实，再实现可撤销的记忆候选与 Skill 草稿；
-5. 离开摘要、输入建议等界面辅助等待可靠的前端触发事实；不以增加 Pipeline 数量作为进度；
-6. 有真实体验数据后再决定并行 join、通用 DSL 和更复杂的多 Agent 拓扑。
+4. 已补齐子任务 Assignment、只读/可写运行边界、压缩后活动状态投影和结构化 Result Envelope；下一步以真实任务验证 coordinator + worker/state 的协作，不先增加团队拓扑；
+5. 已建立可降级的混合候选召回内核；后续让既有 Compact 接入统一调度事实，再实现可撤销的记忆候选与 Skill 草稿；
+6. 离开摘要、输入建议等界面辅助等待可靠的前端触发事实；不以增加 Pipeline 数量作为进度；
+7. 有真实体验数据后再决定并行 join、通用 DSL 和更复杂的多 Agent 拓扑。
 
 这条顺序先保证“同一个内核能自然连接起来”，再增加场景数量。

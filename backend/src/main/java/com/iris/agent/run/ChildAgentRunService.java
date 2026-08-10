@@ -48,13 +48,16 @@ public class ChildAgentRunService {
             ChildAgentStep step,
             String task
     ) {
+        ChildAssignment assignment = assignment(pipeline, task, step);
         return createInternal(
                 pipeline,
                 invokingStepRunId,
                 step,
-                task,
-                "isolated",
-                false
+                assignment.task(),
+                assignment.resultContract(),
+                "isolated_" + assignment.workMode(),
+                false,
+                assignment.workMode()
         );
     }
 
@@ -63,8 +66,10 @@ public class ChildAgentRunService {
             String invokingStepRunId,
             ChildAgentStep step,
             String task,
+            String resultContract,
             String contextMode,
-            boolean allowEmptyToolSurface
+            boolean allowEmptyToolSurface,
+            String workMode
     ) {
         String normalizedTask = task == null ? "" : task.trim();
         if (normalizedTask.isBlank() || normalizedTask.length() > 50_000) {
@@ -81,7 +86,8 @@ public class ChildAgentRunService {
         }
         List<String> allowedTools = allowedTools(
                 step.allowedTools(),
-                allowEmptyToolSurface
+                allowEmptyToolSurface,
+                workMode
         );
         String runId = id("run");
         Instant now = clock.instant();
@@ -108,7 +114,8 @@ public class ChildAgentRunService {
                     .update();
             String definitionHash = hash(
                     "iris.agent.child@1\n"
-                            + step.resultContract() + "\n"
+                            + resultContract + "\n"
+                            + contextMode + "\n"
                             + String.join("\n", allowedTools)
             );
             jdbc.sql("""
@@ -148,7 +155,7 @@ public class ChildAgentRunService {
                     runId,
                     contextMode,
                     normalizedTask,
-                    step.resultContract(),
+                    resultContract,
                     allowedTools,
                     childDepth,
                     "run:" + pipeline.parentRunId(),
@@ -184,8 +191,10 @@ public class ChildAgentRunService {
                         step.timeLimitMs()
                 ),
                 task,
+                step.resultContract(),
                 "isolated_model",
-                true
+                true,
+                "observe"
         );
     }
 
@@ -200,7 +209,8 @@ public class ChildAgentRunService {
 
     private List<String> allowedTools(
             List<String> requested,
-            boolean allowEmpty
+            boolean allowEmpty,
+            String workMode
     ) {
         if (allowEmpty && (requested == null || requested.isEmpty())) {
             return List.of();
@@ -211,6 +221,13 @@ public class ChildAgentRunService {
                         : requested
         );
         allowed.retainAll(ResidentToolSurface.childOrderedNames());
+        if ("observe".equals(workMode)) {
+            allowed.removeAll(List.of(
+                    "make_directory",
+                    "write_file",
+                    "apply_patch"
+            ));
+        }
         if (allowed.isEmpty()) {
             throw new IllegalArgumentException(
                     "Child Agent tool surface is empty"
@@ -219,6 +236,54 @@ public class ChildAgentRunService {
         return ResidentToolSurface.childOrderedNames().stream()
                 .filter(allowed::contains)
                 .toList();
+    }
+
+    private ChildAssignment assignment(
+            PipelineRun pipeline,
+            String task,
+            ChildAgentStep step
+    ) {
+        String normalizedTask = task == null ? "" : task.trim();
+        String context = pipeline.input().path("context")
+                .asText("").trim();
+        String deliverable = pipeline.input().path("deliverable")
+                .asText("").trim();
+        String workMode = pipeline.input().path("work_mode")
+                .asText("observe").trim();
+        if (!"observe".equals(workMode) && !"workspace".equals(workMode)) {
+            throw new IllegalArgumentException(
+                    "Child Agent work mode is invalid"
+            );
+        }
+        StringBuilder briefing = new StringBuilder()
+                .append("【目标】\n")
+                .append(normalizedTask);
+        if (!context.isBlank()) {
+            briefing.append("\n\n【必要背景】\n").append(context);
+        }
+        if (pipeline.input().path("constraints").isArray()
+                && !pipeline.input().path("constraints").isEmpty()) {
+            briefing.append("\n\n【约束】");
+            for (var constraint : pipeline.input().path("constraints")) {
+                briefing.append("\n- ").append(
+                        constraint.asText("").trim()
+                );
+            }
+        }
+        briefing.append("\n\n【工作边界】\n")
+                .append("observe".equals(workMode)
+                        ? "只观察和分析，不创建、修改或删除工作区及外部状态。"
+                        : "可以在工作区围栏内产生任务所需变更；每个真实写动作仍必须经过 Tool Runtime。"
+                );
+        String resultContract = deliverable.isBlank()
+                ? step.resultContract()
+                : deliverable + "\n\n" + step.resultContract();
+        resultContract += "\n交付中请明确区分：已确认结论、证据或稳定引用、未完成项与仍需父任务决定的问题。";
+        return new ChildAssignment(
+                briefing.toString(),
+                resultContract,
+                workMode
+        );
     }
 
     private String hash(String value) {
@@ -236,4 +301,10 @@ public class ChildAgentRunService {
     private String id(String prefix) {
         return prefix + "_" + UUID.randomUUID().toString().replace("-", "");
     }
+
+    private record ChildAssignment(
+            String task,
+            String resultContract,
+            String workMode
+    ) { }
 }

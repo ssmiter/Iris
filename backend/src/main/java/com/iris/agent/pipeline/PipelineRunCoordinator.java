@@ -407,11 +407,11 @@ public class PipelineRunCoordinator {
                     "pipeline_child_" + child.phase().name().toLowerCase()
             );
         }
-        String summary = childResults.find(child.runId())
-                .map(AgentRunResultRepository.RunResult::summary)
-                .orElseGet(() -> childResults.latestAssistantText(
-                        child.runId()
-                ));
+        var resultEnvelope = childResults.find(child.runId())
+                .orElse(null);
+        String summary = resultEnvelope == null
+                ? childResults.latestAssistantText(child.runId())
+                : resultEnvelope.summary();
         if (summary.length() > MAX_HANDOFF_CHARS) {
             summary = summary.substring(0, MAX_HANDOFF_CHARS)
                     + "\n\n[结果较长，完整正文保留在 child Run "
@@ -419,7 +419,20 @@ public class PipelineRunCoordinator {
         }
         ObjectNode output = objectMapper.createObjectNode();
         output.put("runId", child.runId());
+        output.put(
+                "status",
+                resultEnvelope == null
+                        ? child.phase().name().toLowerCase()
+                        : resultEnvelope.status()
+        );
         output.put("summary", summary);
+        if (resultEnvelope != null && resultEnvelope.outputRef() != null) {
+            output.put("outputRef", resultEnvelope.outputRef());
+        }
+        var evidenceRefs = output.putArray("evidenceRefs");
+        if (resultEnvelope != null) {
+            resultEnvelope.evidenceRefs().forEach(evidenceRefs::add);
+        }
         if (!pipelines.completeStep(
                 step.stepRunId(),
                 step.version(),

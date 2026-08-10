@@ -53,6 +53,10 @@ public class ProviderMessageCompiler {
                                 </artifact_context_index>
                                 """.formatted(artifacts.content()).strip()
                         ));
+                case ModelInputItem.AgentRunState state ->
+                        append(messages, Role.SYSTEM, new TextPart(
+                                agentRunState(state)
+                        ));
                 case ModelInputItem.CapabilityRuntimeState state ->
                         append(
                                 messages,
@@ -179,6 +183,34 @@ public class ProviderMessageCompiler {
                     .append("</capability>");
         }
         return text.append("\n</capability_runtime_state>").toString();
+    }
+
+    private String agentRunState(ModelInputItem.AgentRunState state) {
+        StringBuilder text = new StringBuilder(
+                "Active child Agent state follows. It is a durable Harness "
+        ).append(
+                "projection, not a request to poll or a claim about results. "
+        ).append(
+                "Use it to avoid duplicate delegation and to address an "
+        ).append(
+                "existing Run when new facts or cancellation are needed."
+        ).append("\n<agent_run_state>");
+        for (ModelInputItem.AgentRunStatus run : state.runs()) {
+            text.append("\n  <agent_run run_id=\"")
+                    .append(xmlAttribute(run.runId()))
+                    .append("\" pipeline_run_id=\"")
+                    .append(xmlAttribute(run.pipelineRunId()))
+                    .append("\" phase=\"")
+                    .append(xmlAttribute(run.phase()))
+                    .append("\" work_mode=\"")
+                    .append(xmlAttribute(run.workMode()))
+                    .append("\" started_at=\"")
+                    .append(xmlAttribute(run.startedAt()))
+                    .append("\">")
+                    .append(xmlText(run.taskSummary()))
+                    .append("</agent_run>");
+        }
+        return text.append("\n</agent_run_state>").toString();
     }
 
     private String runtimePulse(ModelInputItem.RuntimePulse pulse) {

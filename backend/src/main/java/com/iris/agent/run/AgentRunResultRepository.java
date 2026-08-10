@@ -2,6 +2,7 @@ package com.iris.agent.run;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -74,9 +75,40 @@ public class AgentRunResultRepository {
                 .update();
     }
 
+    public List<String> evidenceRefsForRun(String runId, int limit) {
+        if (limit < 1 || limit > 64) {
+            throw new IllegalArgumentException(
+                    "Evidence reference limit must be between 1 and 64"
+            );
+        }
+        return jdbc.sql("""
+                SELECT evidence.reference
+                FROM tool_evidence evidence
+                JOIN tool_execution execution
+                  ON execution.execution_id = evidence.execution_id
+                JOIN model_tool_call call
+                  ON call.tool_call_id = execution.tool_call_id
+                JOIN model_attempt attempt
+                  ON attempt.attempt_id = call.attempt_id
+                JOIN agent_round round
+                  ON round.round_id = attempt.round_id
+                WHERE round.run_id = :runId
+                  AND evidence.reference IS NOT NULL
+                  AND trim(evidence.reference) <> ''
+                GROUP BY evidence.reference
+                ORDER BY MIN(evidence.created_at), evidence.reference
+                LIMIT :limit
+                """)
+                .param("runId", runId)
+                .param("limit", limit)
+                .query(String.class)
+                .list();
+    }
+
     public Optional<RunResult> find(String runId) {
         return jdbc.sql("""
-                SELECT run_id, status, summary_text, output_ref, recorded_at
+                SELECT run_id, status, summary_text, output_ref,
+                       evidence_refs_json, recorded_at
                 FROM agent_run_result WHERE run_id = :runId
                 """)
                 .param("runId", runId)
@@ -85,9 +117,24 @@ public class AgentRunResultRepository {
                         rs.getString("status"),
                         rs.getString("summary_text"),
                         rs.getString("output_ref"),
+                        readEvidenceRefs(rs.getString("evidence_refs_json")),
                         Instant.parse(rs.getString("recorded_at"))
                 ))
                 .optional();
+    }
+
+    private List<String> readEvidenceRefs(String json) {
+        try {
+            return List.copyOf(objectMapper.readValue(
+                    json,
+                    new TypeReference<List<String>>() { }
+            ));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Stored Agent result evidence is invalid",
+                    exception
+            );
+        }
     }
 
     public record RunResult(
@@ -95,6 +142,11 @@ public class AgentRunResultRepository {
             String status,
             String summary,
             String outputRef,
+            List<String> evidenceRefs,
             Instant recordedAt
-    ) { }
+    ) {
+        public RunResult {
+            evidenceRefs = List.copyOf(evidenceRefs);
+        }
+    }
 }

@@ -189,6 +189,28 @@ public class ModelContextAssembler {
             ));
         }
         if (isolatedContext == null) {
+            var activeAgents = runContexts.activeForBranch(
+                    run.conversationId(),
+                    run.branchId(),
+                    run.runId(),
+                    12
+            );
+            if (!activeAgents.isEmpty()) {
+                allItems.add(new ModelInputItem.AgentRunState(
+                        activeAgents.stream()
+                                .map(active -> new ModelInputItem.AgentRunStatus(
+                                        active.runId(),
+                                        active.parentRunId(),
+                                        active.phase(),
+                                        active.contextMode().replace(
+                                                "isolated_", ""
+                                        ),
+                                        bounded(active.task(), 600),
+                                        active.startedAt().toString()
+                                ))
+                                .toList()
+                ));
+            }
             taskLedger.activeForContext(
                     run.conversationId(),
                     run.branchId()
@@ -330,6 +352,13 @@ public class ModelContextAssembler {
                 clock.instant()
         );
         return context;
+    }
+
+    private String bounded(String value, int maxCharacters) {
+        if (value == null || value.length() <= maxCharacters) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, maxCharacters) + "…";
     }
 
     private String hash(Object value) {

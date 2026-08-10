@@ -1,6 +1,7 @@
 package com.iris.agent.run;
 
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -8,6 +9,7 @@ import java.util.List;
 
 /** Persists the bounded output consumed by the owning Pipeline step. */
 @Service
+@Order(35)
 public class ChildAgentCompletionService {
     private static final int MAX_HANDOFF_CHARS = 12_000;
     private final AgentRunContextRepository contexts;
@@ -38,12 +40,16 @@ public class ChildAgentCompletionService {
                 ? fullResult.substring(0, MAX_HANDOFF_CHARS)
                         + "\n\n[结果较长，完整正文保留在该 child Run 中]"
                 : fullResult;
+        List<String> evidenceRefs = results.evidenceRefsForRun(
+                event.runId(),
+                24
+        );
         results.save(
                 event.runId(),
                 event.phase().name().toLowerCase(),
                 summary,
-                truncated ? "agent-run:" + event.runId() : null,
-                List.of(),
+                "agent-run:" + event.runId(),
+                evidenceRefs,
                 clock.instant()
         );
     }

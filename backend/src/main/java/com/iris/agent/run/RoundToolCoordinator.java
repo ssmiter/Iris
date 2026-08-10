@@ -35,6 +35,7 @@ public class RoundToolCoordinator {
     private final ToolProjectionService projections;
     private final RunEventEmitter lifecycleEvents;
     private final RunCancellationRegistry cancellations;
+    private final AgentRunContextRepository runContexts;
     private final int maxParallelReadTools;
 
     public RoundToolCoordinator(
@@ -46,6 +47,7 @@ public class RoundToolCoordinator {
             ToolProjectionService projections,
             RunEventEmitter lifecycleEvents,
             RunCancellationRegistry cancellations,
+            AgentRunContextRepository runContexts,
             @Value("${iris.agent.max-parallel-read-tools:4}")
             int maxParallelReadTools
     ) {
@@ -57,6 +59,7 @@ public class RoundToolCoordinator {
         this.projections = projections;
         this.lifecycleEvents = lifecycleEvents;
         this.cancellations = cancellations;
+        this.runContexts = runContexts;
         if (maxParallelReadTools < 1 || maxParallelReadTools > 16) {
             throw new IllegalArgumentException(
                     "max-parallel-read-tools must be between 1 and 16"
@@ -277,13 +280,17 @@ public class RoundToolCoordinator {
     ) {
         BooleanSupplier cancellation = () -> initiallyCancelled
                 || cancellations.isCancelled(run.runId());
+        boolean externalWritesAllowed = runContexts.find(run.runId())
+                .map(AgentRunContextRepository.RunContext::externalWritesAllowed)
+                .orElse(true);
         return new RoundToolContext(
                 run.conversationId(),
                 run.turnId(),
                 run.runId(),
                 roundId,
                 workspaceRoot,
-                cancellation
+                cancellation,
+                externalWritesAllowed
         );
     }
 
@@ -302,7 +309,8 @@ public class RoundToolCoordinator {
             String runId,
             String roundId,
             Path workspaceRoot,
-            BooleanSupplier cancellation
+            BooleanSupplier cancellation,
+            boolean externalWritesAllowed
     ) implements ToolContext {
         @Override
         public boolean cancelled() {
