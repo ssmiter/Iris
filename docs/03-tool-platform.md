@@ -414,12 +414,18 @@ normalize → validate → durable claim → prepare → snapshot
 | `/web/browser/list_browser_runtimes` | `list_browser_runtimes` | 发现本机浏览器 Runtime 及可用性，不暴露 daemon 地址与令牌 |
 | `/web/browser/list_browser_sessions` | `list_browser_sessions` | 读取仍存活的短期 Session/Page 引用，明确识别失效对象 |
 | `/web/browser/open_browser_session` | `open_browser_session` | 创建短期 BrowserSession/Page；改变本机 Application 状态并默认审批 |
+| `/web/browser/open_browser_page` | `open_browser_page` | 在现有 Session 内打开并激活一个新页面，旧页面仍保留用于比较与续接 |
+| `/web/browser/switch_browser_page` | `switch_browser_page` | 在同一 Session 已拥有的页面之间切换；元素引用严格按 Page 隔离 |
 | `/web/browser/observe_browser_page` | `observe_browser_page` | 读取有界 Page Observation 与当前 revision 的短期元素引用 |
 | `/web/browser/wait_browser_page` | `wait_browser_page` | 在 daemon 内等待变化/ready/文本，只向上下文回流最终 Observation |
 | `/web/browser/navigate_browser_page` | `navigate_browser_page` | 在期望 Observation 上执行幂等导航，并返回新 Observation 与证据 |
+| `/web/browser/navigate_browser_history` | `navigate_browser_history` | 在当前 Observation 上使用浏览器历史后退、前进或刷新，不要求模型重建旧 URL |
+| `/web/browser/scroll_browser_page` | `scroll_browser_page` | 在当前 Observation 上执行有界滚动，并返回新视口状态 |
 | `/web/browser/click_browser_element` | `click_browser_element` | 消费当前 Observation 的短期元素 ref；准备时生成可读影响，提交时拒绝过期页面 |
 | `/web/browser/fill_browser_field` | `fill_browser_field` | 填写可安全持久化并重读的普通文本字段；敏感类型 fail-close |
+| `/web/browser/upload_browser_file` | `upload_browser_file` | 将工作区围栏内现有文件上传到观察中的 file input；绝对路径不进入模型或持久历史 |
 | `/web/browser/select_browser_option` | `select_browser_option` | 使用 Observation 给出的 option value 修改原生下拉框并重读 |
+| `/web/browser/press_browser_key` | `press_browser_key` | 向当前页或观察内元素发送受限单键，覆盖 Enter、Escape、Tab 与方向导航，不开放任意脚本 |
 | `/web/browser/capture_browser_screenshot` | `capture_browser_screenshot` | 图像字节直接进入 Managed Object Store，模型只接收稳定对象引用与 metadata |
 | `/web/browser/inspect_browser_action` | `inspect_browser_action` | 按原 execution/idempotency identity 读取 daemon 动作日志，不产生第二次动作 |
 | `/web/browser/close_browser_session` | `close_browser_session` | 显式释放短期 Session/Page handle；历史 Observation 与 ToolCall 仍保留 |

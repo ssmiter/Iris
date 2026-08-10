@@ -8,6 +8,7 @@ import { config } from './config.js'
 import {
   observationIsCurrent,
   observePage,
+  probePage,
 } from './observation.js'
 
 const sessions = new Map()
@@ -17,17 +18,11 @@ let chromeLaunch = null
 export function browserInstallation() {
   if (config.browserPath) {
     return fs.existsSync(config.browserPath)
-      ? { available: true, path: config.browserPath }
+      ? { available: true, path: config.browserPath, product: 'configured' }
       : {
           available: false,
           error: 'IRIS_WEBBRIDGE_BROWSER_PATH does not exist',
         }
-  }
-  try {
-    const detected = chromeLauncher.Launcher.getInstallations()[0]
-    if (detected) return { available: true, path: detected }
-  } catch (error) {
-    // Fall through to deterministic Windows paths below.
   }
   const home = os.homedir()
   const localAppData = process.env.LOCALAPPDATA
@@ -36,35 +31,47 @@ export function browserInstallation() {
   const programFilesX86 = process.env['ProgramFiles(x86)']
     || 'C:\\Program Files (x86)'
   const candidates = [
-    path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    ['edge', path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe')],
+    ['edge', path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe')],
+    ['edge', path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe')],
+    ['chrome', path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe')],
+    ['chrome', path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe')],
+    ['chrome', path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe')],
   ]
-  const detected = candidates.find(candidate => fs.existsSync(candidate))
-  return detected
-    ? { available: true, path: detected }
-    : {
-        available: false,
-        error: 'Chrome / Edge / Chromium was not found',
-      }
+  const detected = candidates.find(([, candidate]) => fs.existsSync(candidate))
+  if (detected) {
+    return { available: true, product: detected[0], path: detected[1] }
+  }
+  try {
+    const fallback = chromeLauncher.Launcher.getInstallations()[0]
+    if (fallback) {
+      return { available: true, product: 'chromium', path: fallback }
+    }
+  } catch {
+    // Report one stable availability error below.
+  }
+  return {
+    available: false,
+    error: 'Microsoft Edge / Chrome / Chromium was not found',
+  }
 }
 
 export async function runtimeState() {
   const installation = browserInstallation()
   const running = await chromeIsAlive()
+  await reconcileSessions(running)
   return {
     browserReady: installation.available,
     browserRunning: running,
     browserPath: installation.path,
+    browserProduct: installation.product,
     browserError: installation.error,
     sessionCount: sessions.size,
   }
 }
 
-export function listSessions() {
+export async function listSessions() {
+  await reconcileSessions(await chromeIsAlive())
   return [...sessions.values()]
     .sort((left, right) => left.createdAt - right.createdAt)
     .map(session => ({
@@ -76,6 +83,8 @@ export function listSessions() {
       title: session.lastObservation?.title || '',
       observationRef: session.lastObservation?.ref,
       revision: session.lastObservation?.revision || 0,
+      pageCount: session.backgroundPages.size + 1,
+      pages: ownedPageSummaries(session),
     }))
 }
 
@@ -93,6 +102,7 @@ export async function createSession(initialUrl = 'about:blank') {
   await Promise.all([
     client.Page.enable(),
     client.Runtime.enable(),
+    client.DOM.enable(),
   ])
 
   const session = {
@@ -100,13 +110,15 @@ export async function createSession(initialUrl = 'about:blank') {
     pageId: target.id,
     client,
     createdAt: new Date(),
+    pageCreatedAt: new Date(),
     lastUsedAt: new Date(),
     revision: 0,
     lastObservation: null,
     lastObservationLimits: null,
     lastActionFingerprint: null,
-    elementSelectors: new Map(),
+    elementLocators: new Map(),
     elements: new Map(),
+    backgroundPages: new Map(),
     actionResults: new Map(),
   }
   sessions.set(session.sessionId, session)
@@ -134,6 +146,102 @@ export async function observeSession(sessionId, body) {
   return {
     sessionId,
     pageId: session.pageId,
+    observation,
+  }
+}
+
+export async function openPage(sessionId, body) {
+  const session = requireSession(sessionId)
+  const url = requireWebUrl(body.url)
+  const key = requiredText(body.idempotencyKey, 'idempotencyKey')
+  const actionAttemptId = requiredText(
+    body.actionAttemptId,
+    'actionAttemptId',
+  )
+  const requestFingerprint = createHash('sha256')
+    .update(JSON.stringify({ primitive: 'open_page', url }))
+    .digest('hex')
+  const previous = session.actionResults.get(key)
+  if (previous) {
+    if (previous.requestFingerprint !== requestFingerprint) {
+      throw protocolError(
+        'browser_idempotency_conflict',
+        'Idempotency key was already used for another browser page',
+        409,
+      )
+    }
+    return previous.result
+  }
+
+  const launched = await ensureChrome()
+  const target = await CDP.New({ port: launched.port, url: 'about:blank' })
+  let nextClient
+  const previousPageId = session.pageId
+  let activated = false
+  try {
+    nextClient = await CDP({ port: launched.port, target: target.id })
+    await Promise.all([
+      nextClient.Page.enable(),
+      nextClient.Runtime.enable(),
+      nextClient.DOM.enable(),
+    ])
+    saveActivePage(session)
+    activateFreshPage(session, target.id, nextClient)
+    activated = true
+    if (url !== 'about:blank') {
+      await navigateAndSettle(session, url)
+    }
+    const observation = await observePage(session)
+    const result = {
+      status: 'applied',
+      actionAttemptId,
+      idempotencyKey: key,
+      pageId: session.pageId,
+      openedNewPage: true,
+      pages: ownedPageSummaries(session),
+      observation,
+      evidence: evidenceFor('open_page', null, { url }, observation),
+    }
+    storeActionResult(session, key, requestFingerprint, result)
+    return result
+  } catch (error) {
+    await nextClient?.close().catch(() => undefined)
+    await CDP.Close({ port: launched.port, id: target.id })
+      .catch(() => undefined)
+    const previousPage = activated
+      ? session.backgroundPages.get(previousPageId)
+      : null
+    if (previousPage) {
+      session.backgroundPages.delete(previousPageId)
+      restorePage(session, previousPage)
+    }
+    throw error
+  }
+}
+
+export async function switchPage(sessionId, body) {
+  const session = requireSession(sessionId)
+  const pageId = requiredText(body.pageId, 'pageId')
+  if (pageId !== session.pageId) {
+    const next = session.backgroundPages.get(pageId)
+    if (!next) {
+      throw protocolError(
+        'browser_page_not_found',
+        'Page does not belong to this BrowserSession',
+        404,
+      )
+    }
+    saveActivePage(session)
+    session.backgroundPages.delete(pageId)
+    restorePage(session, next)
+  }
+  await session.client.Page.bringToFront().catch(() => undefined)
+  const observation = await observePage(session, body)
+  return {
+    sessionId,
+    pageId: session.pageId,
+    activePageId: session.pageId,
+    pages: ownedPageSummaries(session),
     observation,
   }
 }
@@ -167,7 +275,7 @@ export async function waitForPage(sessionId, body) {
     ...body,
     purpose: condition === 'text' ? 'read' : 'interact',
   }
-  let observation = session.lastObservation
+  let observation = await probePage(session, observationLimits)
   let conditionMet = matchesWait(
     condition,
     text,
@@ -176,7 +284,7 @@ export async function waitForPage(sessionId, body) {
   )
   while (!conditionMet && Date.now() < deadline) {
     await delay(250)
-    observation = await observePage(session, observationLimits)
+    observation = await probePage(session, observationLimits)
     conditionMet = matchesWait(
       condition,
       text,
@@ -184,6 +292,13 @@ export async function waitForPage(sessionId, body) {
       observation,
     )
   }
+  observation = await observePage(session, observationLimits)
+  conditionMet = matchesWait(
+    condition,
+    text,
+    baselineFingerprint,
+    observation,
+  )
   return {
     sessionId,
     pageId: session.pageId,
@@ -254,7 +369,7 @@ export async function applyAction(sessionId, request) {
     request.actionAttemptId,
     'actionAttemptId',
   )
-  if (!['navigate', 'click', 'fill', 'select', 'scroll'].includes(
+  if (!['navigate', 'history', 'click', 'fill', 'upload', 'select', 'scroll', 'press'].includes(
     request.primitive,
   )) {
     throw protocolError(
@@ -265,7 +380,7 @@ export async function applyAction(sessionId, request) {
   }
   const pageId = requiredText(request.normalizedArgs?.pageId, 'pageId')
   requirePage(session, pageId)
-  if (['click', 'fill', 'select', 'scroll'].includes(request.primitive)
+  if (['history', 'click', 'fill', 'upload', 'select', 'scroll', 'press'].includes(request.primitive)
       && !request.expectedObservationRef) {
     throw protocolError(
       'browser_observation_required',
@@ -313,7 +428,7 @@ export async function applyAction(sessionId, request) {
   }
 
   const before = session.lastObservation
-  const pageIdsBefore = request.primitive === 'click'
+  const pageIdsBefore = ['click', 'press'].includes(request.primitive)
     ? await pageTargetIds()
     : null
   let result
@@ -321,6 +436,8 @@ export async function applyAction(sessionId, request) {
     let target
     if (request.primitive === 'navigate') {
       target = requireWebUrl(request.normalizedArgs?.url)
+    } else if (request.primitive === 'history') {
+      target = requireHistoryDirection(request.normalizedArgs?.direction)
     } else if (request.primitive === 'click') {
       target = requiredText(
         request.normalizedArgs?.elementRef,
@@ -333,6 +450,13 @@ export async function applyAction(sessionId, request) {
         ),
         amount: boundScrollAmount(request.normalizedArgs?.amount),
       }
+    } else if (request.primitive === 'press') {
+      target = {
+        key: requireBrowserKey(request.normalizedArgs?.key),
+        elementRef: optionalText(request.normalizedArgs?.elementRef),
+      }
+    } else if (request.primitive === 'upload') {
+      target = requireUploadTarget(request.normalizedArgs)
     } else {
       target = {
         elementRef: requiredText(
@@ -344,13 +468,20 @@ export async function applyAction(sessionId, request) {
     }
     if (request.primitive === 'navigate') {
       await navigateAndSettle(session, target)
+    } else if (request.primitive === 'history') {
+      await navigateHistory(session, target)
     } else if (request.primitive === 'click') {
       await clickElement(session, target)
       await adoptNewPage(session, pageIdsBefore)
     } else if (request.primitive === 'fill') {
       await fillElement(session, target.elementRef, target.value)
+    } else if (request.primitive === 'upload') {
+      await uploadFile(session, target)
     } else if (request.primitive === 'select') {
       await selectOption(session, target.elementRef, target.value)
+    } else if (request.primitive === 'press') {
+      await pressKey(session, target.key, target.elementRef)
+      await adoptNewPage(session, pageIdsBefore)
     } else {
       await scrollPage(session, target.direction, target.amount)
     }
@@ -372,8 +503,7 @@ export async function applyAction(sessionId, request) {
         actionAttemptId,
         idempotencyKey: key,
         pageId: session.pageId,
-        openedNewPage: before?.url !== observation.url
-          && pageIdsBefore !== null
+        openedNewPage: pageIdsBefore !== null
           && !pageIdsBefore.has(session.pageId),
         observation,
         evidence: evidenceFor(
@@ -394,6 +524,16 @@ export async function applyAction(sessionId, request) {
         request.normalizedArgs?.url,
         error,
       )
+    } else if (knownNotApplied(error)) {
+      result = {
+        status: 'not_applied',
+        actionAttemptId,
+        idempotencyKey: key,
+        message: error instanceof Error
+          ? error.message
+          : 'Browser action was not applied',
+        currentObservationRef: session.lastObservation?.ref,
+      }
     } else {
       result = {
         status: 'outcome_unknown',
@@ -457,10 +597,18 @@ export async function closeSession(sessionId) {
   const session = sessions.get(sessionId)
   if (!session) return false
   sessions.delete(sessionId)
-  await session.client.close().catch(() => undefined)
+  const pages = [
+    pageState(session),
+    ...session.backgroundPages.values(),
+  ]
+  await Promise.all(pages.map(page =>
+    page.client.close().catch(() => undefined)
+  ))
   if (chrome) {
-    await CDP.Close({ port: chrome.port, id: session.pageId })
-      .catch(() => undefined)
+    await Promise.all(pages.map(page =>
+      CDP.Close({ port: chrome.port, id: page.pageId })
+        .catch(() => undefined)
+    ))
   }
   return true
 }
@@ -471,6 +619,37 @@ export async function reapExpiredSessions() {
     .filter(session => session.lastUsedAt.getTime() < threshold)
     .map(session => session.sessionId)
   await Promise.all(expired.map(closeSession))
+}
+
+async function reconcileSessions(browserRunning) {
+  if (!browserRunning || !chrome) {
+    await Promise.all([...sessions.keys()].map(closeSession))
+    return
+  }
+  let livePageIds
+  try {
+    livePageIds = await pageTargetIds()
+  } catch {
+    return
+  }
+  for (const session of [...sessions.values()]) {
+    for (const [pageId, page] of session.backgroundPages) {
+      if (!livePageIds.has(pageId)) {
+        session.backgroundPages.delete(pageId)
+        await page.client.close().catch(() => undefined)
+      }
+    }
+    if (livePageIds.has(session.pageId)) continue
+
+    await session.client.close().catch(() => undefined)
+    const replacement = session.backgroundPages.values().next().value
+    if (!replacement) {
+      await closeSession(session.sessionId)
+      continue
+    }
+    session.backgroundPages.delete(replacement.pageId)
+    restorePage(session, replacement)
+  }
 }
 
 export async function shutdown() {
@@ -566,10 +745,30 @@ async function navigateAndSettle(session, url) {
   await delay(250)
 }
 
+async function navigateHistory(session, direction) {
+  if (direction === 'reload') {
+    await session.client.Page.reload()
+  } else {
+    const history = await session.client.Page.getNavigationHistory()
+    const offset = direction === 'back' ? -1 : 1
+    const entry = history.entries?.[history.currentIndex + offset]
+    if (!entry) {
+      throw protocolError(
+        'browser_history_unavailable',
+        `Browser history has no ${direction} entry`,
+        409,
+      )
+    }
+    await session.client.Page.navigateToHistoryEntry({ entryId: entry.id })
+  }
+  await waitForDocument(session.client.Runtime, 20_000)
+  await delay(250)
+}
+
 async function clickElement(session, elementRef) {
-  const selector = session.elementSelectors.get(elementRef)
+  const locator = session.elementLocators.get(elementRef)
   const metadata = session.elements.get(elementRef)
-  if (!selector || !metadata) {
+  if (!locator || !metadata) {
     throw protocolError(
       'browser_element_not_found',
       'Element reference does not belong to the current observation',
@@ -584,9 +783,8 @@ async function clickElement(session, elementRef) {
     )
   }
   const evaluation = await session.client.Runtime.evaluate({
-    expression: `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)})
-      if (!element) return { applied: false, reason: 'element_not_found' }
+    expression: locatedElementExpression(locator, `
+      element.scrollIntoView({ block: 'center', inline: 'center' })
       const style = window.getComputedStyle(element)
       const rect = element.getBoundingClientRect()
       if (style.display === 'none' || style.visibility === 'hidden'
@@ -596,10 +794,27 @@ async function clickElement(session, elementRef) {
       if (element.disabled || element.getAttribute('aria-disabled') === 'true') {
         return { applied: false, reason: 'element_disabled' }
       }
-      element.scrollIntoView({ block: 'center', inline: 'center' })
-      element.click()
-      return { applied: true }
-    })()`,
+      let x = rect.left + rect.width / 2
+      let y = rect.top + rect.height / 2
+      let view = element.ownerDocument?.defaultView
+      while (view && view !== window) {
+        const frame = view.frameElement
+        if (!frame) break
+        const frameRect = frame.getBoundingClientRect()
+        x += frameRect.left
+        y += frameRect.top
+        view = frame.ownerDocument?.defaultView
+      }
+      x = Math.max(0, Math.min(window.innerWidth - 1, x))
+      y = Math.max(0, Math.min(window.innerHeight - 1, y))
+      const hit = document.elementFromPoint(x, y)
+      const nested = element.ownerDocument !== document
+        || element.getRootNode() instanceof ShadowRoot
+      if (!nested && (!hit || (hit !== element && !element.contains(hit)))) {
+        return { applied: false, reason: 'element_obscured' }
+      }
+      return { applied: true, x, y }
+    `),
     returnByValue: true,
     awaitPromise: true,
   })
@@ -611,6 +826,25 @@ async function clickElement(session, elementRef) {
       409,
     )
   }
+  await session.client.Input.dispatchMouseEvent({
+    type: 'mouseMoved',
+    x: result.x,
+    y: result.y,
+  })
+  await session.client.Input.dispatchMouseEvent({
+    type: 'mousePressed',
+    x: result.x,
+    y: result.y,
+    button: 'left',
+    clickCount: 1,
+  })
+  await session.client.Input.dispatchMouseEvent({
+    type: 'mouseReleased',
+    x: result.x,
+    y: result.y,
+    button: 'left',
+    clickCount: 1,
+  })
   await delay(400)
   await waitForDocument(session.client.Runtime, 5_000).catch(() => undefined)
 }
@@ -673,16 +907,10 @@ async function adoptNewPage(session, previousIds) {
       await Promise.all([
         nextClient.Page.enable(),
         nextClient.Runtime.enable(),
+        nextClient.DOM.enable(),
       ])
-      await session.client.close().catch(() => undefined)
-      session.client = nextClient
-      session.pageId = created.id
-      session.revision = 0
-      session.lastObservation = null
-      session.lastObservationLimits = null
-      session.lastActionFingerprint = null
-      session.elementSelectors = new Map()
-      session.elements = new Map()
+      saveActivePage(session)
+      activateFreshPage(session, created.id, nextClient)
       await waitForDocument(nextClient.Runtime, 10_000)
         .catch(() => undefined)
       return true
@@ -692,10 +920,72 @@ async function adoptNewPage(session, previousIds) {
   return false
 }
 
+function activateFreshPage(session, pageId, client) {
+  session.client = client
+  session.pageId = pageId
+  session.pageCreatedAt = new Date()
+  session.revision = 0
+  session.lastObservation = null
+  session.lastObservationLimits = null
+  session.lastActionFingerprint = null
+  session.elementLocators = new Map()
+  session.elements = new Map()
+}
+
+function saveActivePage(session) {
+  session.backgroundPages.set(session.pageId, pageState(session))
+}
+
+function pageState(session) {
+  return {
+    pageId: session.pageId,
+    client: session.client,
+    pageCreatedAt: session.pageCreatedAt,
+    revision: session.revision,
+    lastObservation: session.lastObservation,
+    lastObservationLimits: session.lastObservationLimits,
+    lastActionFingerprint: session.lastActionFingerprint,
+    elementLocators: session.elementLocators,
+    elements: session.elements,
+  }
+}
+
+function restorePage(session, page) {
+  session.pageId = page.pageId
+  session.client = page.client
+  session.pageCreatedAt = page.pageCreatedAt
+  session.revision = page.revision
+  session.lastObservation = page.lastObservation
+  session.lastObservationLimits = page.lastObservationLimits
+  session.lastActionFingerprint = page.lastActionFingerprint
+  session.elementLocators = page.elementLocators
+  session.elements = page.elements
+}
+
+function ownedPageSummaries(session) {
+  const active = pageSummary(pageState(session), true)
+  const background = [...session.backgroundPages.values()]
+    .map(page => pageSummary(page, false))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  return [active, ...background]
+}
+
+function pageSummary(page, active) {
+  return {
+    pageId: page.pageId,
+    active,
+    createdAt: page.pageCreatedAt.toISOString(),
+    url: page.lastObservation?.url || '',
+    title: page.lastObservation?.title || '',
+    observationRef: page.lastObservation?.ref,
+    revision: page.lastObservation?.revision || 0,
+  }
+}
+
 async function fillElement(session, elementRef, value) {
-  const selector = session.elementSelectors.get(elementRef)
+  const locator = session.elementLocators.get(elementRef)
   const metadata = session.elements.get(elementRef)
-  if (!selector || !metadata) {
+  if (!locator || !metadata) {
     throw protocolError(
       'browser_element_not_found',
       'Element reference does not belong to the current observation',
@@ -723,9 +1013,7 @@ async function fillElement(session, elementRef, value) {
     )
   }
   const evaluation = await session.client.Runtime.evaluate({
-    expression: `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)})
-      if (!element) return { applied: false, reason: 'element_not_found' }
+    expression: locatedElementExpression(locator, `
       const value = ${JSON.stringify(value)}
       if (element.disabled || element.getAttribute('aria-disabled') === 'true') {
         return { applied: false, reason: 'element_disabled' }
@@ -735,24 +1023,26 @@ async function fillElement(session, elementRef, value) {
       if (element.isContentEditable) {
         element.textContent = value
       } else {
+        const view = element.ownerDocument?.defaultView || window
         const prototype = element.tagName.toLowerCase() === 'textarea'
-          ? HTMLTextAreaElement.prototype
-          : HTMLInputElement.prototype
+          ? view.HTMLTextAreaElement.prototype
+          : view.HTMLInputElement.prototype
         const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
         if (!setter) return { applied: false, reason: 'value_setter_unavailable' }
         setter.call(element, value)
       }
-      element.dispatchEvent(new InputEvent('input', {
+      const view = element.ownerDocument?.defaultView || window
+      element.dispatchEvent(new view.InputEvent('input', {
         bubbles: true,
         inputType: 'insertText',
         data: value,
       }))
-      element.dispatchEvent(new Event('change', { bubbles: true }))
+      element.dispatchEvent(new view.Event('change', { bubbles: true }))
       const actual = element.isContentEditable
         ? String(element.textContent || '')
         : String(element.value || '')
       return { applied: actual === value }
-    })()`,
+    `),
     returnByValue: true,
     awaitPromise: true,
   })
@@ -768,9 +1058,9 @@ async function fillElement(session, elementRef, value) {
 }
 
 async function selectOption(session, elementRef, value) {
-  const selector = session.elementSelectors.get(elementRef)
+  const locator = session.elementLocators.get(elementRef)
   const metadata = session.elements.get(elementRef)
-  if (!selector || !metadata || metadata.tag !== 'select') {
+  if (!locator || !metadata || metadata.tag !== 'select') {
     throw protocolError(
       'browser_select_not_supported',
       'Element reference is not a native select field',
@@ -785,9 +1075,9 @@ async function selectOption(session, elementRef, value) {
     )
   }
   const evaluation = await session.client.Runtime.evaluate({
-    expression: `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)})
-      if (!(element instanceof HTMLSelectElement)) {
+    expression: locatedElementExpression(locator, `
+      const view = element.ownerDocument?.defaultView || window
+      if (!(element instanceof view.HTMLSelectElement)) {
         return { applied: false, reason: 'select_not_found' }
       }
       const value = ${JSON.stringify(value)}
@@ -796,15 +1086,15 @@ async function selectOption(session, elementRef, value) {
         return { applied: false, reason: 'option_not_available' }
       }
       const setter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype,
+        view.HTMLSelectElement.prototype,
         'value',
       )?.set
       if (!setter) return { applied: false, reason: 'value_setter_unavailable' }
       setter.call(element, value)
-      element.dispatchEvent(new Event('input', { bubbles: true }))
-      element.dispatchEvent(new Event('change', { bubbles: true }))
+      element.dispatchEvent(new view.Event('input', { bubbles: true }))
+      element.dispatchEvent(new view.Event('change', { bubbles: true }))
       return { applied: element.value === value }
-    })()`,
+    `),
     returnByValue: true,
     awaitPromise: true,
   })
@@ -817,6 +1107,185 @@ async function selectOption(session, elementRef, value) {
     )
   }
   await delay(250)
+}
+
+async function uploadFile(session, target) {
+  const locator = session.elementLocators.get(target.elementRef)
+  const metadata = session.elements.get(target.elementRef)
+  if (!locator || !metadata) {
+    throw protocolError(
+      'browser_element_not_found',
+      'Element reference does not belong to the current observation',
+      404,
+    )
+  }
+  if (metadata.tag !== 'input' || metadata.type !== 'file') {
+    throw protocolError(
+      'browser_file_input_required',
+      'Element reference is not a file input',
+      409,
+    )
+  }
+  if (metadata.disabled) {
+    throw protocolError(
+      'browser_element_disabled',
+      'The selected file input is disabled',
+      409,
+    )
+  }
+  const evaluation = await session.client.Runtime.evaluate({
+    expression: locatedElementObjectExpression(locator),
+    returnByValue: false,
+    awaitPromise: true,
+  })
+  const objectId = evaluation.result?.objectId
+  if (!objectId) {
+    throw protocolError(
+      'browser_element_not_found',
+      'File input could not be resolved from the current observation',
+      404,
+    )
+  }
+  try {
+    const described = await session.client.DOM.describeNode({ objectId })
+    const backendNodeId = described.node?.backendNodeId
+    if (!backendNodeId) {
+      throw protocolError(
+        'browser_element_not_found',
+        'File input no longer has a browser node identity',
+        404,
+      )
+    }
+    await session.client.DOM.setFileInputFiles({
+      files: [target.filePath],
+      backendNodeId,
+    })
+    const confirmed = await session.client.Runtime.callFunctionOn({
+      objectId,
+      functionDeclaration: `function() {
+        const file = this.files?.[0]
+        return file ? { name: file.name, size: file.size } : null
+      }`,
+      returnByValue: true,
+    })
+    const actual = confirmed.result?.value
+    if (!actual
+        || actual.name !== target.fileName
+        || actual.size !== target.byteCount) {
+      throw protocolError(
+        'browser_upload_not_confirmed',
+        'File input did not report the expected file after upload',
+        409,
+      )
+    }
+  } finally {
+    await session.client.Runtime.releaseObject({ objectId })
+      .catch(() => undefined)
+  }
+  await delay(250)
+}
+
+async function pressKey(session, key, elementRef) {
+  if (elementRef) {
+    const locator = session.elementLocators.get(elementRef)
+    const metadata = session.elements.get(elementRef)
+    if (!locator || !metadata) {
+      throw protocolError(
+        'browser_element_not_found',
+        'Element reference does not belong to the current observation',
+        404,
+      )
+    }
+    if (metadata.disabled) {
+      throw protocolError(
+        'browser_element_disabled',
+        'The selected element is disabled',
+        409,
+      )
+    }
+    const focused = await session.client.Runtime.evaluate({
+      expression: locatedElementExpression(locator, `
+        element.scrollIntoView({ block: 'center', inline: 'center' })
+        element.focus()
+        return { applied: element.ownerDocument.activeElement === element
+          || element.contains(element.ownerDocument.activeElement)
+        }
+      `),
+      returnByValue: true,
+      awaitPromise: true,
+    })
+    if (focused.result?.value?.applied !== true) {
+      throw protocolError(
+        'browser_element_not_focusable',
+        'The selected element could not receive keyboard focus',
+        409,
+      )
+    }
+  }
+  const descriptor = keyDescriptor(key)
+  await session.client.Input.dispatchKeyEvent({
+    type: 'rawKeyDown',
+    ...descriptor,
+  })
+  await session.client.Input.dispatchKeyEvent({
+    type: 'keyUp',
+    ...descriptor,
+  })
+  await delay(300)
+  await waitForDocument(session.client.Runtime, 5_000).catch(() => undefined)
+}
+
+function locatedElementExpression(locator, body) {
+  return `(() => {
+    const path = ${JSON.stringify(locator)}
+    let root = document
+    let element = null
+    for (const segment of path) {
+      element = root?.querySelector?.(segment.selector) || null
+      if (!element) {
+        return { applied: false, reason: 'element_not_found' }
+      }
+      if (segment.enter === 'shadow') {
+        root = element.shadowRoot
+        if (!root) {
+          return { applied: false, reason: 'shadow_root_not_available' }
+        }
+      } else if (segment.enter === 'frame') {
+        try {
+          root = element.contentDocument
+        } catch {
+          root = null
+        }
+        if (!root) {
+          return { applied: false, reason: 'frame_document_not_available' }
+        }
+      }
+    }
+    ${body}
+  })()`
+}
+
+function locatedElementObjectExpression(locator) {
+  return `(() => {
+    const path = ${JSON.stringify(locator)}
+    let root = document
+    let element = null
+    for (const segment of path) {
+      element = root?.querySelector?.(segment.selector) || null
+      if (!element) return null
+      if (segment.enter === 'shadow') {
+        root = element.shadowRoot
+      } else if (segment.enter === 'frame') {
+        try {
+          root = element.contentDocument
+        } catch {
+          root = null
+        }
+      }
+      if (segment.enter && !root) return null
+    }
+    return element
+  })()`
 }
 
 async function waitForDocument(Runtime, timeoutMs) {
@@ -853,6 +1322,8 @@ async function recoverNavigation(
         status: 'applied',
         actionAttemptId,
         idempotencyKey: key,
+        pageId: session.pageId,
+        openedNewPage: false,
         observation,
         evidence: evidenceFor('navigate', before, url, observation),
       }
@@ -897,10 +1368,21 @@ function actionSummary(primitive, target, before, observation) {
   if (primitive === 'navigate') {
     return `Navigation applied; page is now ${observation.url}`
   }
+  if (primitive === 'open_page') {
+    return `New browser page opened at ${observation.url}`
+  }
+  if (primitive === 'history') {
+    return `Browser history ${target} applied; page is now ${observation.url}`
+  }
   if (primitive === 'fill') {
     return `Field ${target.elementRef} was filled and read back; page state ${
       changed ? 'changed' : 'did not otherwise change'
     }`
+  }
+  if (primitive === 'upload') {
+    return `File ${target.fileName} (${target.byteCount} bytes) was set on ${
+      target.elementRef
+    }; page state ${changed ? 'changed' : 'did not otherwise change'}`
   }
   if (primitive === 'select') {
     return `Select ${target.elementRef} changed to the requested option; page state ${
@@ -913,6 +1395,11 @@ function actionSummary(primitive, target, before, observation) {
     return `Viewport scrolled from ${beforeY}px to ${afterY}px; page state ${
       changed ? 'changed' : 'did not otherwise change'
     }`
+  }
+  if (primitive === 'press') {
+    return `Key ${target.key} was dispatched${
+      target.elementRef ? ` to ${target.elementRef}` : ''
+    }; page state ${changed ? 'changed' : 'did not visibly change'}`
   }
   return `Click dispatched to ${target}; page state ${
     changed ? 'changed' : 'did not visibly change'
@@ -930,6 +1417,48 @@ function requireScrollDirection(value) {
   return value
 }
 
+function requireHistoryDirection(value) {
+  if (!['back', 'forward', 'reload'].includes(value)) {
+    throw protocolError(
+      'invalid_browser_history_direction',
+      'History direction must be back, forward, or reload',
+      400,
+    )
+  }
+  return value
+}
+
+function requireUploadTarget(args) {
+  const elementRef = requiredText(args?.elementRef, 'elementRef')
+  const filePath = requiredText(args?.filePath, 'filePath')
+  const fileName = requiredText(args?.fileName, 'fileName')
+  if (!path.isAbsolute(filePath)) {
+    throw protocolError(
+      'invalid_browser_upload_path',
+      'Upload path must be an absolute path resolved by Backend',
+      400,
+    )
+  }
+  let stat
+  try {
+    stat = fs.statSync(filePath)
+  } catch {
+    throw protocolError(
+      'browser_upload_file_not_found',
+      'Upload file no longer exists',
+      404,
+    )
+  }
+  if (!stat.isFile() || stat.size !== args?.byteCount) {
+    throw protocolError(
+      'browser_upload_file_changed',
+      'Upload file is not regular or changed after approval',
+      409,
+    )
+  }
+  return { elementRef, filePath, fileName, byteCount: stat.size }
+}
+
 function boundScrollAmount(value) {
   if (value === undefined || value === null) return 800
   if (!Number.isInteger(value) || value < 100 || value > 5_000) {
@@ -940,6 +1469,75 @@ function boundScrollAmount(value) {
     )
   }
   return value
+}
+
+const BROWSER_KEYS = new Map([
+  ['Enter', { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }],
+  ['Escape', { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }],
+  ['Tab', { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }],
+  ['ArrowUp', { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 }],
+  ['ArrowDown', { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 }],
+  ['ArrowLeft', { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 }],
+  ['ArrowRight', { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 }],
+  ['Home', { key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 }],
+  ['End', { key: 'End', code: 'End', windowsVirtualKeyCode: 35 }],
+  ['PageUp', { key: 'PageUp', code: 'PageUp', windowsVirtualKeyCode: 33 }],
+  ['PageDown', { key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 }],
+  ['Backspace', { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 }],
+  ['Delete', { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 }],
+  ['Space', { key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }],
+])
+
+function requireBrowserKey(value) {
+  const key = requiredText(value, 'key')
+  if (!BROWSER_KEYS.has(key)) {
+    throw protocolError(
+      'invalid_browser_key',
+      'Key must be Enter, Escape, Tab, an arrow/navigation key, Backspace, Delete, or Space',
+      400,
+    )
+  }
+  return key
+}
+
+function keyDescriptor(key) {
+  return BROWSER_KEYS.get(key)
+}
+
+function optionalText(value) {
+  if (value === undefined || value === null || value === '') return null
+  return requiredText(value, 'elementRef')
+}
+
+const DEFINITELY_NOT_APPLIED_CODES = new Set([
+  'browser_element_not_found',
+  'browser_element_disabled',
+  'browser_element_not_focusable',
+  'browser_field_not_fillable',
+  'browser_file_input_required',
+  'browser_select_not_supported',
+  'element_not_found',
+  'element_not_visible',
+  'element_obscured',
+  'element_disabled',
+  'browser_click_not_applied',
+  'shadow_root_not_available',
+  'frame_document_not_available',
+  'option_not_available',
+  'select_not_found',
+  'value_setter_unavailable',
+  'invalid_browser_scroll_direction',
+  'invalid_browser_scroll_amount',
+  'invalid_browser_history_direction',
+  'browser_history_unavailable',
+  'invalid_browser_upload_path',
+  'browser_upload_file_not_found',
+  'browser_upload_file_changed',
+  'invalid_browser_key',
+])
+
+function knownNotApplied(error) {
+  return DEFINITELY_NOT_APPLIED_CODES.has(error?.code)
 }
 
 function storeActionResult(

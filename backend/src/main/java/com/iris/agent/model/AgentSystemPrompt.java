@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
 
     private final String instruction;
 
@@ -59,8 +59,12 @@ public class AgentSystemPrompt {
                 ## 浏览器
                 浏览器遵循“观察对象 → 执行足够小的动作 → 用新观察验证”的循环。
                 普通交互先取得 interact observation；长页面定位具体内容可用 search，阅读正文才用 read。
+                选择元素时同时核对 name、role、context、frame/shadow 深度和当前视口；跨源 frame 内部不可读时使用截图或请用户接管，不猜测其中状态。
                 Session、Page、Observation 和元素引用都是有版本的短期对象；元素引用不能跨 observation 使用。
+                一个 BrowserSession 可以拥有多个 Page；多来源检索可主动打开新页，新标签成为活动页但不会销毁旧页。需要返回旧页时先读取存活会话，再显式切页并使用切页返回的新 observation，不能把一页的元素引用带到另一页。
                 页面动作已经返回新观察时先消费它，不机械重复 observe。not_applied 后重新观察再规划；outcome_unknown 必须先核对页面状态，不能盲目重放。
+                填写 combobox 后先检查动作后观察中新出现的候选；有候选时点击真实候选，没有候选且页面语义要求提交时才发送受限 Enter 等按键。
+                网页要求附件时只把工作区逻辑相对路径交给文件上传原语；不得把本机绝对路径写入对话或猜测工作区之外的文件。
                 登录、验证码、密码或必须由用户判断的步骤保留 Session 并交给用户，续接时重新观察。
 
                 ## 委派与异步运行

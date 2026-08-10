@@ -15,7 +15,10 @@ WebBridge 是一个独立的本地守护进程（daemon），通过 CDP（Chrome
   → 页面状态/截图/结果回流，嵌入对话瀑布流
 ```
 
-**借窗模式**：启动用户自己的 Chrome（带登录态），或新开一个干净窗口。模型操作，人随时接管——不是无头爬虫，是"借给用户一双手"。
+**借窗模式**：默认启动一个持久化的 Iris 专用 Edge profile。用户可在该窗口登录微软账号，
+同步密码、书签与常用账号；模型操作，人随时接管——不是无头爬虫，是“借给用户一双手”。
+Chromium 136+ 已限制默认用户数据目录上的远程调试，因此 Iris 不强行接管用户正在使用的
+日常 Edge profile，也不复制该目录；专用 profile 与同步机制才是可持续的产品边界。
 
 ## 2. 对象、观察与动作
 
@@ -35,6 +38,10 @@ BrowserRuntime（可配置、可失效）
 `session_id / page_id`，以及结果中用于证据和恢复的 `runtime_id` 与最近一次观察返回的
 短期元素引用，不要求理解 CDP target、WebSocket、进程 handle 或凭据。元素引用只在对应 Observation revision
 内有效，页面变化后重新观察，不把脆弱 CSS selector 当作长期对象身份。
+一个 Session 可以拥有多个 Page，但只有一个活动页。点击打开新标签时，新 Page 成为活动页，
+旧 Page 的 client、最近 Observation 和短期元素表仍由 daemon 保存；切回时必须显式使用
+`switch_browser_page` 并取得该页的新 Observation。`page_id` 因此不是展示字段，而是元素 ref、
+截图、动作幂等与人工接管共同使用的作用域。切页不能复用另一页的 observation ref。
 同一默认 Runtime 上的后续页面工具也可省略 `runtime_id`；只有会话被显式创建在非默认
 Runtime 或多环境间切换时才继续携带它，避免把基础设施路由变成每一步的模型负担。
 
@@ -42,6 +49,12 @@ Runtime 或多环境间切换时才继续携带它，避免把基础设施路由
 元素引用的点击、非敏感文本填写。观察同时返回页面事实、当前视口以及一组有界的交互
 元素；视口内元素优先进入预算。动作成功后自动附带新观察，使模型的自然循环保持为
 “看见 → 操作 → 确认”，不以动作数量衡量完成度。
+
+元素 ref 在 daemon 内解析为结构化 locator path，而不是把 CSS selector 暴露给模型。
+locator 可以穿过开放 Shadow Root 与同源 iframe；元素摘要同时携带有限的语义上下文、
+frame/shadow 深度，降低重复“确定/下一步/编辑”按钮的歧义。跨源 iframe 会作为不可直接
+读取的 frame 边界出现在观察中，首版要求截图或人工接管，不能假装顶层 JavaScript 已经
+看见其内部。后续若启用独立 frame CDP session，也仍保持同一个 Observation/ref 契约。
 
 ### 2.1 感知阶梯：结构优先，视觉按需
 
@@ -69,8 +82,19 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 下一步可用引用，而不是再次复制整篇网页。Observation 还应标记：
 
 - `new=true`：相对上一份观察新出现的元素，帮助识别自动补全、弹窗和动作后的局部变化；
+- `previousObservationRef / change`：说明本观察从哪一份已交付观察演进而来，以及 URL、
+  视口、可交互元素和可见正文是否变化。`fingerprint` 只描述页面事实，不得因为本次选择
+  `interact / search / read` 而变化；否则一次阅读会被误判为一次页面变化；
 - `pixelsAbove / pixelsBelow`：说明视口之外还有多少内容，避免无目的滚动；
 - `trust=untrusted_external_data`：网页文字永远是数据，不因看起来像系统指令而获得权限。
+
+等待不是连续制造 Observation。daemon 可以在预算内探测页面，但中间探测不推进 revision、
+不替换元素 ref，也不把自动补全刚出现的元素提前“消费”掉；条件满足或超时后只提交一份
+最终 Observation。这样 `new`、水位线和前端看到的状态演进与模型实际收到的事实一致。
+
+页面有两种指纹：用于判断页面内容变化的 `page fingerprint`，以及用于阻止旧引用动作的
+`action fingerprint`。前者可包含可见正文，后者只包含 URL、视口和可交互元素契约，避免
+页面时钟或广告文字刷新让一个本来安全的点击无故过期。两者都不依赖观察预算和输出格式。
 
 这不是把 Browser Use 的专用 Loop 搬进 Iris。其 DOM 索引、新元素、截图按需和动作中断
 思想进入 WebBridge；任务历史、工具发现、审批、压缩与恢复仍由 Iris 的通用 Agentic
@@ -82,12 +106,18 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 |---|---|
 | `list_browser_runtimes()` | 发现已配置 Runtime 及其当前可用性，不暴露地址或令牌 |
 | `open_browser_session(url?, runtimeId?)` | 创建短期浏览器会话和页面；通常自动选择默认 Runtime，多 Runtime 定向时才显式传入 |
+| `list_browser_sessions()` | 列出存活 Session、活动 Page 与会话拥有的页面摘要，用于刷新或人工接管后恢复 |
+| `open_browser_page(sessionId, url)` | 在现有 Session 中打开并激活一个新页面，保留旧页面；用于多来源检索与比较 |
+| `switch_browser_page(sessionId, pageId)` | 切换到 Session 已拥有的页面并返回一份新观察；不接受任意外部 CDP target |
 | `observe_browser_page(sessionId, pageId?)` | **页面状态**：有界正文、交互元素与 revision，这是模型的“眼睛” |
 | `navigate_browser_page(sessionId, pageId, url, expectedObservationRef?)` | 导航并返回新页面状态；同一 idempotency key 不重复执行 |
+| `navigate_browser_history(sessionId, pageId, observationRef, direction)` | 使用真实页面历史后退、前进或刷新，并返回新观察；不让模型猜上一个 URL |
 | `scroll_browser_page(sessionId, pageId, observationRef, direction, amount?)` | 从当前观察向上/向下或到达顶部/底部，返回新的视口观察；不改变远端业务数据 |
 | `click_browser_element(sessionId, pageId, observationRef, elementRef)` | 点击当前观察中的元素；准备时解析人类描述，页面变化则不执行 |
 | `fill_browser_field(sessionId, pageId, observationRef, elementRef, value)` | 填写普通文本字段并重读确认；首版拒绝 password/file 等敏感类型 |
+| `upload_browser_file(sessionId, pageId, observationRef, elementRef, workspacePath)` | 将工作区围栏内的现有文件设置到真实 file input；模型与历史只保留逻辑路径 |
 | `select_browser_option(sessionId, pageId, observationRef, elementRef, value)` | 使用观察中真实 option value 选择原生下拉项，不让模型猜 label |
+| `press_browser_key(sessionId, pageId, observationRef, key, elementRef?)` | 向当前页或观察中的字段发送一个受限键盘键；用于 Enter、Escape、Tab 和方向键，不接受任意快捷键脚本 |
 | `capture_browser_screenshot(sessionId, pageId)` | 截取当前页面为二进制 Managed Object，只回传对象引用和图像 metadata |
 | `wait_browser_page(sessionId, pageId, afterObservationRef, condition)` | 在 daemon 内等待异步页面条件，只返回最终观察，避免轮询污染上下文 |
 | `inspect_browser_action(sessionId, toolExecutionId)` | 响应丢失后读取同一幂等动作结果，绝不生成第二次点击 |
@@ -101,20 +131,32 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 
 - **页面状态 > 截图**：AX 树摘要 token 成本低且可动作；截图用于校验与疑难场景（视觉模型）。
 - **动作后必回流状态**：每个动作原语返回新的页面状态摘要，模型不需要额外调用就能确认效果。
+- **失败必须表达副作用边界**：元素已消失、已禁用、字段类型不支持等可在动作前确定的失败
+  返回 `not_applied`；只有动作已经派发而后续确认中断时才返回 `outcome_unknown`。模型据此
+  决定纠参还是先核对，不能把所有异常都当成“可能已经点击”。
 - **观察引用是水位线**：动作可以声明 `expectedObservationRef`；若页面已经变化，daemon
   返回 `not_applied`，模型重新观察，不在旧页面认知上盲目点击。
 - **动作身份不可重造**：Backend 传入 `toolExecutionId + actionAttemptId + idempotencyKey + expectedObservationRef`；daemon 返回 `applied / not_applied / outcome_unknown + evidenceRef`。响应丢失时只能查询同一动作结果，不能生成新 attempt 再点一次。
-- **选择器语义化**：优先 role/label/placeholder 定位，CSS/XPath 兜底——页面改版存活率完全不同。
+- **定位器留在 Runtime**：模型只消费 ref 与 role/label/context；daemon 在该 Observation
+  内保存可穿过开放 Shadow Root/同源 frame 的 locator path。页面改版后重新观察，不让模型
+  猜 CSS/XPath，也不把 locator 当成跨 revision 的永久身份。
 - **风险由实际动作提升**：通用 click/fill/select/press 的 `prepare` 必须结合目标元素、页面语义和动作批次重新分类，风险只能维持或提升，不能把“点击最终提交”按一个普通 click 降级；无法判断时默认需要审批。
 - **敏感输入不是普通字符串**：当前内核还没有 secret handle 时，`fill_browser_field`
   明确拒绝 password、file 和不可安全重读的字段。以后由凭据对象/人工接管提供值，不能
   先把密码作为 Tool 参数写进对话和 Operation Snapshot。
+- **上传跨两个客观环境**：`upload_browser_file` 的参数只接受工作区逻辑路径。Backend 在
+  prepare 与 execute 时分别经过 `WorkspacePathGuard`，Operation Snapshot 不保存绝对路径；
+  daemon 只在已审批动作中取得物理路径，用 CDP 设置当前 Observation 的 file input，并以
+  文件名、大小和动作后观察验证。网页永远不能反向指定本机任意路径。
 - **截图不走 Base64 JSON**：daemon 返回原始图像字节，Backend 直接写入 Managed Object
   Store；Tool observation 只含 `objectRef/contentHash/mediaType/byteCount`。这样大图不会
   穿过模型文本上下文，也不会被 Frontend 重复缓存。
 - **批处理不是默认捷径**：只有多个动作共享同一份已验证 observation、前置条件彼此独立，
   且 Runtime 能在页面变化时停止剩余动作，才可形成有界 batch。首版仍保持一个动作一份
   新观察，先保证正确性与可恢复性。
+- **循环检测是运行时反馈，不是第二个规划器**：Backend 可根据最近动作 identity 与页面
+  fingerprint 判断“相似动作重复且页面无进展”，向下一 Round 追加一条有界恢复提示；它不
+  替模型选择新路径，也不能阻止确实在分页或重复录入中持续产生新证据的动作。
 
 研究参照：
 
@@ -183,6 +225,11 @@ Frontend 成为第二个浏览器执行器。
 替换，Backend 私有协议和 Tool 语义不依赖 CDP。不能为了少一个进程让 Frontend 直连
 浏览器，也不能让 daemon 拥有 Conversation、Pipeline 或审批真相。
 
+Windows 默认浏览器实现优先发现 Microsoft Edge，再回退到 Chrome/Chromium；用户显式配置
+`IRIS_WEBBRIDGE_BROWSER_PATH` 时才覆盖该选择。profile 默认位于 Iris 本机数据目录并长期
+复用，不能使用临时目录，也不能和 Browser Use、日常 Edge 等另一个正在运行的实例共享
+同一 `user-data-dir`。这样登录态有生命周期，Runtime 仍归 Iris 自己管理。
+
 ## 8. Runtime 生命周期与持久化边界
 
 - Runtime Definition 来自本机配置，稳定 `runtime_id` 进入 Capability observation，地址与
@@ -192,6 +239,9 @@ Frontend 成为第二个浏览器执行器。
   执行，不占用普通 Agentic Round；
 - daemon 进程、CDP client 与 BrowserSession 是 ephemeral runtime object；TTL、关闭或
   进程重启后可以失效，不伪装成永久业务对象；
+- 默认空闲租约为 60 分钟，给登录、人工接管和长页面阅读留出真实时间；每次观察、动作、
+  切页都会续租；单纯列举不会让所有旧会话续命。产品完成持久 Attention 后可由等待态显式持有租约，不能用
+  高频轮询假装保活；
 - Backend 持久化 ToolCall、Operation Snapshot、session/page 引用、Observation/Evidence
   内容引用与最终状态，不尝试序列化 CDP handle；
 - availability probe 有短缓存，区分“未配置、daemon 不可达、协议不兼容、浏览器不可用”；

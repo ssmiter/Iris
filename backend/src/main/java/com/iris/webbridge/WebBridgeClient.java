@@ -13,6 +13,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
@@ -98,6 +99,43 @@ public class WebBridgeClient {
                 runtimes.require(runtimeId),
                 "POST",
                 "/sessions/" + segment(sessionId) + "/observe",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
+    public JsonNode switchPage(
+            String runtimeId,
+            String sessionId,
+            String pageId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("pageId", pageId);
+        body.put("purpose", "interact");
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/pages/switch",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
+    public JsonNode openPage(
+            String runtimeId,
+            String sessionId,
+            String url,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":open_page");
+        body.put("idempotencyKey", executionId);
+        body.put("url", url);
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/pages",
                 body,
                 ACTION_TIMEOUT
         );
@@ -251,6 +289,94 @@ public class WebBridgeClient {
         arguments.put("pageId", pageId);
         arguments.put("elementRef", elementRef);
         arguments.put("value", value);
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/actions",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
+    public JsonNode press(
+            String runtimeId,
+            String sessionId,
+            String pageId,
+            String observationRef,
+            String elementRef,
+            String key,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":press");
+        body.put("idempotencyKey", executionId);
+        body.put("expectedObservationRef", observationRef);
+        body.put("primitive", "press");
+        ObjectNode arguments = body.putObject("normalizedArgs");
+        arguments.put("pageId", pageId);
+        arguments.put("key", key);
+        if (elementRef != null && !elementRef.isBlank()) {
+            arguments.put("elementRef", elementRef);
+        }
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/actions",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
+    public JsonNode navigateHistory(
+            String runtimeId,
+            String sessionId,
+            String pageId,
+            String observationRef,
+            String direction,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":history");
+        body.put("idempotencyKey", executionId);
+        body.put("expectedObservationRef", observationRef);
+        body.put("primitive", "history");
+        ObjectNode arguments = body.putObject("normalizedArgs");
+        arguments.put("pageId", pageId);
+        arguments.put("direction", direction);
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId) + "/actions",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
+    public JsonNode uploadFile(
+            String runtimeId,
+            String sessionId,
+            String pageId,
+            String observationRef,
+            String elementRef,
+            Path physicalPath,
+            String fileName,
+            long byteCount,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":upload");
+        body.put("idempotencyKey", executionId);
+        body.put("expectedObservationRef", observationRef);
+        body.put("primitive", "upload");
+        ObjectNode arguments = body.putObject("normalizedArgs");
+        arguments.put("pageId", pageId);
+        arguments.put("elementRef", elementRef);
+        arguments.put("filePath", physicalPath.toString());
+        arguments.put("fileName", fileName);
+        arguments.put("byteCount", byteCount);
         return send(
                 runtimes.require(runtimeId),
                 "POST",

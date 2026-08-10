@@ -8,12 +8,14 @@ import {
   closeSession,
   createSession,
   listSessions,
+  openPage,
   observeSession,
   readActionResult,
   reapExpiredSessions,
   resolveElement,
   runtimeState,
   shutdown,
+  switchPage,
   waitForPage,
 } from './browserRuntime.js'
 
@@ -45,7 +47,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && url.pathname === '/sessions') {
-      const sessions = listSessions()
+      const sessions = await listSessions()
       return json(response, 200, {
         sessions,
         count: sessions.length,
@@ -58,6 +60,30 @@ const server = http.createServer(async (request, response) => {
         typeof body.url === 'string' ? body.url : 'about:blank',
       )
       return json(response, 201, result)
+    }
+
+
+    if (
+      request.method === 'POST'
+      && parts.length === 3
+      && parts[0] === 'sessions'
+      && parts[2] === 'pages'
+    ) {
+      const body = await readJson(request)
+      const result = await openPage(parts[1], body)
+      return json(response, 201, result)
+    }
+
+    if (
+      request.method === 'POST'
+      && parts.length === 4
+      && parts[0] === 'sessions'
+      && parts[2] === 'pages'
+      && parts[3] === 'switch'
+    ) {
+      const body = await readJson(request)
+      const result = await switchPage(parts[1], body)
+      return json(response, 200, result)
     }
 
     if (

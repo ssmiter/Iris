@@ -37,9 +37,9 @@ public class ListBrowserSessionsTool implements Tool {
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.list_browser_sessions",
-                "2",
+                "3",
                 "list_browser_sessions",
-                "列出指定浏览器运行时仍存活的短期会话与页面；需要继续已有网页任务或判断会话是否失效时使用",
+                "列出指定浏览器运行时仍存活的短期会话、活动页面和会话拥有的多标签页面；需要续接网页任务、切回旧页或判断会话是否失效时使用",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,
@@ -93,7 +93,7 @@ public class ListBrowserSessionsTool implements Tool {
                     "guidance",
                     response.path("count").asInt(0) == 0
                             ? "当前没有存活会话；使用 open_browser_session 创建"
-                            : "选择 sessionId/pageId 后调用 observe_browser_page；页面引用只在会话存活期间有效"
+                            : "直接续接活动页，或从 pages 选择 pageId 后调用 switch_browser_page；页面引用只在所属页面和会话存活期间有效"
             );
         }
         return ToolOutcome.succeeded(response);
@@ -131,7 +131,7 @@ public class ListBrowserSessionsTool implements Tool {
                 .put("description", "本次列举对应的 Browser Runtime ID");
         properties.putObject("sessions")
                 .put("type", "array")
-                .put("description", "仍存活的短期 Session/Page 引用");
+                .put("description", "仍存活的短期 Session；每项包含活动 pageId、pageCount 与 pages 摘要");
         properties.putObject("count").put("type", "integer")
                 .put("description", "仍存活的 BrowserSession 数量");
         properties.putObject("guidance").put("type", "string")

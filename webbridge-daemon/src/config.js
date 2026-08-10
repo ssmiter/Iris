@@ -31,7 +31,7 @@ export const config = Object.freeze({
   headless: process.env.IRIS_WEBBRIDGE_HEADLESS === 'true',
   sessionTtlMs: integer(
     'IRIS_WEBBRIDGE_SESSION_TTL_MINUTES',
-    10,
+    60,
     1,
     1440,
   ) * 60_000,
