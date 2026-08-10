@@ -416,6 +416,7 @@ normalize → validate → durable claim → prepare → snapshot
 | `/web/browser/open_browser_session` | `open_browser_session` | 创建短期 BrowserSession/Page；改变本机 Application 状态并默认审批 |
 | `/web/browser/open_browser_page` | `open_browser_page` | 在现有 Session 内打开并激活一个新页面，旧页面仍保留用于比较与续接 |
 | `/web/browser/switch_browser_page` | `switch_browser_page` | 在同一 Session 已拥有的页面之间切换；元素引用严格按 Page 隔离 |
+| `/web/browser/close_browser_page` | `close_browser_page` | 关闭 Session 内明确页面并安全选择剩余活动页；最后一页由 close_browser_session 负责 |
 | `/web/browser/observe_browser_page` | `observe_browser_page` | 读取有界 Page Observation 与当前 revision 的短期元素引用 |
 | `/web/browser/wait_browser_page` | `wait_browser_page` | 在 daemon 内等待变化/ready/文本，只向上下文回流最终 Observation |
 | `/web/browser/navigate_browser_page` | `navigate_browser_page` | 在期望 Observation 上执行幂等导航，并返回新 Observation 与证据 |

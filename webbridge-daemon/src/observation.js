@@ -97,6 +97,19 @@ const OBSERVATION_SCRIPT = `(limits => {
   const label = element => {
     const aria = element.getAttribute('aria-label')
     if (aria) return aria.trim()
+    const labelledBy = element.getAttribute('aria-labelledby')
+    if (labelledBy) {
+      const labelRoot = element.getRootNode()
+      const labelledText = labelledBy.split(/\\s+/)
+        .map(id => labelRoot?.getElementById?.(id)
+          || element.ownerDocument?.getElementById(id))
+        .filter(Boolean)
+        .map(item => item.innerText || item.textContent || '')
+        .join(' ')
+        .replace(/\\s+/g, ' ')
+        .trim()
+      if (labelledText) return labelledText.slice(0, 240)
+    }
     if (element.labels?.length) {
       return Array.from(element.labels)
         .map(item => item.innerText || item.textContent || '')
@@ -105,8 +118,14 @@ const OBSERVATION_SCRIPT = `(limits => {
     }
     const placeholder = element.getAttribute('placeholder')
     if (placeholder) return placeholder.trim()
+    const title = element.getAttribute('title')
+    if (title) return title.trim()
+    const imageAlt = element.querySelector?.('img[alt]')?.getAttribute('alt')
+    if (imageAlt) return imageAlt.trim()
     const text = element.innerText || element.textContent || ''
-    return text.replace(/\\s+/g, ' ').trim().slice(0, 240)
+    const normalized = text.replace(/\\s+/g, ' ').trim()
+    if (normalized) return normalized.slice(0, 240)
+    return String(element.getAttribute('name') || '').trim().slice(0, 240)
   }
 
   const semanticContext = element => {
@@ -206,6 +225,7 @@ const OBSERVATION_SCRIPT = `(limits => {
           : String(element.value || '')
         return [
           label(element),
+          semanticContext(element),
           element.getAttribute('placeholder') || '',
           element.getAttribute('title') || '',
           element.getAttribute('href') || '',

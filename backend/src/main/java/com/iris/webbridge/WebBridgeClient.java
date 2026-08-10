@@ -141,6 +141,26 @@ public class WebBridgeClient {
         );
     }
 
+    public JsonNode closePage(
+            String runtimeId,
+            String sessionId,
+            String pageId,
+            String executionId
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("toolExecutionId", executionId);
+        body.put("actionAttemptId", executionId + ":close_page");
+        body.put("idempotencyKey", executionId);
+        return send(
+                runtimes.require(runtimeId),
+                "POST",
+                "/sessions/" + segment(sessionId)
+                        + "/pages/" + segment(pageId) + "/close",
+                body,
+                ACTION_TIMEOUT
+        );
+    }
+
     public JsonNode waitForPage(
             String runtimeId,
             String sessionId,

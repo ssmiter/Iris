@@ -5,6 +5,7 @@ import {
   applyAction,
   browserInstallation,
   captureScreenshot,
+  closePage,
   closeSession,
   createSession,
   listSessions,
@@ -83,6 +84,19 @@ const server = http.createServer(async (request, response) => {
     ) {
       const body = await readJson(request)
       const result = await switchPage(parts[1], body)
+      return json(response, 200, result)
+    }
+
+    if (
+      request.method === 'POST'
+      && parts.length === 5
+      && parts[0] === 'sessions'
+      && parts[2] === 'pages'
+      && parts[4] === 'close'
+    ) {
+      const body = await readJson(request)
+      body.pageId = parts[3]
+      const result = await closePage(parts[1], body)
       return json(response, 200, result)
     }
 

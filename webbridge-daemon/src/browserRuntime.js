@@ -246,6 +246,106 @@ export async function switchPage(sessionId, body) {
   }
 }
 
+export async function closePage(sessionId, body) {
+  const session = requireSession(sessionId)
+  if (!await chromeIsAlive()) {
+    throw protocolError(
+      'browser_not_running',
+      'Browser process is no longer available',
+      503,
+    )
+  }
+  const pageId = requiredText(body.pageId, 'pageId')
+  const key = requiredText(body.idempotencyKey, 'idempotencyKey')
+  const actionAttemptId = requiredText(body.actionAttemptId, 'actionAttemptId')
+  const requestFingerprint = createHash('sha256')
+    .update(JSON.stringify({ primitive: 'close_page', pageId }))
+    .digest('hex')
+  const previous = session.actionResults.get(key)
+  if (previous) {
+    if (previous.requestFingerprint !== requestFingerprint) {
+      throw protocolError(
+        'browser_idempotency_conflict',
+        'Idempotency key was already used for another page close',
+        409,
+      )
+    }
+    return previous.result
+  }
+  const closingActive = pageId === session.pageId
+  const closingPage = closingActive
+    ? pageState(session)
+    : session.backgroundPages.get(pageId)
+  if (!closingPage) {
+    throw protocolError(
+      'browser_page_not_found',
+      'Page does not belong to this BrowserSession',
+      404,
+    )
+  }
+  if (session.backgroundPages.size === 0) {
+    throw protocolError(
+      'browser_last_page_requires_session_close',
+      'The last page cannot be closed alone; close the BrowserSession',
+      409,
+    )
+  }
+  if (closingActive) {
+    const replacements = [...session.backgroundPages.values()]
+    const replacement = replacements.at(-1)
+    session.backgroundPages.delete(replacement.pageId)
+    restorePage(session, replacement)
+  } else {
+    session.backgroundPages.delete(pageId)
+  }
+
+  await CDP.Close({ port: chrome.port, id: pageId })
+    .catch(() => undefined)
+  const livePageIds = await pageTargetIds()
+  const closed = !livePageIds.has(pageId)
+  if (closed) {
+    await closingPage.client.close().catch(() => undefined)
+  }
+  if (!closed) {
+    session.backgroundPages.set(pageId, closingPage)
+    const result = {
+      status: 'outcome_unknown',
+      actionAttemptId,
+      idempotencyKey: key,
+      closedPageId: pageId,
+      activePageId: session.pageId,
+      pages: ownedPageSummaries(session),
+      message: 'Browser target still appeared after close was requested',
+    }
+    storeActionResult(session, key, requestFingerprint, result)
+    return result
+  }
+  const observation = closingActive
+    ? await observePage(session).catch(() => session.lastObservation)
+    : session.lastObservation
+  const evidenceHash = createHash('sha256')
+    .update(JSON.stringify({ pageId, activePageId: session.pageId, key }))
+    .digest('hex')
+  const result = {
+    status: 'applied',
+    actionAttemptId,
+    idempotencyKey: key,
+    closedPageId: pageId,
+    activePageId: session.pageId,
+    pages: ownedPageSummaries(session),
+    observation,
+    evidence: {
+      kind: 'browser_page_close',
+      ref: `ev_${evidenceHash.slice(0, 32)}`,
+      summary: closingActive
+        ? `Closed active page and switched to ${session.pageId}`
+        : `Closed background page ${pageId}`,
+    },
+  }
+  storeActionResult(session, key, requestFingerprint, result)
+  return result
+}
+
 export async function waitForPage(sessionId, body) {
   const session = requireSession(sessionId)
   requirePage(session, body.pageId)
@@ -742,7 +842,7 @@ async function navigateAndSettle(session, url) {
     throw new Error(navigation.errorText)
   }
   await waitForDocument(session.client.Runtime, 20_000)
-  await delay(250)
+  await waitForObservableContent(session.client.Runtime, 2_500)
 }
 
 async function navigateHistory(session, direction) {
@@ -762,7 +862,7 @@ async function navigateHistory(session, direction) {
     await session.client.Page.navigateToHistoryEntry({ entryId: entry.id })
   }
   await waitForDocument(session.client.Runtime, 20_000)
-  await delay(250)
+  await waitForObservableContent(session.client.Runtime, 2_500)
 }
 
 async function clickElement(session, elementRef) {
@@ -1305,6 +1405,29 @@ async function waitForDocument(Runtime, timeoutMs) {
     await delay(100)
   }
   throw new Error('Page did not become observable before timeout')
+}
+
+async function waitForObservableContent(Runtime, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const result = await Runtime.evaluate({
+        expression: `(() => {
+          const text = String(document.body?.innerText || '').trim()
+          const interactive = document.querySelector(
+            'a[href],button,input,textarea,select,[role="button"],'
+            + '[role="link"],[role="textbox"],[contenteditable="true"]'
+          )
+          return text.length >= 20 || Boolean(interactive)
+        })()`,
+        returnByValue: true,
+      })
+      if (result.result?.value === true) return
+    } catch {
+      // Navigation may replace the execution context while the SPA boots.
+    }
+    await delay(100)
+  }
 }
 
 async function recoverNavigation(

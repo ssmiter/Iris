@@ -91,6 +91,8 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 等待不是连续制造 Observation。daemon 可以在预算内探测页面，但中间探测不推进 revision、
 不替换元素 ref，也不把自动补全刚出现的元素提前“消费”掉；条件满足或超时后只提交一份
 最终 Observation。这样 `new`、水位线和前端看到的状态演进与模型实际收到的事实一致。
+导航完成后 daemon 还会在一个很短的上限内等待正文或交互元素出现，吸收 SPA 的空壳阶段；
+若仍为空就如实返回，不自动 reload，也不替模型重复外部请求。
 
 页面有两种指纹：用于判断页面内容变化的 `page fingerprint`，以及用于阻止旧引用动作的
 `action fingerprint`。前者可包含可见正文，后者只包含 URL、视口和可交互元素契约，避免
@@ -109,6 +111,7 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 | `list_browser_sessions()` | 列出存活 Session、活动 Page 与会话拥有的页面摘要，用于刷新或人工接管后恢复 |
 | `open_browser_page(sessionId, url)` | 在现有 Session 中打开并激活一个新页面，保留旧页面；用于多来源检索与比较 |
 | `switch_browser_page(sessionId, pageId)` | 切换到 Session 已拥有的页面并返回一份新观察；不接受任意外部 CDP target |
+| `close_browser_page(sessionId, pageId)` | 关闭 Session 内一个明确页面；活动页关闭后切到仍存活页面，最后一页要求关闭整个 Session |
 | `observe_browser_page(sessionId, pageId?)` | **页面状态**：有界正文、交互元素与 revision，这是模型的“眼睛” |
 | `navigate_browser_page(sessionId, pageId, url, expectedObservationRef?)` | 导航并返回新页面状态；同一 idempotency key 不重复执行 |
 | `navigate_browser_history(sessionId, pageId, observationRef, direction)` | 使用真实页面历史后退、前进或刷新，并返回新观察；不让模型猜上一个 URL |
