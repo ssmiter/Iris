@@ -178,6 +178,11 @@ Task Ledger 一旦被当前 Run 主动创建或更新，就参与一次有界的
 当前 Run 使用 Ledger 的短对话完全不受影响。一次提醒后仍无行动则正常收尾，避免 readiness
 机制自身形成昂贵循环。
 
+Work State 之外的当前焦点、待决事项、下一动作和交接说明使用同版本的 Control State
+扩展保存；稳定边界再建立只引用该状态版本的 Task Checkpoint。Run 与 Task 的关系显式
+落盘，因此恢复与交接不再依赖“最后更新状态的 Run”这一偶然关系。完整边界见
+`docs/30-task-control-plane.md`。
+
 ### 8.1 Runtime Pulse 不是任务状态
 
 每个 Round 在模型上下文末端加入一条由 Backend 计算的有界 Runtime Pulse：
@@ -206,6 +211,7 @@ Task Work State 记录目标推进；Runtime Pulse 记录执行水位。两者�
 - 手动停止不触发任何自动发送；
 - 自动压缩失败后退避，不立即重试；
 - Runtime 根据稳定 failure code、`recoveryAction` 和 `sideEffectOutcome` 决定 `retry_same / reprepare / rediscover / reconcile / user_input / none`；不能用“同类错误三次”覆盖副作用语义；
+- 代码只识别会改变恢复路径的大问题；普通失败先作为 observation 由 Agent 自行解决。只有无法继续时才把稳定卡点和最小用户问题写入 Task Control State，不能异常而用户不知情；
 - 预算同时限制重复 code、相同资源和无进展 observation，熔断结果作为结构化 Failure 回注；
 - 审批超时 = `expired`，不是用户 `rejected`，且不静默重发。
 - 模型因单次输出上限中止时，由内核在新 Round 中有界续接；截断内容保留为 stage，

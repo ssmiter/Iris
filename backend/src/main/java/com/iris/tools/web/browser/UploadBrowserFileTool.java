@@ -198,25 +198,13 @@ public class UploadBrowserFileTool implements Tool {
                 byteCount,
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_upload_not_applied",
-                    response.path("message").asText(
-                            "页面、字段或工作区文件已变化；文件未设置"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_upload_outcome_unknown",
-                    response.path("message").asText(
-                            "Browser Runtime 无法证明文件是否已经设置"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_upload_not_applied",
+                "页面、字段或工作区文件已变化；文件未设置",
+                "browser_upload_outcome_unknown",
+                "Browser Runtime 无法证明文件是否已经设置"
+        );
     }
 
     @Override
@@ -310,15 +298,20 @@ public class UploadBrowserFileTool implements Tool {
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("status").put("type", "string")
                 .put("description", "applied / not_applied / outcome_unknown");
-        properties.putObject("actionAttemptId").put("type", "string");
-        properties.putObject("idempotencyKey").put("type", "string");
-        properties.putObject("pageId").put("type", "string");
-        properties.putObject("openedNewPage").put("type", "boolean");
+        properties.putObject("actionAttemptId").put("type", "string")
+                .put("description", "本次文件设置动作的稳定尝试 ID");
+        properties.putObject("idempotencyKey").put("type", "string")
+                .put("description", "用于防止重复设置文件的幂等键");
+        properties.putObject("pageId").put("type", "string")
+                .put("description", "文件设置后的当前 Page ID");
+        properties.putObject("openedNewPage").put("type", "boolean")
+                .put("description", "文件设置动作是否产生并接管了新页面");
         properties.set(
                 "observation",
                 BrowserToolSupport.browserObservationSchema(objectMapper)
         );
-        properties.putObject("evidence").put("type", "object");
+        properties.putObject("evidence").put("type", "object")
+                .put("description", "文件字段状态、内容一致性与动作后页面证据");
         schema.putArray("required")
                 .add("status").add("actionAttemptId")
                 .add("idempotencyKey").add("pageId")

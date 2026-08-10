@@ -196,17 +196,33 @@ public class RunRoundRepository {
 
     public RunBudget runBudget(String runId) {
         return jdbc.sql("""
+                WITH suspension_totals AS (
+                    SELECT run_id,
+                           CAST(SUM(
+                               (julianday(COALESCE(ended_at, CURRENT_TIMESTAMP))
+                                - julianday(started_at)) * 86400000
+                           ) AS INTEGER) AS suspended_ms
+                    FROM agent_run_suspension
+                    WHERE run_id = :runId
+                    GROUP BY run_id
+                )
                 SELECT d.tool_calls_limit, d.time_limit_ms,
                        COALESCE(SUM(ar.tool_call_count), 0) AS tool_calls_used,
                        CAST(
-                           (julianday('now') - julianday(r.started_at))
-                           * 86400000 AS INTEGER
+                           MAX(
+                               0,
+                               (julianday(COALESCE(r.ended_at, CURRENT_TIMESTAMP))
+                                - julianday(r.started_at)) * 86400000
+                               - COALESCE(st.suspended_ms, 0)
+                           ) AS INTEGER
                        ) AS elapsed_ms
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
                 LEFT JOIN agent_round ar ON ar.run_id = r.run_id
+                LEFT JOIN suspension_totals st ON st.run_id = r.run_id
                 WHERE r.run_id = :runId
-                GROUP BY d.tool_calls_limit, d.time_limit_ms, r.started_at
+                GROUP BY d.tool_calls_limit, d.time_limit_ms,
+                         r.started_at, r.ended_at, st.suspended_ms
                 """)
                 .param("runId", runId)
                 .query((rs, rowNum) -> new RunBudget(
@@ -378,7 +394,7 @@ public class RunRoundRepository {
             long expectedVersion,
             Instant now
     ) {
-        return jdbc.sql("""
+        int updated = jdbc.sql("""
                 UPDATE agent_run
                 SET phase = :toPhase, version = version + 1,
                     ended_at = :endedAt
@@ -395,7 +411,37 @@ public class RunRoundRepository {
                 .param("runId", runId)
                 .param("fromPhase", from.name().toLowerCase())
                 .param("expectedVersion", expectedVersion)
-                .update() == 1;
+                .update();
+        if (updated != 1) {
+            return false;
+        }
+        if (from == RunPhase.SUSPENDED) {
+            int closed = jdbc.sql("""
+                    UPDATE agent_run_suspension
+                    SET ended_at = :now
+                    WHERE run_id = :runId
+                      AND ended_at IS NULL
+                    """)
+                    .param("now", now.toString())
+                    .param("runId", runId)
+                    .update();
+            if (closed != 1) {
+                throw new IllegalStateException(
+                        "Suspended Run is missing its active wait interval"
+                );
+            }
+        }
+        if (to == RunPhase.SUSPENDED) {
+            jdbc.sql("""
+                    INSERT INTO agent_run_suspension(
+                        run_id, started_at, ended_at
+                    ) VALUES (:runId, :now, NULL)
+                    """)
+                    .param("runId", runId)
+                    .param("now", now.toString())
+                    .update();
+        }
+        return true;
     }
 
     public boolean transitionRound(

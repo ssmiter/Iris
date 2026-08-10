@@ -14,14 +14,17 @@ public class ChildAgentCompletionService {
     private static final int MAX_HANDOFF_CHARS = 12_000;
     private final AgentRunContextRepository contexts;
     private final AgentRunResultRepository results;
+    private final RunFailureRepository failures;
     private final Clock clock = Clock.systemUTC();
 
     public ChildAgentCompletionService(
             AgentRunContextRepository contexts,
-            AgentRunResultRepository results
+            AgentRunResultRepository results,
+            RunFailureRepository failures
     ) {
         this.contexts = contexts;
         this.results = results;
+        this.failures = failures;
     }
 
     @EventListener
@@ -30,7 +33,16 @@ public class ChildAgentCompletionService {
             return;
         }
         String fullResult = results.latestAssistantText(event.runId());
-        if (fullResult.isBlank()) {
+        var failure = failures.find(event.runId()).orElse(null);
+        if (failure != null) {
+            String failureHandoff = "子 Agent 未完成。"
+                    + "\nfailureCode: " + failure.code()
+                    + "\n原因: " + failure.userMessage()
+                    + "\n恢复建议: " + failure.recoveryAction();
+            fullResult = fullResult.isBlank()
+                    ? failureHandoff
+                    : fullResult + "\n\n" + failureHandoff;
+        } else if (fullResult.isBlank()) {
             fullResult = event.phase() == RunPhase.SUCCEEDED
                     ? "子 Agent 已结束，但没有产生可交付文本。"
                     : "子 Agent 在产生完整结果前结束。";

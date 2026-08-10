@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.pipeline.PipelineCommandService;
 import com.iris.agent.pipeline.PipelineRunCoordinator;
 import com.iris.agent.pipeline.PipelineRunRepository;
+import com.iris.task.TaskLedgerService;
+import com.iris.task.TaskLedgerService.TaskSnapshot;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.PreparedOperation;
 import com.iris.tools.core.RiskLevel;
@@ -14,6 +16,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -25,23 +28,26 @@ public class DelegateTaskTool implements Tool {
     private static final String PIPELINE_ID = "iris.pipeline.delegated_task";
     private final ObjectMapper objectMapper;
     private final PipelineCommandService commands;
-    private final PipelineRunCoordinator coordinator;
+    private final ObjectProvider<PipelineRunCoordinator> coordinator;
     private final PipelineRunRepository runs;
+    private final TaskLedgerService tasks;
     private final ToolManifest manifest;
 
     public DelegateTaskTool(
             ObjectMapper objectMapper,
             PipelineCommandService commands,
-            PipelineRunCoordinator coordinator,
-            PipelineRunRepository runs
+            ObjectProvider<PipelineRunCoordinator> coordinator,
+            PipelineRunRepository runs,
+            TaskLedgerService tasks
     ) {
         this.objectMapper = objectMapper;
         this.commands = commands;
         this.coordinator = coordinator;
         this.runs = runs;
+        this.tasks = tasks;
         this.manifest = new ToolManifest(
                 "iris.system.agents.delegate_task",
-                "2",
+                "3",
                 "delegate_task",
                 "把一个不依赖当前隐式思考、可以独立完成的明确子目标交给后台子 Agent；立即返回稳定 Run 标识，完成或失败后自动向父 Run 发送有界结果通知",
                 inputSchema(),
@@ -82,6 +88,12 @@ public class DelegateTaskTool implements Tool {
             );
         }
         normalized.put("work_mode", workMode);
+        String taskId = input.path("task_id").asText("").trim();
+        if (!taskId.isBlank()) {
+            TaskSnapshot taskState = tasks.require(taskId, context);
+            normalized.put("task_id", taskState.taskId());
+            normalized.put("task_state_version", taskState.stateVersion());
+        }
         if (input.has("constraints")) {
             if (!input.path("constraints").isArray()
                     || input.path("constraints").size() > 12) {
@@ -125,7 +137,8 @@ public class DelegateTaskTool implements Tool {
                 operation.executionId(),
                 "agent"
         );
-        var progress = coordinator.advance(accepted.runId()).block();
+        var progress = coordinator.getObject()
+                .advance(accepted.runId()).block();
         if (progress == null) {
             return ToolOutcome.failed(
                     "pipeline_launch_failed",
@@ -135,6 +148,19 @@ public class DelegateTaskTool implements Tool {
         String childRunId = runs.nextOpenStep(accepted.runId())
                 .map(PipelineRunRepository.StepRun::childRunId)
                 .orElse(null);
+        String taskId = operation.normalizedInput()
+                .path("task_id").asText("");
+        if (!taskId.isBlank()) {
+            TaskSnapshot taskState = tasks.require(taskId, context);
+            int delegatedVersion = operation.normalizedInput()
+                    .path("task_state_version").asInt();
+            tasks.linkRelatedRun(
+                    accepted.runId(),
+                    taskState,
+                    "coordinator",
+                    delegatedVersion
+            );
+        }
         ObjectNode output = objectMapper.createObjectNode();
         output.put("pipelineRunId", accepted.runId());
         if (childRunId != null) {
@@ -205,6 +231,10 @@ public class DelegateTaskTool implements Tool {
                 .putArray("enum")
                 .add("observe")
                 .add("workspace");
+        properties.putObject("task_id")
+                .put("type", "string")
+                .put("description", "可选；当前 Task Ledger 的稳定 ID。Backend 会冻结其当前版本作为子 Agent 交接状态")
+                .put("maxLength", 100);
         schema.putArray("required").add("task");
         return schema;
     }

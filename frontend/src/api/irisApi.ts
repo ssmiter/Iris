@@ -65,6 +65,51 @@ export interface ConversationEvent {
   envelope: ConversationEventEnvelope
 }
 
+export interface TaskCheckpointView {
+  checkpointId: string
+  stateVersion: number
+  kind: string
+  resumeSummary: string
+  sourceRunId: string
+  createdAt: string
+}
+
+export interface TaskStepView {
+  id: string
+  description: string
+  status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'skipped'
+}
+
+export interface TaskView {
+  taskId: string
+  conversationId: string
+  branchId: string
+  definitionVersion: number
+  stateVersion: number
+  version: number
+  phase: 'active' | 'blocked' | 'paused' | 'completed' | 'cancelled'
+  objective: string
+  constraints: string[]
+  completionCriteria: string[]
+  steps: TaskStepView[]
+  blockers: string[]
+  evidenceRefs: string[]
+  artifactRefs: string[]
+  summary: string
+  currentFocus: string
+  pendingDecisions: string[]
+  nextActions: string[]
+  handoffNote: string
+  latestCheckpoint?: TaskCheckpointView
+  updatedAt: string
+}
+
+export interface TaskPage {
+  conversationId: string
+  branchId: string
+  items: TaskView[]
+}
+
 export class IrisApiError extends Error {
   constructor(
     readonly status: number,
@@ -399,6 +444,18 @@ export function getConversationView(
   if (branchId) query.set('branchId', branchId)
   return requestJson(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}/view?${query}`,
+  )
+}
+
+export function listTasks(
+  conversationId: string,
+  branchId: string,
+  phase?: string,
+): Promise<TaskPage> {
+  const query = new URLSearchParams({ branchId, limit: '30' })
+  if (phase) query.set('phase', phase)
+  return requestJson(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/tasks?${query}`,
   )
 }
 

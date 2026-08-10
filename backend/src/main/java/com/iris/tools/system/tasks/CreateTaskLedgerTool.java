@@ -33,7 +33,7 @@ public class CreateTaskLedgerTool implements Tool {
         this.tasks = tasks;
         this.manifest = new ToolManifest(
                 "iris.system.tasks.create_task_ledger",
-                "1",
+                "2",
                 "create_task_ledger",
                 "为确实需要跨多步或跨轮次推进的用户目标创建版本化任务定义与工作状态；简单问答不要使用",
                 inputSchema(),
@@ -92,6 +92,36 @@ public class CreateTaskLedgerTool implements Tool {
                         false
                 )
         );
+        normalized.put(
+                "current_focus",
+                TaskToolSupport.text(
+                        input,
+                        "current_focus",
+                        TaskToolSupport.MAX_ITEM_TEXT,
+                        true
+                )
+        );
+        normalized.set(
+                "pending_decisions",
+                TaskToolSupport.stringArray(
+                        objectMapper, input, "pending_decisions", 0
+                )
+        );
+        normalized.set(
+                "next_actions",
+                TaskToolSupport.stringArray(
+                        objectMapper, input, "next_actions", 1
+                )
+        );
+        normalized.put(
+                "handoff_note",
+                TaskToolSupport.text(
+                        input,
+                        "handoff_note",
+                        TaskToolSupport.MAX_SUMMARY,
+                        false
+                )
+        );
         return new PreparedOperation(
                 normalized,
                 "为当前对话记录一个可恢复的任务定义和初始工作状态；"
@@ -117,7 +147,11 @@ public class CreateTaskLedgerTool implements Tool {
                 (ArrayNode) input.path("constraints"),
                 (ArrayNode) input.path("completion_criteria"),
                 (ArrayNode) input.path("steps"),
-                input.path("summary").asText()
+                input.path("summary").asText(),
+                input.path("current_focus").asText(),
+                (ArrayNode) input.path("pending_decisions"),
+                (ArrayNode) input.path("next_actions"),
+                input.path("handoff_note").asText()
         );
         return ToolOutcome.succeeded(tasks.toJson(created));
     }
@@ -177,9 +211,35 @@ public class CreateTaskLedgerTool implements Tool {
                 .put("type", "string")
                 .put("description", "当前工作态的一段短摘要，不复述完整目标")
                 .put("maxLength", TaskToolSupport.MAX_SUMMARY);
+        properties.putObject("current_focus")
+                .put("type", "string")
+                .put("description", "当前正在推进的唯一焦点")
+                .put("maxLength", TaskToolSupport.MAX_ITEM_TEXT);
+        properties.set(
+                "pending_decisions",
+                TaskToolSupport.stringArraySchema(
+                        objectMapper,
+                        "尚需用户、外部系统或后续验证解决的决定；没有时传空数组",
+                        0
+                )
+        );
+        properties.set(
+                "next_actions",
+                TaskToolSupport.stringArraySchema(
+                        objectMapper,
+                        "中断后可以直接继续执行或核验的最小动作清单",
+                        1
+                )
+        );
+        properties.putObject("handoff_note")
+                .put("type", "string")
+                .put("description", "交给下一 Run 时不能从步骤状态推出的短说明；没有时传空字符串")
+                .put("maxLength", TaskToolSupport.MAX_SUMMARY);
         schema.putArray("required")
                 .add("objective").add("constraints")
-                .add("completion_criteria").add("steps").add("summary");
+                .add("completion_criteria").add("steps").add("summary")
+                .add("current_focus").add("pending_decisions")
+                .add("next_actions").add("handoff_note");
         return schema;
     }
 

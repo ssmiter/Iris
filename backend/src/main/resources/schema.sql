@@ -487,6 +487,24 @@ CREATE TABLE IF NOT EXISTS agent_run (
 CREATE INDEX IF NOT EXISTS idx_run_turn
     ON agent_run(conversation_id, turn_id);
 
+-- User/approval waits are durable boundaries, not active Agent compute time.
+-- Keeping intervals separately avoids rewriting the canonical Run row and lets
+-- a resumed Run retain its original identity, history, and cumulative budget.
+CREATE TABLE IF NOT EXISTS agent_run_suspension (
+    suspension_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_run_open_suspension
+    ON agent_run_suspension(run_id)
+    WHERE ended_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_suspension_history
+    ON agent_run_suspension(run_id, started_at);
+
 CREATE TABLE IF NOT EXISTS agent_task_definition (
     task_id TEXT NOT NULL,
     definition_version INTEGER NOT NULL,
@@ -545,6 +563,64 @@ CREATE TABLE IF NOT EXISTS agent_task_head (
 
 CREATE INDEX IF NOT EXISTS idx_agent_task_head_branch
     ON agent_task_head(conversation_id, branch_id, updated_at);
+
+-- Optional control-plane fields evolve independently from the immutable work
+-- state row. Existing databases therefore gain the richer task view without
+-- rewriting or fabricating historical state revisions.
+CREATE TABLE IF NOT EXISTS agent_task_state_control (
+    task_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    current_focus TEXT NOT NULL,
+    pending_decisions_json TEXT NOT NULL,
+    next_actions_json TEXT NOT NULL,
+    handoff_note TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, branch_id, state_version),
+    FOREIGN KEY (task_id, branch_id, state_version)
+        REFERENCES agent_task_work_state(task_id, branch_id, state_version)
+);
+
+-- A checkpoint is an index into an immutable state revision, not a copy of
+-- task content and not a promise that external side effects can be rolled back.
+CREATE TABLE IF NOT EXISTS agent_task_checkpoint (
+    checkpoint_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    checkpoint_kind TEXT NOT NULL,
+    resume_summary TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    source_round_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (task_id, branch_id, state_version, checkpoint_kind),
+    FOREIGN KEY (task_id, branch_id, state_version)
+        REFERENCES agent_task_work_state(task_id, branch_id, state_version),
+    FOREIGN KEY (source_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (source_round_id) REFERENCES agent_round(round_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_task_checkpoint_latest
+    ON agent_task_checkpoint(task_id, branch_id, created_at);
+
+-- Run/Task membership is explicit so recovery and handoff do not infer task
+-- ownership from whichever Run happened to write the latest state revision.
+CREATE TABLE IF NOT EXISTS agent_run_task_link (
+    run_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    linked_state_version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, task_id, relation),
+    FOREIGN KEY (run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (task_id, branch_id)
+        REFERENCES agent_task_head(task_id, branch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_task_by_task
+    ON agent_run_task_link(task_id, branch_id, updated_at);
 
 CREATE TABLE IF NOT EXISTS artifact (
     artifact_id TEXT PRIMARY KEY,

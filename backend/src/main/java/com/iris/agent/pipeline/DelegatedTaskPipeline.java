@@ -48,6 +48,14 @@ public class DelegatedTaskPipeline implements PipelineDefinitionProvider {
                 .putArray("enum")
                 .add("observe")
                 .add("workspace");
+        inputProperties.putObject("task_id")
+                .put("type", "string")
+                .put("description", "可选父任务 ID；由 Backend 解析交接状态")
+                .put("maxLength", 100);
+        inputProperties.putObject("task_state_version")
+                .put("type", "integer")
+                .put("minimum", 1)
+                .put("description", "委派时冻结的父任务状态版本");
         input.putArray("required").add("task");
 
         ObjectNode output = objectMapper.createObjectNode();
@@ -74,7 +82,7 @@ public class DelegatedTaskPipeline implements PipelineDefinitionProvider {
 
         return new PipelineDefinition(
                 "iris.pipeline.delegated_task",
-                "2",
+                "3",
                 "delegated_task",
                 "/system/agents/delegated_task",
                 "把一个可独立完成的明确子目标交给隔离的 Agentic child Run；适合并行探索、资料整理和不依赖父级隐式上下文的工作",

@@ -5,6 +5,8 @@ import com.iris.agent.pipeline.PipelineDefinition.ModelTransformStep;
 import com.iris.agent.pipeline.PipelineRunRepository.PipelineRun;
 import com.iris.tools.core.ResidentToolSurface;
 import com.iris.conversation.application.RunEventEmitter;
+import com.iris.task.TaskLedgerService;
+import com.iris.task.TaskLedgerService.TaskSnapshot;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,18 +30,21 @@ public class ChildAgentRunService {
     private final AgentRunContextRepository contexts;
     private final TransactionTemplate transactions;
     private final RunEventEmitter events;
+    private final TaskLedgerService tasks;
     private final Clock clock = Clock.systemUTC();
 
     public ChildAgentRunService(
             JdbcClient jdbc,
             AgentRunContextRepository contexts,
             TransactionTemplate transactions,
-            RunEventEmitter events
+            RunEventEmitter events,
+            TaskLedgerService tasks
     ) {
         this.jdbc = jdbc;
         this.contexts = contexts;
         this.transactions = transactions;
         this.events = events;
+        this.tasks = tasks;
     }
 
     public String create(
@@ -49,7 +54,7 @@ public class ChildAgentRunService {
             String task
     ) {
         ChildAssignment assignment = assignment(pipeline, task, step);
-        return createInternal(
+        String runId = createInternal(
                 pipeline,
                 invokingStepRunId,
                 step,
@@ -59,6 +64,15 @@ public class ChildAgentRunService {
                 false,
                 assignment.workMode()
         );
+        if (assignment.parentTask() != null) {
+            tasks.linkRelatedRun(
+                    runId,
+                    assignment.parentTask(),
+                    "delegate",
+                    assignment.parentTaskStateVersion()
+            );
+        }
+        return runId;
     }
 
     private String createInternal(
@@ -113,7 +127,7 @@ public class ChildAgentRunService {
                     .param("now", now.toString())
                     .update();
             String definitionHash = hash(
-                    "iris.agent.child@1\n"
+                    "iris.agent.child@2\n"
                             + resultContract + "\n"
                             + contextMode + "\n"
                             + String.join("\n", allowedTools)
@@ -125,7 +139,7 @@ public class ChildAgentRunService {
                         dependency_snapshot_ref, tool_calls_limit,
                         time_limit_ms
                     ) VALUES (
-                        :runId, 'iris.agent.child', '1',
+                        :runId, 'iris.agent.child', '2',
                         :snapshotHash, :inputHash,
                         :sourceRef, :toolLimit, :timeLimit
                     )
@@ -261,6 +275,29 @@ public class ChildAgentRunService {
         if (!context.isBlank()) {
             briefing.append("\n\n【必要背景】\n").append(context);
         }
+        String taskId = pipeline.input().path("task_id")
+                .asText("").trim();
+        TaskSnapshot parentTask = null;
+        int parentTaskStateVersion = 0;
+        if (!taskId.isBlank()) {
+            parentTask = tasks.findView(
+                            taskId,
+                            pipeline.conversationId(),
+                            pipeline.branchId()
+                    )
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Delegated task handoff no longer exists"
+                    ));
+            parentTaskStateVersion = pipeline.input()
+                    .path("task_state_version").asInt(-1);
+            if (parentTask.stateVersion() != parentTaskStateVersion) {
+                throw new IllegalStateException(
+                        "Delegated task handoff is stale; refresh task state"
+                );
+            }
+            briefing.append("\n\n【父任务交接状态】\n")
+                    .append(tasks.toJson(parentTask));
+        }
         if (pipeline.input().path("constraints").isArray()
                 && !pipeline.input().path("constraints").isEmpty()) {
             briefing.append("\n\n【约束】");
@@ -282,7 +319,9 @@ public class ChildAgentRunService {
         return new ChildAssignment(
                 briefing.toString(),
                 resultContract,
-                workMode
+                workMode,
+                parentTask,
+                parentTaskStateVersion
         );
     }
 
@@ -305,6 +344,8 @@ public class ChildAgentRunService {
     private record ChildAssignment(
             String task,
             String resultContract,
-            String workMode
+            String workMode,
+            TaskSnapshot parentTask,
+            int parentTaskStateVersion
     ) { }
 }

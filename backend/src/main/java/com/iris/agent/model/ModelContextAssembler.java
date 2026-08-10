@@ -214,11 +214,14 @@ public class ModelContextAssembler {
             taskLedger.activeForContext(
                     run.conversationId(),
                     run.branchId()
-            ).forEach(task -> allItems.add(new ModelInputItem.TaskWorkState(
-                    task.taskId(),
-                    task.stateVersion(),
-                    taskLedger.toJson(task).toString()
-            )));
+            ).forEach(task -> {
+                taskLedger.linkContextRun(run.runId(), task);
+                allItems.add(new ModelInputItem.TaskWorkState(
+                        task.taskId(),
+                        task.stateVersion(),
+                        taskLedger.toJson(task).toString()
+                ));
+            });
             RunFinalizationPolicy.Decision finalization =
                     finalizationPolicy.evaluate(run.runId());
             if (finalization.continueRun()) {

@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.run.AgentRunResultRepository;
 import com.iris.agent.run.RunMailboxEventEmitter;
 import com.iris.agent.run.RunMailboxRepository;
+import com.iris.agent.run.RunFailureRepository;
 import com.iris.agent.run.RunPhase;
 import com.iris.agent.run.RunTerminalEvent;
+import com.iris.conversation.domain.ConversationViews.FailureView;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -22,6 +24,7 @@ public class PipelineCompletionService {
     private final PipelineRunRepository pipelines;
     private final AgentRunResultRepository results;
     private final RunMailboxRepository mailbox;
+    private final RunFailureRepository failures;
     private final RunMailboxEventEmitter mailboxEvents;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
@@ -31,6 +34,7 @@ public class PipelineCompletionService {
             PipelineRunRepository pipelines,
             AgentRunResultRepository results,
             RunMailboxRepository mailbox,
+            RunFailureRepository failures,
             RunMailboxEventEmitter mailboxEvents,
             TransactionTemplate transactions,
             ObjectMapper objectMapper
@@ -38,6 +42,7 @@ public class PipelineCompletionService {
         this.pipelines = pipelines;
         this.results = results;
         this.mailbox = mailbox;
+        this.failures = failures;
         this.mailboxEvents = mailboxEvents;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
@@ -53,7 +58,8 @@ public class PipelineCompletionService {
         List<PipelineRunRepository.StepRun> steps = pipelines.steps(run.runId());
         JsonNode output = steps.isEmpty()
                 ? null : steps.get(steps.size() - 1).output();
-        String summary = summary(event.phase(), output);
+        FailureView failure = failures.find(run.runId()).orElse(null);
+        String summary = summary(event.phase(), output, failure);
         RunMailboxRepository.MailboxMessage[] queued =
                 new RunMailboxRepository.MailboxMessage[1];
         transactions.executeWithoutResult(status -> {
@@ -80,12 +86,30 @@ public class PipelineCompletionService {
             if (output != null) {
                 payload.set("output", output);
             }
+            if (failure != null) {
+                ObjectNode failureNode = payload.putObject("failure");
+                failureNode.put("code", failure.code());
+                failureNode.put("message", failure.userMessage());
+                failureNode.put(
+                        "recoveryAction",
+                        failure.recoveryAction()
+                );
+                failureNode.put(
+                        "sideEffectOutcome",
+                        failure.sideEffectOutcome()
+                );
+            }
             queued[0] = mailbox.enqueueTerminal(
                     run.parentRunId(),
                     run.runId(),
                     event.phase() == RunPhase.CANCELLED
                             ? "cancellation" : "completion",
-                    completionContent(run.runId(), output, summary),
+                    completionContent(
+                            run.runId(),
+                            output,
+                            summary,
+                            failure
+                    ),
                     payload,
                     clock.instant()
             );
@@ -98,7 +122,8 @@ public class PipelineCompletionService {
     private String completionContent(
             String pipelineRunId,
             JsonNode output,
-            String summary
+            String summary,
+            FailureView failure
     ) {
         StringBuilder content = new StringBuilder()
                 .append("pipelineRunId: ").append(pipelineRunId);
@@ -106,10 +131,20 @@ public class PipelineCompletionService {
             content.append("\nresultRunId: ")
                     .append(output.path("runId").asText());
         }
+        if (failure != null) {
+            content.append("\nfailureCode: ")
+                    .append(failure.code())
+                    .append("\nrecoveryAction: ")
+                    .append(failure.recoveryAction());
+        }
         return content.append('\n').append(summary).toString();
     }
 
-    private String summary(RunPhase phase, JsonNode output) {
+    private String summary(
+            RunPhase phase,
+            JsonNode output,
+            FailureView failure
+    ) {
         if (output != null && output.path("summary").isTextual()) {
             String value = output.path("summary").asText().trim();
             if (!value.isBlank()) {
@@ -118,6 +153,9 @@ public class PipelineCompletionService {
                         : value.substring(0, MAX_HANDOFF_CHARS)
                                 + "\n\n[结果较长，完整正文保留在 Pipeline Run 中]";
             }
+        }
+        if (failure != null) {
+            return failure.userMessage();
         }
         return phase == RunPhase.SUCCEEDED
                 ? "Pipeline 已完成，结构化结果可通过运行记录读取。"

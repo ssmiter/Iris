@@ -23,10 +23,38 @@ public record ToolOutcome(
         return new ToolOutcome(Kind.FAILED, null, errorCode, message, false);
     }
 
+    public static ToolOutcome failed(
+            JsonNode details,
+            String errorCode,
+            String message
+    ) {
+        return new ToolOutcome(
+                Kind.FAILED,
+                details,
+                errorCode,
+                message,
+                false
+        );
+    }
+
     public static ToolOutcome unknown(String errorCode, String message) {
         return new ToolOutcome(
                 Kind.OUTCOME_UNKNOWN,
                 null,
+                errorCode,
+                message,
+                true
+        );
+    }
+
+    public static ToolOutcome unknown(
+            JsonNode details,
+            String errorCode,
+            String message
+    ) {
+        return new ToolOutcome(
+                Kind.OUTCOME_UNKNOWN,
+                details,
                 errorCode,
                 message,
                 true

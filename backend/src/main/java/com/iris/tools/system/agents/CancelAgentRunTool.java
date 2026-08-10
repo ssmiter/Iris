@@ -14,6 +14,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -25,14 +26,14 @@ public class CancelAgentRunTool implements Tool {
     private final ObjectMapper objectMapper;
     private final AgentRunContextRepository contexts;
     private final RunRoundRepository runs;
-    private final AgentRunLauncher launcher;
+    private final ObjectProvider<AgentRunLauncher> launcher;
     private final ToolManifest manifest;
 
     public CancelAgentRunTool(
             ObjectMapper objectMapper,
             AgentRunContextRepository contexts,
             RunRoundRepository runs,
-            AgentRunLauncher launcher
+            ObjectProvider<AgentRunLauncher> launcher
     ) {
         this.objectMapper = objectMapper;
         this.contexts = contexts;
@@ -93,7 +94,7 @@ public class CancelAgentRunTool implements Tool {
             output.put("message", "目标 Run 已经结束，没有重复发送停止信号");
             return ToolOutcome.succeeded(output);
         }
-        output.put("accepted", launcher.requestStop(runId));
+        output.put("accepted", launcher.getObject().requestStop(runId));
         output.put("phase", "cancellation_requested");
         output.put("message", "停止信号已写入运行时；最终状态和部分结果会随后通知");
         return ToolOutcome.succeeded(output);

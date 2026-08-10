@@ -152,23 +152,13 @@ public class SelectBrowserOptionTool implements Tool {
                 input.path("value").asText(),
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面或下拉项已变化；选择未执行，请重新观察"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText("无法确认下拉项是否改变")
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面或下拉项已变化；选择未执行，请重新观察",
+                "browser_action_outcome_unknown",
+                "无法确认下拉项是否改变"
+        );
     }
 
     @Override

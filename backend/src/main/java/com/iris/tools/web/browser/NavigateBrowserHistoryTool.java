@@ -128,25 +128,13 @@ public class NavigateBrowserHistoryTool implements Tool {
                 input.path("direction").asText(),
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_history_not_applied",
-                    response.path("message").asText(
-                            "页面已变化或没有对应历史记录；历史动作未执行"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_history_outcome_unknown",
-                    response.path("message").asText(
-                            "Browser Runtime 无法证明历史动作是否生效"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_history_not_applied",
+                "页面已变化或没有对应历史记录；历史动作未执行",
+                "browser_history_outcome_unknown",
+                "Browser Runtime 无法证明历史动作是否生效"
+        );
     }
 
     @Override
@@ -208,15 +196,20 @@ public class NavigateBrowserHistoryTool implements Tool {
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("status").put("type", "string")
                 .put("description", "applied / not_applied / outcome_unknown");
-        properties.putObject("actionAttemptId").put("type", "string");
-        properties.putObject("idempotencyKey").put("type", "string");
-        properties.putObject("pageId").put("type", "string");
-        properties.putObject("openedNewPage").put("type", "boolean");
+        properties.putObject("actionAttemptId").put("type", "string")
+                .put("description", "本次历史导航动作的稳定尝试 ID");
+        properties.putObject("idempotencyKey").put("type", "string")
+                .put("description", "用于防止重复导航的幂等键");
+        properties.putObject("pageId").put("type", "string")
+                .put("description", "历史导航后的当前 Page ID");
+        properties.putObject("openedNewPage").put("type", "boolean")
+                .put("description", "本次历史导航是否产生并接管了新页面");
         properties.set(
                 "observation",
                 BrowserToolSupport.browserObservationSchema(objectMapper)
         );
-        properties.putObject("evidence").put("type", "object");
+        properties.putObject("evidence").put("type", "object")
+                .put("description", "历史导航动作及动作后页面状态的证据");
         schema.putArray("required")
                 .add("status").add("actionAttemptId")
                 .add("idempotencyKey").add("pageId")

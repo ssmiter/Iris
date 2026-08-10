@@ -34,7 +34,7 @@ public class UpdateTaskLedgerTool implements Tool {
         this.tasks = tasks;
         this.manifest = new ToolManifest(
                 "iris.system.tasks.update_task_ledger",
-                "1",
+                "2",
                 "update_task_ledger",
                 "以版本前置条件提交任务工作状态的新版本；只记录步骤、阻塞和稳定引用，不改写任务目标",
                 inputSchema(),
@@ -87,8 +87,48 @@ public class UpdateTaskLedgerTool implements Tool {
         ArrayNode artifactRefs = TaskToolSupport.stringArray(
                 objectMapper, input, "artifact_refs", 0
         );
+        String currentFocus = input.has("current_focus")
+                ? TaskToolSupport.text(
+                        input,
+                        "current_focus",
+                        TaskToolSupport.MAX_ITEM_TEXT,
+                        false
+                )
+                : current.currentFocus();
+        ArrayNode pendingDecisions = input.has("pending_decisions")
+                ? TaskToolSupport.stringArray(
+                        objectMapper, input, "pending_decisions", 0
+                )
+                : current.pendingDecisions().deepCopy();
+        ArrayNode nextActions = input.has("next_actions")
+                ? TaskToolSupport.stringArray(
+                        objectMapper, input, "next_actions", 0
+                )
+                : current.nextActions().deepCopy();
+        String handoffNote = input.has("handoff_note")
+                ? TaskToolSupport.text(
+                        input,
+                        "handoff_note",
+                        TaskToolSupport.MAX_SUMMARY,
+                        false
+                )
+                : current.handoffNote();
+        String checkpointKind = TaskToolSupport.checkpointKind(input);
+        String resumeSummary = TaskToolSupport.text(
+                input,
+                "resume_summary",
+                TaskToolSupport.MAX_SUMMARY,
+                false
+        );
         TaskToolSupport.requireClosable(
                 phase, steps, blockers, evidenceRefs, artifactRefs
+        );
+        TaskToolSupport.requireVisibleProgress(
+                phase,
+                currentFocus,
+                blockers,
+                pendingDecisions,
+                nextActions
         );
         if ("completed".equals(phase)) {
             tasks.requireCompletionReferences(
@@ -105,6 +145,12 @@ public class UpdateTaskLedgerTool implements Tool {
         normalized.set("blockers", blockers);
         normalized.set("evidence_refs", evidenceRefs);
         normalized.set("artifact_refs", artifactRefs);
+        normalized.put("current_focus", currentFocus);
+        normalized.set("pending_decisions", pendingDecisions);
+        normalized.set("next_actions", nextActions);
+        normalized.put("handoff_note", handoffNote);
+        normalized.put("checkpoint_kind", checkpointKind);
+        normalized.put("resume_summary", resumeSummary);
         normalized.put(
                 "summary",
                 TaskToolSupport.text(
@@ -144,7 +190,13 @@ public class UpdateTaskLedgerTool implements Tool {
                 (ArrayNode) input.path("blockers"),
                 (ArrayNode) input.path("evidence_refs"),
                 (ArrayNode) input.path("artifact_refs"),
-                input.path("summary").asText()
+                input.path("summary").asText(),
+                input.path("current_focus").asText(),
+                (ArrayNode) input.path("pending_decisions"),
+                (ArrayNode) input.path("next_actions"),
+                input.path("handoff_note").asText(),
+                input.path("checkpoint_kind").asText(),
+                input.path("resume_summary").asText()
         );
         return ToolOutcome.succeeded(tasks.toJson(updated));
     }
@@ -221,6 +273,39 @@ public class UpdateTaskLedgerTool implements Tool {
         properties.putObject("summary")
                 .put("type", "string")
                 .put("description", "给下一次决策看的有界状态摘要")
+                .put("maxLength", TaskToolSupport.MAX_SUMMARY);
+        properties.putObject("current_focus")
+                .put("type", "string")
+                .put("description", "可选；当前正在推进的唯一焦点，省略时保持原值")
+                .put("maxLength", TaskToolSupport.MAX_ITEM_TEXT);
+        properties.set(
+                "pending_decisions",
+                TaskToolSupport.stringArraySchema(
+                        objectMapper,
+                        "可选；需要用户、外部系统或后续验证解决的最小决定清单",
+                        0
+                )
+        );
+        properties.set(
+                "next_actions",
+                TaskToolSupport.stringArraySchema(
+                        objectMapper,
+                        "可选；恢复后可直接继续的动作；active 状态至少一项",
+                        0
+                )
+        );
+        properties.putObject("handoff_note")
+                .put("type", "string")
+                .put("description", "可选；交接时不能从步骤推出的短说明")
+                .put("maxLength", TaskToolSupport.MAX_SUMMARY);
+        properties.putObject("checkpoint_kind")
+                .put("type", "string")
+                .put("description", "可选稳定边界；终态、暂停和阻塞会自动建立检查点")
+                .putArray("enum")
+                .add("none").add("milestone").add("handoff");
+        properties.putObject("resume_summary")
+                .put("type", "string")
+                .put("description", "建立检查点时给恢复者的一句摘要；省略时使用 summary")
                 .put("maxLength", TaskToolSupport.MAX_SUMMARY);
         schema.putArray("required")
                 .add("task_id").add("expected_state_version")

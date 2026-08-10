@@ -52,6 +52,8 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 
 ## 4. 子 Agent 的隔离边界
 
+父 Run 已进入长程 Task Ledger 时，委派输入携带 `taskId + stateVersion`。Backend 从该不可变版本生成有界交接视图并记录 Run–Task Link；父 Agent 不复制整段对话，子 Agent 也不能直接推进父任务 head。子结果回到父 Run 后仍需验证和合并。这一边界与 `docs/30-task-control-plane.md` 一致。
+
 父 Run 创建子 Agent 时必须一次给全：
 
 - `task`：自包含目标，不依赖父 Agent 未公开的思考；
@@ -71,6 +73,12 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 
 交付不是一段无法判断真假的散文。child 终态形成有界 Result Envelope：`status`、`summary`、稳定 `outputRef` 与从真实 Tool verification 汇集的 `evidenceRefs`。长正文仍留在 child Run 中按需读取；父 Agent 只消费摘要和引用，并对关键结论负责最终核验。
 
+失败同样必须形成可行动的交接，而不是一句“子 Agent/Pipeline 失败”。Result Envelope 与
+Mailbox 至少保留规范 `failureCode`、用户可读说明、`recoveryAction` 和已有 Evidence 引用；
+父 Agent 据此决定自行重试、缩小任务、换路或形成用户卡点。技术堆栈不进入主上下文，但导致
+失败的关键事实也不能只留在子 Run 的内部表中。Pipeline 包装子 Agent 时继续向上携带这份
+失败事实，不能用新的泛化错误覆盖根因。
+
 ## 5. 同步与后台不是两套实现
 
 `join` 与 `background` 创建完全相同的 durable child Run：
@@ -79,6 +87,12 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 - `background`：调用立即返回 `runId`，child Run 独立推进；完成、失败或取消后写入父 Run mailbox，并通过 SSE 发出 Run 事件。
 
 后台 Run 不因父对话本轮结束或用户停止主 Run 而丢失。若父 Run 仍活动，通知在下一 Round 边界作为普通消息进入上下文；若父 Run 已结束，通知仍作为未消费事实保留，并由同一分支的下一次根 Run 原子领取，绝不静默丢弃，也不为了等待后台任务强行延长当前 Turn。
+
+Tool Registry 在应用启动时只建立 Definition 与实现绑定，不能为了注册 `message_agent`、
+`cancel_agent_run` 等控制工具而提前构造 Agent Launcher。Launcher 是进程内唤醒器，工具只在
+真实 execute 边界按需解析它；Run、取消意图和 Mailbox 的持久事实仍由 Repository/Service
+直接拥有。这样依赖方向保持为“定义层 → 持久控制面”，不会形成
+`ToolRegistry → Tool → Launcher → ContextAssembler → ToolRegistry` 的启动环。
 
 未终态的 child 也不能在压缩后“消失”。每次根 Agent 组装上下文时，Harness 都从持久 Run 图投影一个有界的 `agent_run_state`，只列出当前分支仍在运行或挂起的 child id、阶段、工作模式和任务摘要。它用于防止重复委派和支持补充/取消，不注入 transcript，也不要求模型轮询进度。
 

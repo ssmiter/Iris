@@ -24,6 +24,9 @@ final class TaskToolSupport {
     private static final Set<String> STEP_STATUSES = Set.of(
             "pending", "in_progress", "blocked", "completed", "skipped"
     );
+    private static final Set<String> CHECKPOINT_KINDS = Set.of(
+            "none", "milestone", "handoff"
+    );
 
     private TaskToolSupport() {
     }
@@ -136,6 +139,42 @@ final class TaskToolSupport {
             );
         }
         return phase;
+    }
+
+    static String checkpointKind(JsonNode input) {
+        String kind = input.path("checkpoint_kind")
+                .asText("none").trim();
+        if (!CHECKPOINT_KINDS.contains(kind)) {
+            throw ToolRuntimeException.beforeCommit(
+                    "invalid_task_checkpoint_kind",
+                    "checkpoint_kind 必须是 none、milestone 或 handoff"
+            );
+        }
+        return kind;
+    }
+
+    static void requireVisibleProgress(
+            String phase,
+            String currentFocus,
+            ArrayNode blockers,
+            ArrayNode pendingDecisions,
+            ArrayNode nextActions
+    ) {
+        if ("active".equals(phase)
+                && (currentFocus.isBlank() || nextActions.isEmpty())) {
+            throw ToolRuntimeException.beforeCommit(
+                    "task_active_progress_incomplete",
+                    "active 任务必须说明当前焦点，并至少给出一个下一动作"
+            );
+        }
+        if ("blocked".equals(phase)
+                && blockers.isEmpty()
+                && pendingDecisions.isEmpty()) {
+            throw ToolRuntimeException.beforeCommit(
+                    "task_blocker_not_explained",
+                    "blocked 任务必须给出具体阻塞项或待决事项"
+            );
+        }
     }
 
     static void requireClosable(

@@ -291,7 +291,7 @@ const OBSERVATION_SCRIPT = `(limits => {
       ? String(root.body?.innerText || '')
       : String(root.textContent || ''))
     .filter(Boolean)
-    .join('\n')
+    .join('\\n')
     .replace(/\\u0000/g, '')
     .trim()
   const searchMatches = []
@@ -606,7 +606,13 @@ async function capturePageState(session, limits) {
     awaitPromise: true,
   })
   if (evaluation.exceptionDetails) {
-    throw new Error('Page observation script failed')
+    const detail = evaluation.exceptionDetails.exception?.description
+      || evaluation.exceptionDetails.text
+      || 'unknown page exception'
+    const error = new Error(`Page observation script failed: ${detail}`)
+    error.code = 'page_observation_failed'
+    error.statusCode = 502
+    throw error
   }
   const state = evaluation.result?.value
   if (!state || typeof state !== 'object') {

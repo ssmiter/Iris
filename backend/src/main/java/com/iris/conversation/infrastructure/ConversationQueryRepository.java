@@ -528,7 +528,25 @@ public class ConversationQueryRepository {
                        f.source AS failure_source,
                        f.recovery_action AS failure_recovery_action,
                        f.side_effect_outcome AS failure_side_effect_outcome,
-                       f.details_ref AS failure_details_ref
+                       f.details_ref AS failure_details_ref,
+                       COALESCE((
+                           SELECT SUM(ar.tool_call_count)
+                           FROM agent_round ar
+                           WHERE ar.run_id = r.run_id
+                       ), 0) AS budget_tool_calls_used,
+                       CAST(MAX(
+                           0,
+                           (julianday(COALESCE(r.ended_at, CURRENT_TIMESTAMP))
+                            - julianday(r.started_at)) * 86400000
+                           - COALESCE((
+                               SELECT SUM(
+                                   (julianday(COALESCE(s.ended_at, CURRENT_TIMESTAMP))
+                                    - julianday(s.started_at)) * 86400000
+                               )
+                               FROM agent_run_suspension s
+                               WHERE s.run_id = r.run_id
+                           ), 0)
+                       ) AS INTEGER) AS budget_elapsed_ms
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
                 LEFT JOIN run_invocation i ON i.run_id = r.run_id
@@ -578,7 +596,25 @@ public class ConversationQueryRepository {
                        f.source AS failure_source,
                        f.recovery_action AS failure_recovery_action,
                        f.side_effect_outcome AS failure_side_effect_outcome,
-                       f.details_ref AS failure_details_ref
+                       f.details_ref AS failure_details_ref,
+                       COALESCE((
+                           SELECT SUM(ar.tool_call_count)
+                           FROM agent_round ar
+                           WHERE ar.run_id = r.run_id
+                       ), 0) AS budget_tool_calls_used,
+                       CAST(MAX(
+                           0,
+                           (julianday(COALESCE(r.ended_at, CURRENT_TIMESTAMP))
+                            - julianday(r.started_at)) * 86400000
+                           - COALESCE((
+                               SELECT SUM(
+                                   (julianday(COALESCE(s.ended_at, CURRENT_TIMESTAMP))
+                                    - julianday(s.started_at)) * 86400000
+                               )
+                               FROM agent_run_suspension s
+                               WHERE s.run_id = r.run_id
+                           ), 0)
+                       ) AS INTEGER) AS budget_elapsed_ms
                 FROM agent_run r
                 JOIN run_definition_snapshot d ON d.run_id = r.run_id
                 LEFT JOIN run_invocation i ON i.run_id = r.run_id
@@ -615,9 +651,9 @@ public class ConversationQueryRepository {
                 roundIds(rs.getString("run_id")),
                 childRunIds(rs.getString("run_id")),
                 new RunBudget(
-                        0,
+                        rs.getInt("budget_tool_calls_used"),
                         rs.getInt("tool_calls_limit"),
-                        0,
+                        rs.getLong("budget_elapsed_ms"),
                         rs.getLong("time_limit_ms")
                 ),
                 null,

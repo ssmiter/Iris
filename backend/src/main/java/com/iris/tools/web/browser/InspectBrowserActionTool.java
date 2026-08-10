@@ -41,7 +41,7 @@ public class InspectBrowserActionTool implements Tool {
         this.client = client;
         this.manifest = new ToolManifest(
                 "iris.web.browser.inspect_browser_action",
-                "2",
+                "3",
                 "inspect_browser_action",
                 "按原 Tool execution ID 读取 daemon 已保存的浏览器动作结果，不再次执行动作；上次动作 outcome_unknown 时使用",
                 inputSchema(),
@@ -100,11 +100,18 @@ public class InspectBrowserActionTool implements Tool {
             ToolContext context
     ) {
         JsonNode input = operation.normalizedInput();
-        return ToolOutcome.succeeded(client.readActionResult(
+        JsonNode response = client.readActionResult(
                 input.path("runtime_id").asText(),
                 input.path("session_id").asText(),
                 input.path("tool_execution_id").asText()
-        ));
+        );
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "原浏览器动作已确认没有执行；请重新观察后调整",
+                "browser_action_still_unknown",
+                "原浏览器动作仍无法确认；请重新观察页面并核对当前事实"
+        );
     }
 
     @Override
@@ -113,12 +120,29 @@ public class InspectBrowserActionTool implements Tool {
             CommittedOperation operation,
             ToolContext context
     ) {
+        JsonNode output = outcome.output();
+        String evidenceRef = output.path("evidence").path("ref").asText();
+        if (!"applied".equals(output.path("status").asText())
+                || evidenceRef.isBlank()) {
+            return new VerificationResult(
+                    VerificationResult.Status.UNKNOWN,
+                    List.of(),
+                    "动作日志声称原动作已生效，但缺少可核验的动作证据"
+            );
+        }
         return VerificationResult.confirmed(List.of(
                 new VerificationResult.Evidence(
                         "browser_action_journal",
                         operation.normalizedInput()
                                 .path("tool_execution_id").asText(),
                         "结果来自 daemon 的幂等动作日志，没有重放外部动作"
+                ),
+                new VerificationResult.Evidence(
+                        output.path("evidence").path("kind")
+                                .asText("browser_action"),
+                        evidenceRef,
+                        output.path("evidence").path("summary")
+                                .asText("原浏览器动作已有 daemon 证据")
                 )
         ));
     }

@@ -38,16 +38,19 @@ public class TaskLedgerService {
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
+    private final TaskEventEmitter events;
     private final Clock clock = Clock.systemUTC();
 
     public TaskLedgerService(
             JdbcClient jdbc,
             ObjectMapper objectMapper,
-            TransactionTemplate transactions
+            TransactionTemplate transactions,
+            TaskEventEmitter events
     ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.transactions = transactions;
+        this.events = events;
     }
 
     public TaskSnapshot create(
@@ -56,7 +59,11 @@ public class TaskLedgerService {
             ArrayNode constraints,
             ArrayNode completionCriteria,
             ArrayNode steps,
-            String summary
+            String summary,
+            String currentFocus,
+            ArrayNode pendingDecisions,
+            ArrayNode nextActions,
+            String handoffNote
     ) {
         Scope scope = scope(context.runId());
         String taskId = "task_" + UUID.randomUUID()
@@ -96,6 +103,16 @@ public class TaskLedgerService {
                     context,
                     now
             );
+            insertControlState(
+                    taskId,
+                    1,
+                    scope.branchId(),
+                    currentFocus,
+                    pendingDecisions,
+                    nextActions,
+                    handoffNote,
+                    now
+            );
             jdbc.sql("""
                     INSERT INTO agent_task_head (
                       task_id, conversation_id, branch_id,
@@ -111,8 +128,27 @@ public class TaskLedgerService {
                     .param("branchId", scope.branchId())
                     .param("createdAt", now.toString())
                     .update();
+            insertCheckpoint(
+                    taskId,
+                    scope.branchId(),
+                    1,
+                    "accepted",
+                    summary,
+                    context,
+                    now
+            );
+            linkRun(
+                    context.runId(),
+                    taskId,
+                    scope.branchId(),
+                    "creator",
+                    1,
+                    now
+            );
         });
-        return require(taskId, context);
+        TaskSnapshot created = require(taskId, context);
+        events.updated(created, toJson(created), context.runId());
+        return created;
     }
 
     public TaskSnapshot update(
@@ -124,7 +160,13 @@ public class TaskLedgerService {
             ArrayNode blockers,
             ArrayNode evidenceRefs,
             ArrayNode artifactRefs,
-            String summary
+            String summary,
+            String currentFocus,
+            ArrayNode pendingDecisions,
+            ArrayNode nextActions,
+            String handoffNote,
+            String requestedCheckpointKind,
+            String resumeSummary
     ) {
         TaskSnapshot before = require(taskId, context);
         if (before.stateVersion() != expectedStateVersion) {
@@ -158,6 +200,16 @@ public class TaskLedgerService {
                     context,
                     now
             );
+            insertControlState(
+                    taskId,
+                    nextVersion,
+                    before.branchId(),
+                    currentFocus,
+                    pendingDecisions,
+                    nextActions,
+                    handoffNote,
+                    now
+            );
             int updated = jdbc.sql("""
                     UPDATE agent_task_head
                     SET state_version = :nextVersion,
@@ -178,8 +230,33 @@ public class TaskLedgerService {
             if (updated != 1) {
                 throw stale(expectedStateVersion);
             }
+            String checkpointKind = checkpointKind(
+                    phase,
+                    requestedCheckpointKind
+            );
+            if (checkpointKind != null) {
+                insertCheckpoint(
+                        taskId,
+                        before.branchId(),
+                        nextVersion,
+                        checkpointKind,
+                        resumeSummary.isBlank() ? summary : resumeSummary,
+                        context,
+                        now
+                );
+            }
+            linkRun(
+                    context.runId(),
+                    taskId,
+                    before.branchId(),
+                    "contributor",
+                    nextVersion,
+                    now
+            );
         });
-        return require(taskId, context);
+        TaskSnapshot updated = require(taskId, context);
+        events.updated(updated, toJson(updated), context.runId());
+        return updated;
     }
 
     public void requireCompletionReferences(
@@ -272,6 +349,92 @@ public class TaskLedgerService {
                 .toList();
     }
 
+    public List<TaskSnapshot> list(
+            String conversationId,
+            String branchId,
+            String phase,
+            int limit
+    ) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        String normalizedPhase = phase == null ? "" : phase.trim();
+        List<String> ids = normalizedPhase.isBlank()
+                ? jdbc.sql("""
+                        SELECT task_id
+                        FROM agent_task_head
+                        WHERE conversation_id = :conversationId
+                          AND branch_id = :branchId
+                        ORDER BY updated_at DESC, task_id DESC
+                        LIMIT :limit
+                        """)
+                        .param("conversationId", conversationId)
+                        .param("branchId", branchId)
+                        .param("limit", safeLimit)
+                        .query(String.class)
+                        .list()
+                : jdbc.sql("""
+                        SELECT task_id
+                        FROM agent_task_head
+                        WHERE conversation_id = :conversationId
+                          AND branch_id = :branchId
+                          AND phase = :phase
+                        ORDER BY updated_at DESC, task_id DESC
+                        LIMIT :limit
+                        """)
+                        .param("conversationId", conversationId)
+                        .param("branchId", branchId)
+                        .param("phase", normalizedPhase)
+                        .param("limit", safeLimit)
+                        .query(String.class)
+                        .list();
+        return ids.stream()
+                .map(id -> find(id, conversationId, branchId).orElseThrow())
+                .toList();
+    }
+
+    public Optional<TaskSnapshot> findView(
+            String taskId,
+            String conversationId,
+            String branchId
+    ) {
+        return find(taskId, conversationId, branchId);
+    }
+
+    /**
+     * Records that a Run received this task as active control-plane context.
+     * This is idempotent and does not advance the task head.
+     */
+    public void linkContextRun(String runId, TaskSnapshot task) {
+        linkRelatedRun(
+                runId,
+                task,
+                "context"
+        );
+    }
+
+    public void linkRelatedRun(
+            String runId,
+            TaskSnapshot task,
+            String relation
+    ) {
+        linkRelatedRun(runId, task, relation, task.stateVersion());
+    }
+
+    public void linkRelatedRun(
+            String runId,
+            TaskSnapshot task,
+            String relation,
+            int linkedStateVersion
+    ) {
+        linkRun(
+                runId,
+                task.taskId(),
+                task.branchId(),
+                relation,
+                linkedStateVersion,
+                clock.instant()
+        );
+    }
+
     /**
      * Returns only an active head whose current state was written by this Run.
      * Older branch tasks must not turn an unrelated short conversation into a
@@ -319,9 +482,11 @@ public class TaskLedgerService {
     public ObjectNode toJson(TaskSnapshot snapshot) {
         ObjectNode result = objectMapper.createObjectNode();
         result.put("taskId", snapshot.taskId());
+        result.put("conversationId", snapshot.conversationId());
         result.put("branchId", snapshot.branchId());
         result.put("definitionVersion", snapshot.definitionVersion());
         result.put("stateVersion", snapshot.stateVersion());
+        result.put("version", snapshot.version());
         result.put("phase", snapshot.phase());
         result.put("objective", snapshot.objective());
         result.set("constraints", snapshot.constraints().deepCopy());
@@ -334,7 +499,56 @@ public class TaskLedgerService {
         result.set("evidenceRefs", snapshot.evidenceRefs().deepCopy());
         result.set("artifactRefs", snapshot.artifactRefs().deepCopy());
         result.put("summary", snapshot.summary());
+        result.put("currentFocus", snapshot.currentFocus());
+        result.set(
+                "pendingDecisions",
+                snapshot.pendingDecisions().deepCopy()
+        );
+        result.set("nextActions", snapshot.nextActions().deepCopy());
+        result.put("handoffNote", snapshot.handoffNote());
+        if (snapshot.latestCheckpoint() != null) {
+            result.set(
+                    "latestCheckpoint",
+                    checkpointJson(snapshot.latestCheckpoint())
+            );
+        }
         result.put("updatedAt", snapshot.updatedAt().toString());
+        return result;
+    }
+
+    public ObjectNode toHandoffJson(TaskSnapshot snapshot) {
+        ObjectNode result = toJson(snapshot);
+        ArrayNode relatedRuns = result.putArray("relatedRuns");
+        jdbc.sql("""
+                SELECT link.run_id, link.relation,
+                       link.linked_state_version,
+                       run.kind, run.purpose, run.phase,
+                       link.updated_at
+                FROM agent_run_task_link link
+                JOIN agent_run run ON run.run_id = link.run_id
+                WHERE link.task_id = :taskId
+                  AND link.branch_id = :branchId
+                ORDER BY link.updated_at DESC, link.run_id DESC
+                LIMIT 12
+                """)
+                .param("taskId", snapshot.taskId())
+                .param("branchId", snapshot.branchId())
+                .query((rs, row) -> {
+                    ObjectNode run = objectMapper.createObjectNode();
+                    run.put("runId", rs.getString("run_id"));
+                    run.put("relation", rs.getString("relation"));
+                    run.put(
+                            "linkedStateVersion",
+                            rs.getInt("linked_state_version")
+                    );
+                    run.put("kind", rs.getString("kind"));
+                    run.put("purpose", rs.getString("purpose"));
+                    run.put("phase", rs.getString("phase"));
+                    run.put("updatedAt", rs.getString("updated_at"));
+                    return run;
+                })
+                .list()
+                .forEach(relatedRuns::add);
         return result;
     }
 
@@ -344,11 +558,24 @@ public class TaskLedgerService {
             String branchId
     ) {
         return jdbc.sql("""
-                SELECT h.task_id, h.definition_version, h.state_version,
-                       h.phase, h.updated_at, d.objective,
+                SELECT h.task_id, h.conversation_id, h.definition_version,
+                       h.state_version, h.version, h.phase, h.updated_at,
+                       d.objective,
                        d.constraints_json, d.completion_criteria_json,
                        s.steps_json, s.blockers_json, s.evidence_refs_json,
-                       s.artifact_refs_json, s.summary
+                       s.artifact_refs_json, s.summary,
+                       COALESCE(control.current_focus, '') current_focus,
+                       COALESCE(control.pending_decisions_json, '[]')
+                         pending_decisions_json,
+                       COALESCE(control.next_actions_json, '[]')
+                         next_actions_json,
+                       COALESCE(control.handoff_note, '') handoff_note,
+                       checkpoint.checkpoint_id,
+                       checkpoint.state_version checkpoint_state_version,
+                       checkpoint.checkpoint_kind,
+                       checkpoint.resume_summary,
+                       checkpoint.source_run_id checkpoint_source_run_id,
+                       checkpoint.created_at checkpoint_created_at
                 FROM agent_task_head h
                 JOIN agent_task_definition d
                   ON d.task_id = h.task_id
@@ -357,6 +584,20 @@ public class TaskLedgerService {
                   ON s.task_id = h.task_id
                  AND s.branch_id = h.branch_id
                  AND s.state_version = h.state_version
+                LEFT JOIN agent_task_state_control control
+                  ON control.task_id = s.task_id
+                 AND control.branch_id = s.branch_id
+                 AND control.state_version = s.state_version
+                LEFT JOIN agent_task_checkpoint checkpoint
+                  ON checkpoint.checkpoint_id = (
+                    SELECT candidate.checkpoint_id
+                    FROM agent_task_checkpoint candidate
+                    WHERE candidate.task_id = h.task_id
+                      AND candidate.branch_id = h.branch_id
+                    ORDER BY candidate.created_at DESC,
+                             candidate.checkpoint_id DESC
+                    LIMIT 1
+                  )
                 WHERE h.task_id = :taskId
                   AND h.conversation_id = :conversationId
                   AND h.branch_id = :branchId
@@ -366,9 +607,11 @@ public class TaskLedgerService {
                 .param("branchId", branchId)
                 .query((rs, row) -> new TaskSnapshot(
                         rs.getString("task_id"),
+                        rs.getString("conversation_id"),
                         branchId,
                         rs.getInt("definition_version"),
                         rs.getInt("state_version"),
+                        rs.getInt("version"),
                         rs.getString("phase"),
                         rs.getString("objective"),
                         array(rs.getString("constraints_json")),
@@ -378,6 +621,22 @@ public class TaskLedgerService {
                         array(rs.getString("evidence_refs_json")),
                         array(rs.getString("artifact_refs_json")),
                         rs.getString("summary"),
+                        rs.getString("current_focus"),
+                        array(rs.getString("pending_decisions_json")),
+                        array(rs.getString("next_actions_json")),
+                        rs.getString("handoff_note"),
+                        rs.getString("checkpoint_id") == null
+                                ? null
+                                : new TaskCheckpoint(
+                                        rs.getString("checkpoint_id"),
+                                        rs.getInt("checkpoint_state_version"),
+                                        rs.getString("checkpoint_kind"),
+                                        rs.getString("resume_summary"),
+                                        rs.getString("checkpoint_source_run_id"),
+                                        Instant.parse(rs.getString(
+                                                "checkpoint_created_at"
+                                        ))
+                                ),
                         Instant.parse(rs.getString("updated_at"))
                 ))
                 .optional();
@@ -497,6 +756,132 @@ public class TaskLedgerService {
                 .update();
     }
 
+    private void insertControlState(
+            String taskId,
+            int stateVersion,
+            String branchId,
+            String currentFocus,
+            ArrayNode pendingDecisions,
+            ArrayNode nextActions,
+            String handoffNote,
+            Instant createdAt
+    ) {
+        jdbc.sql("""
+                INSERT INTO agent_task_state_control (
+                  task_id, branch_id, state_version, current_focus,
+                  pending_decisions_json, next_actions_json,
+                  handoff_note, created_at
+                ) VALUES (
+                  :taskId, :branchId, :stateVersion, :currentFocus,
+                  :pendingDecisions, :nextActions,
+                  :handoffNote, :createdAt
+                )
+                """)
+                .param("taskId", taskId)
+                .param("branchId", branchId)
+                .param("stateVersion", stateVersion)
+                .param("currentFocus", currentFocus)
+                .param("pendingDecisions", write(pendingDecisions))
+                .param("nextActions", write(nextActions))
+                .param("handoffNote", handoffNote)
+                .param("createdAt", createdAt.toString())
+                .update();
+    }
+
+    private void insertCheckpoint(
+            String taskId,
+            String branchId,
+            int stateVersion,
+            String checkpointKind,
+            String resumeSummary,
+            ToolContext context,
+            Instant createdAt
+    ) {
+        String checkpointId = "taskcp_" + UUID.randomUUID()
+                .toString().replace("-", "");
+        jdbc.sql("""
+                INSERT INTO agent_task_checkpoint (
+                  checkpoint_id, task_id, branch_id, state_version,
+                  checkpoint_kind, resume_summary,
+                  source_run_id, source_round_id, created_at
+                ) VALUES (
+                  :checkpointId, :taskId, :branchId, :stateVersion,
+                  :checkpointKind, :resumeSummary,
+                  :runId, :roundId, :createdAt
+                )
+                """)
+                .param("checkpointId", checkpointId)
+                .param("taskId", taskId)
+                .param("branchId", branchId)
+                .param("stateVersion", stateVersion)
+                .param("checkpointKind", checkpointKind)
+                .param("resumeSummary", resumeSummary)
+                .param("runId", context.runId())
+                .param("roundId", context.roundId())
+                .param("createdAt", createdAt.toString())
+                .update();
+    }
+
+    private void linkRun(
+            String runId,
+            String taskId,
+            String branchId,
+            String relation,
+            int stateVersion,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO agent_run_task_link (
+                  run_id, task_id, branch_id, relation,
+                  linked_state_version, created_at, updated_at
+                ) VALUES (
+                  :runId, :taskId, :branchId, :relation,
+                  :stateVersion, :now, :now
+                )
+                ON CONFLICT(run_id, task_id, relation) DO UPDATE SET
+                  linked_state_version = excluded.linked_state_version,
+                  updated_at = excluded.updated_at
+                WHERE agent_run_task_link.linked_state_version
+                      <> excluded.linked_state_version
+                """)
+                .param("runId", runId)
+                .param("taskId", taskId)
+                .param("branchId", branchId)
+                .param("relation", relation)
+                .param("stateVersion", stateVersion)
+                .param("now", now.toString())
+                .update();
+    }
+
+    private String checkpointKind(
+            String phase,
+            String requestedCheckpointKind
+    ) {
+        if ("blocked".equals(phase)
+                || "paused".equals(phase)
+                || "completed".equals(phase)
+                || "cancelled".equals(phase)) {
+            return phase;
+        }
+        if (requestedCheckpointKind == null
+                || requestedCheckpointKind.isBlank()
+                || "none".equals(requestedCheckpointKind)) {
+            return null;
+        }
+        return requestedCheckpointKind;
+    }
+
+    private ObjectNode checkpointJson(TaskCheckpoint checkpoint) {
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("checkpointId", checkpoint.checkpointId());
+        result.put("stateVersion", checkpoint.stateVersion());
+        result.put("kind", checkpoint.kind());
+        result.put("resumeSummary", checkpoint.resumeSummary());
+        result.put("sourceRunId", checkpoint.sourceRunId());
+        result.put("createdAt", checkpoint.createdAt().toString());
+        return result;
+    }
+
     private ArrayNode array(String value) {
         try {
             JsonNode parsed = objectMapper.readTree(value);
@@ -542,9 +927,11 @@ public class TaskLedgerService {
 
     public record TaskSnapshot(
             String taskId,
+            String conversationId,
             String branchId,
             int definitionVersion,
             int stateVersion,
+            int version,
             String phase,
             String objective,
             ArrayNode constraints,
@@ -554,7 +941,22 @@ public class TaskLedgerService {
             ArrayNode evidenceRefs,
             ArrayNode artifactRefs,
             String summary,
+            String currentFocus,
+            ArrayNode pendingDecisions,
+            ArrayNode nextActions,
+            String handoffNote,
+            TaskCheckpoint latestCheckpoint,
             Instant updatedAt
+    ) {
+    }
+
+    public record TaskCheckpoint(
+            String checkpointId,
+            int stateVersion,
+            String kind,
+            String resumeSummary,
+            String sourceRunId,
+            Instant createdAt
     ) {
     }
 

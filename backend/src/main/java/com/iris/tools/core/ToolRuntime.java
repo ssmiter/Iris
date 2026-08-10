@@ -833,7 +833,9 @@ public class ToolRuntime {
                     outcome.kind(),
                     outcome.errorCode(),
                     outcome.message(),
-                    List.of()
+                    List.of(),
+                    binding.manifest(),
+                    outcome.output()
             );
             return result(executionId);
         }
@@ -855,7 +857,9 @@ public class ToolRuntime {
                     timedOut
                             ? "工具验证阶段超过声明的运行时间，外部结果需要核对"
                             : safeMessage(exception),
-                    List.of()
+                    List.of(),
+                    binding.manifest(),
+                    outcome.output()
             );
             return result(executionId);
         }
@@ -881,9 +885,9 @@ public class ToolRuntime {
             persistedKind = ToolOutcome.Kind.OUTCOME_UNKNOWN;
             errorCode = "postcondition_unknown";
         }
-        String canonicalOutputJson = persistedKind == ToolOutcome.Kind.SUCCEEDED
-                ? write(outcome.output())
-                : null;
+        String canonicalOutputJson = outcome.output() == null
+                ? null
+                : write(outcome.output());
         PendingPayload pendingPayload = null;
         if (canonicalOutputJson != null) {
             try {
@@ -968,9 +972,9 @@ public class ToolRuntime {
             message = verification.evidence().getFirst().summary();
         }
 
-        String canonicalOutput = persistedKind == ToolOutcome.Kind.SUCCEEDED
-                ? write(outcome.output())
-                : null;
+        String canonicalOutput = outcome.output() == null
+                ? null
+                : write(outcome.output());
         PendingPayload pendingPayload = null;
         if (canonicalOutput != null) {
             try {
@@ -1182,16 +1186,14 @@ public class ToolRuntime {
             ToolBinding binding,
             PreparedOperation prepared
     ) {
-        if (prepared == null || prepared.normalizedInput() == null) {
+        if (prepared == null
+                || prepared.normalizedInput() == null
+                || !prepared.normalizedInput().isObject()) {
             throw new ToolRuntimeException(
                     "invalid_operation_snapshot",
-                    "工具没有生成规范化输入"
+                    "工具没有生成 object 形式的规范化输入"
             );
         }
-        validator.validate(
-                binding.manifest().inputSchema(),
-                prepared.normalizedInput()
-        );
         if (prepared.impactStatement() == null
                 || prepared.impactStatement().isBlank()) {
             throw new ToolRuntimeException(
@@ -1278,19 +1280,71 @@ public class ToolRuntime {
             String message,
             List<VerificationResult.Evidence> evidence
     ) {
-        String phase = kind == ToolOutcome.Kind.OUTCOME_UNKNOWN
-                ? "outcome_unknown"
-                : "failed";
-        transactions.executeWithoutResult(status -> repository.complete(
+        completeFailure(
                 executionId,
-                phase,
                 kind,
-                null,
                 errorCode,
                 message,
                 evidence,
-                clock.instant()
-        ));
+                null,
+                null
+        );
+    }
+
+    private void completeFailure(
+            String executionId,
+            ToolOutcome.Kind kind,
+            String errorCode,
+            String message,
+            List<VerificationResult.Evidence> evidence,
+            ToolManifest manifest,
+            JsonNode details
+    ) {
+        String phase = kind == ToolOutcome.Kind.OUTCOME_UNKNOWN
+                ? "outcome_unknown"
+                : "failed";
+        String outputJson = null;
+        PendingPayload pendingPayload = null;
+        String finalMessage = message;
+        if (details != null && manifest != null) {
+            try {
+                String canonical = write(details);
+                pendingPayload = outputPayloads.writeJson(canonical);
+                outputJson = boundedOutput(
+                        manifest,
+                        canonical,
+                        executionId
+                );
+            } catch (Exception exception) {
+                finalMessage = (message == null || message.isBlank()
+                        ? "工具未完成"
+                        : message)
+                        + "；恢复细节未能持久化，请重新读取目标当前状态";
+            }
+        }
+        String persistedOutput = outputJson;
+        PendingPayload persistedPayload = pendingPayload;
+        String persistedMessage = finalMessage;
+        Instant completedAt = clock.instant();
+        transactions.executeWithoutResult(status -> {
+            if (persistedPayload != null) {
+                outputPayloads.attach(
+                        executionId,
+                        persistedPayload,
+                        completedAt
+                );
+            }
+            repository.complete(
+                    executionId,
+                    phase,
+                    kind,
+                    persistedOutput,
+                    errorCode,
+                    persistedMessage,
+                    evidence,
+                    completedAt
+            );
+        });
     }
 
     private enum ApprovalMode {

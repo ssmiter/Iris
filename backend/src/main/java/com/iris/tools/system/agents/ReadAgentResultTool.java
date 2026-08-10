@@ -169,10 +169,12 @@ public class ReadAgentResultTool implements Tool {
         properties.putObject("run_id").put("type", "string")
                 .put("description", "delegate_task 或完成通知返回的 Run id");
         properties.putObject("offset").put("type", "integer")
-                .put("minimum", 0).put("default", 0);
+                .put("minimum", 0).put("default", 0)
+                .put("description", "本次字符窗口的零基起点，默认从 0 开始");
         properties.putObject("max_chars").put("type", "integer")
                 .put("minimum", 1).put("maximum", MAX_WINDOW)
-                .put("default", DEFAULT_WINDOW);
+                .put("default", DEFAULT_WINDOW)
+                .put("description", "本次最多读取的字符数，默认 6000，上限 12000");
         schema.putArray("required").add("run_id");
         return schema;
     }
@@ -182,16 +184,25 @@ public class ReadAgentResultTool implements Tool {
         schema.put("type", "object");
         schema.put("additionalProperties", true);
         ObjectNode properties = schema.putObject("properties");
-        properties.putObject("runId").put("type", "string");
-        properties.putObject("status").put("type", "string");
-        properties.putObject("offset").put("type", "integer");
-        properties.putObject("nextOffset").put("type", "integer");
-        properties.putObject("totalChars").put("type", "integer");
-        properties.putObject("hasMore").put("type", "boolean");
-        properties.putObject("text").put("type", "string");
-        properties.putObject("outputRef").put("type", "string");
+        properties.putObject("runId").put("type", "string")
+                .put("description", "结果所属的子 Agent 或 Pipeline Run id");
+        properties.putObject("status").put("type", "string")
+                .put("description", "该隔离 Run 的规范终态");
+        properties.putObject("offset").put("type", "integer")
+                .put("description", "当前返回窗口的实际字符起点");
+        properties.putObject("nextOffset").put("type", "integer")
+                .put("description", "下一窗口起点；已读完时等于 totalChars");
+        properties.putObject("totalChars").put("type", "integer")
+                .put("description", "持久结果摘要或正文的总字符数");
+        properties.putObject("hasMore").put("type", "boolean")
+                .put("description", "当前窗口之后是否仍有未读取正文");
+        properties.putObject("text").put("type", "string")
+                .put("description", "当前字符窗口中的持久结果正文");
+        properties.putObject("outputRef").put("type", "string")
+                .put("description", "存在完整独立输出时的稳定结果引用");
         properties.putObject("evidenceRefs")
                 .put("type", "array")
+                .put("description", "子 Run 中真实工具验证汇集的稳定证据引用")
                 .putObject("items")
                 .put("type", "string");
         return schema;

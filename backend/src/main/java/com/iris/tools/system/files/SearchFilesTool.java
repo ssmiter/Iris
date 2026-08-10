@@ -370,6 +370,7 @@ public class SearchFilesTool implements Tool {
         properties.putObject("retrievalStrategy").put("type", "string")
                 .put("description", "能力目录实际采用的召回计划");
         properties.putObject("semanticModelIdentity")
+                .put("description", "参与语义召回的向量模型身份；未启用或降级到关键词时为 null")
                 .putArray("type").add("string").add("null");
         schema.putArray("required")
                 .add("namespace").add("path").add("matches").add("candidateFiles")

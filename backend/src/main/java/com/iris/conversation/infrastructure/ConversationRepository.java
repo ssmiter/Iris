@@ -121,6 +121,27 @@ public class ConversationRepository {
                 .param("sourceEventSequence", sourceEventSequence)
                 .update();
         jdbc.sql("""
+                INSERT INTO agent_task_state_control (
+                  task_id, branch_id, state_version, current_focus,
+                  pending_decisions_json, next_actions_json,
+                  handoff_note, created_at
+                )
+                SELECT control.task_id, :branchId, control.state_version,
+                       control.current_focus,
+                       control.pending_decisions_json,
+                       control.next_actions_json,
+                       control.handoff_note, control.created_at
+                FROM agent_task_state_control control
+                JOIN agent_task_work_state copied
+                  ON copied.task_id = control.task_id
+                 AND copied.state_version = control.state_version
+                 AND copied.branch_id = :branchId
+                WHERE control.branch_id = :sourceBranchId
+                """)
+                .param("branchId", branchId)
+                .param("sourceBranchId", sourceBranchId)
+                .update();
+        jdbc.sql("""
                 INSERT INTO agent_task_head (
                   task_id, conversation_id, branch_id,
                   definition_version, state_version, phase, version,
@@ -138,6 +159,22 @@ public class ConversationRepository {
                 .param("conversationId", conversationId)
                 .param("branchId", branchId)
                 .param("sourceBranchId", sourceBranchId)
+                .param("now", now.toString())
+                .update();
+        jdbc.sql("""
+                INSERT INTO agent_task_checkpoint (
+                  checkpoint_id, task_id, branch_id, state_version,
+                  checkpoint_kind, resume_summary,
+                  source_run_id, source_round_id, created_at
+                )
+                SELECT 'taskcp_' || lower(hex(randomblob(16))),
+                       copied.task_id, :branchId, copied.state_version,
+                       'fork', copied.summary,
+                       copied.source_run_id, copied.source_round_id, :now
+                FROM agent_task_work_state copied
+                WHERE copied.branch_id = :branchId
+                """)
+                .param("branchId", branchId)
                 .param("now", now.toString())
                 .update();
     }

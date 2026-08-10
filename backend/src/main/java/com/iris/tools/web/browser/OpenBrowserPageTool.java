@@ -102,14 +102,13 @@ public class OpenBrowserPageTool implements Tool {
                 input.path("url").asText(),
                 operation.executionId()
         );
-        return "applied".equals(response.path("status").asText())
-                ? ToolOutcome.succeeded(response)
-                : ToolOutcome.unknown(
-                        "browser_page_open_outcome_unknown",
-                        response.path("message").asText(
-                                "Browser Runtime 未能证明新页面是否已经打开"
-                        )
-                );
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_page_open_not_applied",
+                "新页面未打开",
+                "browser_page_open_outcome_unknown",
+                "Browser Runtime 未能证明新页面是否已经打开"
+        );
     }
 
     @Override
@@ -164,18 +163,22 @@ public class OpenBrowserPageTool implements Tool {
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("status").put("type", "string")
                 .put("description", "成功时为 applied");
-        properties.putObject("actionAttemptId").put("type", "string");
-        properties.putObject("idempotencyKey").put("type", "string");
+        properties.putObject("actionAttemptId").put("type", "string")
+                .put("description", "本次新建页面动作的稳定尝试 ID");
+        properties.putObject("idempotencyKey").put("type", "string")
+                .put("description", "用于防止重复新建页面的幂等键");
         properties.putObject("pageId").put("type", "string")
                 .put("description", "新建并激活的 BrowserPage ID");
-        properties.putObject("openedNewPage").put("type", "boolean");
+        properties.putObject("openedNewPage").put("type", "boolean")
+                .put("description", "是否成功新建并接管了页面");
         properties.putObject("pages").put("type", "array")
                 .put("description", "Session 当前拥有的全部页面摘要");
         properties.set(
                 "observation",
                 BrowserToolSupport.browserObservationSchema(objectMapper)
         );
-        properties.putObject("evidence").put("type", "object");
+        properties.putObject("evidence").put("type", "object")
+                .put("description", "页面创建及初始页面状态的证据");
         schema.putArray("required")
                 .add("status").add("actionAttemptId")
                 .add("idempotencyKey").add("pageId")

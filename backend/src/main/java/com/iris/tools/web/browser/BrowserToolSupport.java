@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.tools.core.ToolRuntimeException;
+import com.iris.tools.core.ToolOutcome;
 
 import java.net.URI;
 import java.util.regex.Pattern;
@@ -118,6 +119,33 @@ final class BrowserToolSupport {
                 "不可变、有界的页面观察；元素 ref 只在本 observation revision 内有效"
         );
         return observation;
+    }
+
+    static ToolOutcome actionOutcome(
+            JsonNode response,
+            String notAppliedCode,
+            String notAppliedMessage,
+            String unknownCode,
+            String unknownMessage
+    ) {
+        return switch (response.path("status").asText()) {
+            case "applied" -> ToolOutcome.succeeded(response);
+            case "not_applied" -> ToolOutcome.failed(
+                    response,
+                    notAppliedCode,
+                    response.path("message").asText(notAppliedMessage)
+            );
+            case "outcome_unknown" -> ToolOutcome.unknown(
+                    response,
+                    unknownCode,
+                    response.path("message").asText(unknownMessage)
+            );
+            default -> ToolOutcome.failed(
+                    response,
+                    "invalid_browser_action_status",
+                    "Browser Runtime 返回了未知动作状态"
+            );
+        };
     }
 
     private static ToolRuntimeException invalidUrl(String field) {

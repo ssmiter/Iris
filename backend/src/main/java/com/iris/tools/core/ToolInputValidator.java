@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * 首版有界 JSON Schema 校验器。
@@ -36,17 +37,29 @@ public class ToolInputValidator {
         JsonNode properties = schema.path("properties");
         boolean additionalAllowed =
                 schema.path("additionalProperties").asBoolean(false);
+        if (!additionalAllowed) {
+            Set<String> allowed = new TreeSet<>();
+            properties.fieldNames().forEachRemaining(allowed::add);
+            Set<String> unknown = new TreeSet<>();
+            input.fieldNames().forEachRemaining(name -> {
+                if (!allowed.contains(name)) {
+                    unknown.add(name);
+                }
+            });
+            if (!unknown.isEmpty()) {
+                throw new ToolRuntimeException(
+                        "invalid_tool_input",
+                        "未声明参数: " + String.join(", ", unknown)
+                                + "；只允许这些字段: "
+                                + String.join(", ", allowed)
+                );
+            }
+        }
         Iterator<String> names = input.fieldNames();
         while (names.hasNext()) {
             String name = names.next();
             JsonNode propertySchema = properties.get(name);
             if (propertySchema == null) {
-                if (!additionalAllowed) {
-                    throw new ToolRuntimeException(
-                            "invalid_tool_input",
-                            "存在未声明参数: " + name
-                    );
-                }
                 continue;
             }
             requireType(name, propertySchema.path("type").asText(), input.get(name));

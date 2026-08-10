@@ -119,7 +119,18 @@ public class ToolObservationService {
                             ? "may_have_changed"
                             : "none_confirmed"
             );
-            Recovery recovery = recovery(source.phase(), errorCode);
+            if (source.outputJson() != null) {
+                content.put(
+                        "resultRef",
+                        "tool-result://" + executionId
+                );
+                content.set("details", read(source.outputJson()));
+            }
+            Recovery recovery = recovery(
+                    source.phase(),
+                    errorCode,
+                    source.resolvedToolName()
+            );
             ObjectNode recoveryNode = content.putObject("recovery");
             recoveryNode.put("action", recovery.action());
             recoveryNode.put(
@@ -172,12 +183,58 @@ public class ToolObservationService {
         };
     }
 
-    private Recovery recovery(String phase, String errorCode) {
+    private Recovery recovery(
+            String phase,
+            String errorCode,
+            String toolName
+    ) {
+        if ("outcome_unknown".equals(phase)
+                && "browser_action_still_unknown".equals(errorCode)) {
+            return new Recovery(
+                    "observe_and_reconcile",
+                    true,
+                    "原动作日志仍无法确认结果；重新观察当前页面并按页面事实核对，不要再次 inspect 或直接重放"
+            );
+        }
+        if ("outcome_unknown".equals(phase)
+                && "browser_takeover_reobserve_failed".equals(errorCode)) {
+            return new Recovery(
+                    "recover_browser_session",
+                    true,
+                    "用户已经交还控制，但页面重读失败；先 list_browser_sessions，再观察仍存活页面，不要要求用户重复已经完成的操作"
+            );
+        }
+        if ("outcome_unknown".equals(phase)
+                && "postcondition_unknown".equals(errorCode)
+                && toolName != null
+                && toolName.contains("browser")) {
+            return new Recovery(
+                    "observe_and_reconcile",
+                    true,
+                    "浏览器动作已执行但证据不足；重新观察当前页面并按页面事实核对，确认未生效前不得重放"
+            );
+        }
+        if ("outcome_unknown".equals(phase)
+                && errorCode.startsWith("browser_")) {
+            return new Recovery(
+                    "inspect_browser_action",
+                    true,
+                    "用当前 observation 中的 executionId 调用 inspect_browser_action；如果原动作仍未知，再重新观察页面并按当前事实核对，禁止直接重放动作"
+            );
+        }
         if ("outcome_unknown".equals(phase)) {
             return new Recovery(
                     "inspect_before_retry",
                     true,
                     "先读取目标的当前状态或调用 inspect_workspace_change；确认没有生效后，才能用新的工具调用重试"
+            );
+        }
+        if (errorCode.startsWith("browser_")
+                && errorCode.endsWith("not_applied")) {
+            return new Recovery(
+                    "observe_then_retry",
+                    true,
+                    "动作已确认没有生效；重新观察当前页面，根据新 ref 调整动作，不要原样复用旧页面引用"
             );
         }
         if ("rejected".equals(phase)) {

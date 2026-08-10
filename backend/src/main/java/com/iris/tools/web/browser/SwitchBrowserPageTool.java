@@ -50,7 +50,7 @@ public class SwitchBrowserPageTool implements Tool {
                 ToolManifest.EvidencePolicy.REQUIRED,
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.SERIAL,
-                ToolManifest.CancellationSemantics.COOPERATIVE
+                ToolManifest.CancellationSemantics.COMMIT_BOUNDARY
         );
     }
 
@@ -138,8 +138,10 @@ public class SwitchBrowserPageTool implements Tool {
     private JsonNode outputSchema() {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
-        properties.putObject("sessionId").put("type", "string");
-        properties.putObject("pageId").put("type", "string");
+        properties.putObject("sessionId").put("type", "string")
+                .put("description", "发生页面切换的 BrowserSession ID");
+        properties.putObject("pageId").put("type", "string")
+                .put("description", "请求切换到的 BrowserPage ID");
         properties.putObject("activePageId").put("type", "string")
                 .put("description", "切换后活动 Page ID");
         properties.putObject("pages").put("type", "array")

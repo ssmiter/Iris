@@ -32,7 +32,7 @@ public class ReadTaskLedgerTool implements Tool {
         this.tasks = tasks;
         this.manifest = new ToolManifest(
                 "iris.system.tasks.read_task_ledger",
-                "1",
+                "2",
                 "read_task_ledger",
                 "读取当前对话分支中一个任务的稳定定义和最新工作状态；省略 task_id 时读取最近更新的任务",
                 inputSchema(),

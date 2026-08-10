@@ -15,6 +15,7 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -28,7 +29,7 @@ public class MessageAgentTool implements Tool {
     private final AgentRunContextRepository contexts;
     private final RunRoundRepository runs;
     private final RunMailboxRepository mailbox;
-    private final AgentRunLauncher launcher;
+    private final ObjectProvider<AgentRunLauncher> launcher;
     private final com.iris.agent.run.RunMailboxEventEmitter mailboxEvents;
     private final ToolManifest manifest;
     private final Clock clock = Clock.systemUTC();
@@ -38,7 +39,7 @@ public class MessageAgentTool implements Tool {
             AgentRunContextRepository contexts,
             RunRoundRepository runs,
             RunMailboxRepository mailbox,
-            AgentRunLauncher launcher,
+            ObjectProvider<AgentRunLauncher> launcher,
             com.iris.agent.run.RunMailboxEventEmitter mailboxEvents
     ) {
         this.objectMapper = objectMapper;
@@ -113,7 +114,7 @@ public class MessageAgentTool implements Tool {
                 clock.instant()
         );
         mailboxEvents.queued(message);
-        launcher.launch(runId);
+        launcher.getObject().launch(runId);
         ObjectNode output = objectMapper.createObjectNode();
         output.put("messageId", message.messageId());
         output.put("runId", runId);

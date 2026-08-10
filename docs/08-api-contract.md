@@ -1199,6 +1199,17 @@ Artifact。
 
 首版不公开通用 `POST /workspace/write`。用户或 Agent 都通过 Capability/Turn 提交写意图，以得到 Checkpoint、差异预览、审批和 evidence。
 
+### 9.6 Task blackboard
+
+Task 写入只能由 Agent 通过 Tool Runtime 的版本化原语完成；Frontend 只有读模型：
+
+```http
+GET /api/v1/conversations/{conversationId}/tasks?branchId=branch_opaque&phase=active
+GET /api/v1/conversations/{conversationId}/tasks/{taskId}?branchId=branch_opaque
+```
+
+列表返回有界 `TaskView`。详情在此基础上增加最近的 Run–Task 关联，供恢复、交接和用户接管；Evidence、Artifact 和 Tool Result 正文仍按稳定引用懒加载。Task 更新由 `task.updated` SSE 完整 View upsert 保持时效，不能从回答文字猜测状态。
+
 ## 10. SSE Conversation Event Stream
 
 ### 10.1 连接
@@ -1283,6 +1294,7 @@ data: {...}
 | `supplement.updated` | `{ "supplement": SupplementView }` |
 | `branch.created` | `{ "branch": BranchSummary, "acceptance": TurnAcceptance }` |
 | `compaction.started / completed / failed / cancelled` | `{ "compaction": CompactionView, "boundary": CompactBoundaryView? }` |
+| `task.updated` | `{ "task": TaskView }`；创建、推进或建立稳定检查点后发送完整安全 View |
 | `projection.invalidated` | `{ "reasonCode", "requiredProjectionVersion" }` |
 
 ToolExecution 的全部内部状态不会一比一泄漏为 UI 事件。Projector 将其变成 `tool` 或 `attention` 节点；诊断详情通过有权限的 detail endpoint 按需读取。

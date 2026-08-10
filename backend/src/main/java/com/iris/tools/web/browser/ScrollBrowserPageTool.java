@@ -149,25 +149,13 @@ public class ScrollBrowserPageTool implements Tool {
                 input.path("amount").asInt(),
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面状态已经变化；滚动未执行，请重新观察"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText(
-                            "daemon 无法证明页面视口是否已经滚动"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面状态已经变化；滚动未执行，请重新观察",
+                "browser_action_outcome_unknown",
+                "daemon 无法证明页面视口是否已经滚动"
+        );
     }
 
     @Override

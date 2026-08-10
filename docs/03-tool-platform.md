@@ -59,6 +59,7 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 - `/system/agents` 提供有界常驻编排原语：`delegate_task`、`read_agent_result`、`message_agent`、`cancel_agent_run`；已发布 Pipeline 和 Tool 一样进入能力目录，由 `read_capability → invoke_pipeline` 按精确定义调用，不把每条流程 schema 常驻塞给模型；
 - `CapabilityCatalog` 是两个 Registry 加 guidance 等来源的可重建 union view，不拥有执行身份；
 - 注册即校验：name/path 冲突，或缺 description、schema、安全、幂等、资源、超时和证据策略 → 对应 provider registration rejected；其他 provider 仍可继续启动。
+- 本地内核 Tool 属于同一个可信 provider；任一无效定义都会阻止该 provider 发布。启动诊断应一次汇总全部无效 Tool，而不是每次只报告第一个，避免修复反馈退化成逐个重启。
 
 ## 4. 目录即路径（DomainCatalog）
 

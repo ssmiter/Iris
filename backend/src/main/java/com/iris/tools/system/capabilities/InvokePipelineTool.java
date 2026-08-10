@@ -16,6 +16,7 @@ import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -28,7 +29,7 @@ public class InvokePipelineTool implements Tool {
     private final ObjectMapper objectMapper;
     private final PipelineDefinitionRegistry definitions;
     private final PipelineCommandService commands;
-    private final PipelineRunCoordinator coordinator;
+    private final ObjectProvider<PipelineRunCoordinator> coordinator;
     private final PipelineRunRepository runs;
     private final JdbcClient jdbc;
     private final ToolManifest manifest;
@@ -37,7 +38,7 @@ public class InvokePipelineTool implements Tool {
             ObjectMapper objectMapper,
             PipelineDefinitionRegistry definitions,
             PipelineCommandService commands,
-            PipelineRunCoordinator coordinator,
+            ObjectProvider<PipelineRunCoordinator> coordinator,
             PipelineRunRepository runs,
             JdbcClient jdbc
     ) {
@@ -127,7 +128,8 @@ public class InvokePipelineTool implements Tool {
                 operation.executionId(),
                 "agent"
         );
-        var progress = coordinator.advance(accepted.runId()).block();
+        var progress = coordinator.getObject()
+                .advance(accepted.runId()).block();
         if (progress == null) {
             return ToolOutcome.failed(
                     "pipeline_launch_failed",

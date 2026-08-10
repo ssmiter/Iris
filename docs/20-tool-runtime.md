@@ -85,6 +85,8 @@ snapshotHash, expiresAt
 
 批准的是 snapshot，不是会漂移的 Tool 名或 raw input。
 
+公开 input schema 与内部 Operation Snapshot 是两层对象。Runtime 在 claim 后及动态能力解析后严格校验模型提供的输入；`prepare` 随后可以加入已解析的物理路径、内容哈希、页面元素说明或目标版本等派生事实。内部 snapshot 只校验其对象性、影响说明、资源声明和期限完整性，不能再套用公开 input schema，否则 Tool 自己生成的安全元数据会被误判为模型越权参数。
+
 ### `approval_request`
 
 ```text

@@ -161,25 +161,13 @@ public class PressBrowserKeyTool implements Tool {
                 input.path("key").asText(),
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面或焦点状态已变化；按键未发送，请重新观察"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText(
-                            "daemon 无法证明按键动作是否生效"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面或焦点状态已变化；按键未发送，请重新观察",
+                "browser_action_outcome_unknown",
+                "daemon 无法证明按键动作是否生效"
+        );
     }
 
     @Override
@@ -256,8 +244,10 @@ public class PressBrowserKeyTool implements Tool {
         ObjectNode properties = (ObjectNode) schema.path("properties");
         properties.putObject("status").put("type", "string")
                 .put("description", "applied / not_applied / outcome_unknown");
-        properties.putObject("actionAttemptId").put("type", "string");
-        properties.putObject("idempotencyKey").put("type", "string");
+        properties.putObject("actionAttemptId").put("type", "string")
+                .put("description", "本次按键动作的稳定尝试 ID");
+        properties.putObject("idempotencyKey").put("type", "string")
+                .put("description", "用于防止重复派发按键的幂等键");
         properties.putObject("pageId").put("type", "string")
                 .put("description", "动作后的当前 Page ID");
         properties.putObject("openedNewPage").put("type", "boolean")

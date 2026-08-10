@@ -29,8 +29,20 @@ public class ToolRegistry {
     private final Map<String, String> providerByName = new LinkedHashMap<>();
 
     public ToolRegistry(List<Tool> tools, ObjectMapper objectMapper) {
+        List<String> invalid = new java.util.ArrayList<>();
         for (Tool tool : tools) {
-            register(tool, objectMapper);
+            try {
+                register(tool, objectMapper);
+            } catch (RuntimeException exception) {
+                invalid.add(exception.getMessage());
+            }
+        }
+        if (!invalid.isEmpty()) {
+            throw new IllegalStateException(
+                    "本地 Tool provider 有 " + invalid.size()
+                            + " 个无效定义：\n- "
+                            + String.join("\n- ", invalid)
+            );
         }
     }
 

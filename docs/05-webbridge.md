@@ -124,11 +124,8 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 | `capture_browser_screenshot(sessionId, pageId)` | 截取当前页面为二进制 Managed Object，只回传对象引用和图像 metadata |
 | `wait_browser_page(sessionId, pageId, afterObservationRef, condition)` | 在 daemon 内等待异步页面条件，只返回最终观察，避免轮询污染上下文 |
 | `inspect_browser_action(sessionId, toolExecutionId)` | 响应丢失后读取同一幂等动作结果，绝不生成第二次点击 |
+| `request_browser_takeover(sessionId, pageId, observationRef, reason, instructions)` | 为当前可见页面创建持久人工接管 Attention；用户完成或跳过后，同一 ToolCall 返回决定并在继续时重新观察 |
 | `close_browser_session(sessionId)` | 显式回收会话与页面 handle；历史观察仍由 Backend 保存 |
-| `webbridge_click / fill / select / press` | 动作原语，selector 或语义定位（"姓名字段"） |
-| `webbridge_screenshot(pageId)` | 截图（视觉校验：填对了吗） |
-| `webbridge_extract(pageId, schema)` | 按 schema 抽取页面结构化数据 |
-| `webbridge_takeover(pageId)` | 请求人工接管（登录/验证码/支付） |
 
 设计要点：
 
@@ -164,6 +161,32 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
   fingerprint 判断“相似动作重复且页面无进展”，向下一 Round 追加一条有界恢复提示；它不
   替模型选择新路径，也不能阻止确实在分页或重复录入中持续产生新证据的动作。
 
+### 2.3 动作结果、恢复与用户可见性
+
+浏览器动作只有三种客观结果，人工接管不是第四种动作结果：
+
+```text
+applied         动作已生效，并有动作后 Observation / Evidence
+not_applied     已确认没有生效；重新观察、纠参或换路即可
+outcome_unknown 动作可能生效；先查询原动作日志并重新观察，禁止直接重放
+
+needs_user      页面继续推进所需的条件，不是 daemon 对动作的执行结论
+```
+
+Backend 必须原样保留 daemon 返回的动作身份、结果状态和有界恢复事实。即使 ToolExecution
+最终是 `failed` 或 `outcome_unknown`，Agent 的 Observation 仍能看到这份诊断信息，不能只
+得到一句技术错误而丢掉 `actionAttemptId / idempotencyKey / observation ref`。读取动作日志
+也必须重新解释原动作的三态结果；“成功读到日志”不等于“原动作成功”。
+
+恢复遵循一条短路径：`not_applied → 重新观察并调整`；`outcome_unknown → inspect 原执行 →
+仍未知则重新观察并按当前页面事实核对`。只有登录、验证码、敏感输入、外部权限或用户判断
+确实成为稳定前置条件时，Agent 才通过 `ask_user` 形成持久 Attention，并把已完成部分、自己
+尝试过的路径和最小接管清单写入 Task 状态。普通页面抖动、旧 ref 和参数错误只作为 Agent
+可自行利用的 Observation，不抢占用户注意力。
+
+因此用户主视图只需要稳定表达三件事：任务正在推进、Iris 正在自行核对、Iris 带着明确卡点
+请求协助。详细浏览器日志、截图和元素事实仍按需展开或懒加载。
+
 研究参照：
 
 - `browser-use/browser-use`：结构化元素索引、变化元素、Shadow DOM/iframe 与滚动容器表达；
@@ -193,10 +216,12 @@ ToolExecution 进入 `awaiting_attention` 后释放执行线程；用户完成�
 可能改变任意页面状态，因此接管前的 element ref、fingerprint 和 expected observation
 全部作废。
 
-在持久 Attention 真正接通前，产品先采用可用的轻量路径：Iris 保留可见 Session，在
-回答中请用户直接操作浏览器并在完成后回复；下一 Turn 通过 `list_browser_sessions →
-observe_browser_page` 续接。这个方案不是最终状态，但已经允许登录/验证码后继续完成任务，
-且不会用一个假的 takeover Tool 宣称系统正在等待。
+`request_browser_takeover` 复用通用 UserInput/Attention Runtime：Iris 保留可见 Session，给出
+最小人工操作清单；ToolExecution 持久停在 `awaiting_input`，不占用等待线程。用户在 Edge 中
+完成或选择跳过后，同一 ToolCall 恢复；选择继续时 Backend 立即重新观察指定 Page，把用户
+决定和新页面事实一起作为 observation 返回。Session 已失效也如实成为可恢复失败，不能把
+“用户点了完成”直接当成页面成功证据。通用 `ask_user` 仍用于非浏览器的关键选择，二者共用
+一套 Attention 状态机而不是各自实现等待逻辑。
 
 ## 5. 安全模型
 

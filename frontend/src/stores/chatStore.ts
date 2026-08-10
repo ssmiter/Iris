@@ -13,6 +13,7 @@ import type {
 import type {
   ConversationEvent,
   ConversationView,
+  TaskView,
 } from '@/api/irisApi'
 
 export type ConnectionState =
@@ -30,6 +31,7 @@ export interface ChatState {
   runsById: Record<string, RunView>
   roundsById: Record<string, RoundView>
   renderNodesById: Record<string, RenderNode>
+  tasksById: Record<string, TaskView>
   connectionState: ConnectionState
   eventCursor: string | null
   projectionVersion: number
@@ -42,6 +44,8 @@ export interface ChatState {
   upsertRun: (run: RunView) => void
   upsertRound: (round: RoundView) => void
   upsertRenderNode: (node: RenderNode) => void
+  hydrateTasks: (tasks: TaskView[]) => void
+  upsertTask: (task: TaskView) => void
   setConnectionState: (state: ConnectionState) => void
   addPendingSupplement: (turnId: string, text: string) => string
   confirmPendingSupplement: (
@@ -153,6 +157,11 @@ function reduceConversationEvent(
             ]
           : remaining
     }
+  } else if (event.type === 'task.updated') {
+    const task = payload.task as TaskView | undefined
+    if (task && shouldReplace(state.tasksById[task.taskId]?.version, task.version)) {
+      next.tasksById = { ...state.tasksById, [task.taskId]: task }
+    }
   } else if (event.type === 'projection.invalidated') {
     next.connectionState = 'invalidated'
   }
@@ -209,6 +218,7 @@ export const useChatStore = create<ChatState>((set) => {
   runsById: {},
   roundsById: {},
   renderNodesById: {},
+  tasksById: {},
   connectionState: 'idle',
   eventCursor: null,
   projectionVersion: 1,
@@ -292,6 +302,25 @@ export const useChatStore = create<ChatState>((set) => {
       }
     }),
 
+  hydrateTasks: (tasks) =>
+    set((state) => {
+      const next = { ...state.tasksById }
+      for (const task of tasks) {
+        if (shouldReplace(next[task.taskId]?.version, task.version)) {
+          next[task.taskId] = task
+        }
+      }
+      return { tasksById: next }
+    }),
+
+  upsertTask: (task) =>
+    set((state) => {
+      if (!shouldReplace(state.tasksById[task.taskId]?.version, task.version)) {
+        return state
+      }
+      return { tasksById: { ...state.tasksById, [task.taskId]: task } }
+    }),
+
   setConnectionState: (connectionState) => set({ connectionState }),
 
   addPendingSupplement: (turnId, text) => {
@@ -346,6 +375,7 @@ export const useChatStore = create<ChatState>((set) => {
       runsById: {},
       roundsById: {},
       renderNodesById: {},
+      tasksById: {},
       connectionState: 'idle',
       eventCursor: null,
       pendingSupplements: [],

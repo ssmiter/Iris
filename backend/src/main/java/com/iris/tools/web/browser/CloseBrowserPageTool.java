@@ -102,19 +102,13 @@ public class CloseBrowserPageTool implements Tool {
                 input.path("page_id").asText(),
                 operation.executionId()
         );
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_page_close_outcome_unknown",
-                    response.path("message").asText(
-                            "Browser Runtime 无法证明页面是否已经关闭"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "browser_page_close_not_applied",
-                    response.path("message").asText("浏览器页面未关闭")
-            );
-        };
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_page_close_not_applied",
+                "浏览器页面未关闭",
+                "browser_page_close_outcome_unknown",
+                "Browser Runtime 无法证明页面是否已经关闭"
+        );
     }
 
     @Override
@@ -166,17 +160,24 @@ public class CloseBrowserPageTool implements Tool {
     private JsonNode outputSchema() {
         ObjectNode schema = BrowserToolSupport.objectSchema(objectMapper);
         ObjectNode properties = (ObjectNode) schema.path("properties");
-        properties.putObject("status").put("type", "string");
-        properties.putObject("actionAttemptId").put("type", "string");
-        properties.putObject("idempotencyKey").put("type", "string");
-        properties.putObject("closedPageId").put("type", "string");
-        properties.putObject("activePageId").put("type", "string");
-        properties.putObject("pages").put("type", "array");
+        properties.putObject("status").put("type", "string")
+                .put("description", "applied / not_applied / outcome_unknown");
+        properties.putObject("actionAttemptId").put("type", "string")
+                .put("description", "本次关闭动作的稳定尝试 ID");
+        properties.putObject("idempotencyKey").put("type", "string")
+                .put("description", "用于防止重复关闭的幂等键");
+        properties.putObject("closedPageId").put("type", "string")
+                .put("description", "已关闭的 BrowserPage ID");
+        properties.putObject("activePageId").put("type", "string")
+                .put("description", "关闭后仍可继续使用的活动 Page ID");
+        properties.putObject("pages").put("type", "array")
+                .put("description", "关闭后 Session 仍拥有的页面摘要");
         properties.set(
                 "observation",
                 BrowserToolSupport.browserObservationSchema(objectMapper)
         );
-        properties.putObject("evidence").put("type", "object");
+        properties.putObject("evidence").put("type", "object")
+                .put("description", "页面关闭及剩余活动页面的证据");
         schema.putArray("required")
                 .add("status").add("actionAttemptId")
                 .add("idempotencyKey").add("closedPageId")

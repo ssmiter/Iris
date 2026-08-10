@@ -119,30 +119,13 @@ public class NavigateBrowserPageTool implements Tool {
                 input.path("expected_observation_ref").asText(null),
                 operation.executionId()
         );
-        String status = response.path("status").asText();
-        if ("not_applied".equals(status)) {
-            return ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面状态已经变化；动作未执行，请重新观察"
-                    )
-            );
-        }
-        if ("outcome_unknown".equals(status)) {
-            return ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText(
-                            "daemon 无法证明页面动作是否生效"
-                    )
-            );
-        }
-        if (!"applied".equals(status)) {
-            return ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        }
-        return ToolOutcome.succeeded(response);
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面状态已经变化；动作未执行，请重新观察",
+                "browser_action_outcome_unknown",
+                "daemon 无法证明页面动作是否生效"
+        );
     }
 
     @Override

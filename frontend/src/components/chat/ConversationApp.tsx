@@ -11,6 +11,7 @@ import {
   getConversationView,
   IrisApiError,
   listConversations,
+  listTasks,
   respondAttention,
   streamConversationEvents,
   stopTurn,
@@ -39,6 +40,7 @@ import { useViewStateStore } from '@/stores/viewStateStore'
 import { ComposerDock } from './composer'
 import { ConversationTimeline } from './ConversationTimeline'
 import { PendingApprovalStack } from './PendingApprovalStack'
+import { TaskBlackboard } from './TaskBlackboard'
 
 function summary(view: ConversationView) {
   const turns = Object.values(view.turnsById)
@@ -167,6 +169,28 @@ export function ConversationApp() {
       })
     return () => controller.abort()
   }, [currentBranchId, currentConversationId, hydrateView])
+
+  useEffect(() => {
+    if (!currentConversationId || !currentBranchId) {
+      useChatStore.setState({ tasksById: {} })
+      return
+    }
+    const controller = new AbortController()
+    useChatStore.setState({ tasksById: {} })
+    listTasks(currentConversationId, currentBranchId)
+      .then((page) => {
+        if (!controller.signal.aborted) {
+          useChatStore.getState().hydrateTasks(page.items)
+        }
+      })
+      .catch((error: Error) => {
+        if (controller.signal.aborted) return
+        notify.warning('任务进度暂时不可见', {
+          description: error.message,
+        })
+      })
+    return () => controller.abort()
+  }, [currentBranchId, currentConversationId])
 
   useEffect(() => {
     if (
@@ -732,6 +756,7 @@ export function ConversationApp() {
       }
       composer={composer}
     >
+      <TaskBlackboard tasks={Object.values(chat.tasksById)} />
       {projection.turns.length > 0 ? (
         <ConversationTimeline
           key={draftKey}

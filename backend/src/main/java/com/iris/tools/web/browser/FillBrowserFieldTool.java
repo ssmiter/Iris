@@ -150,7 +150,13 @@ public class FillBrowserFieldTool implements Tool {
                 input.path("value").asText(),
                 operation.executionId()
         );
-        return actionOutcome(response);
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面或字段状态已变化；填写未执行，请重新观察",
+                "browser_action_outcome_unknown",
+                "daemon 无法证明字段填写是否生效"
+        );
     }
 
     @Override
@@ -184,28 +190,6 @@ public class FillBrowserFieldTool implements Tool {
                         "填写后页面状态已重新观察"
                 )
         ));
-    }
-
-    private ToolOutcome actionOutcome(JsonNode response) {
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面或字段状态已变化；填写未执行，请重新观察"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText(
-                            "daemon 无法证明字段填写是否生效"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
     }
 
     private String requireValue(JsonNode input) {

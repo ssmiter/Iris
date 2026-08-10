@@ -145,7 +145,13 @@ public class ClickBrowserElementTool implements Tool {
                 input.path("element_ref").asText(),
                 operation.executionId()
         );
-        return actionOutcome(response);
+        return BrowserToolSupport.actionOutcome(
+                response,
+                "browser_action_not_applied",
+                "页面或元素状态已变化；点击未执行，请重新观察",
+                "browser_action_outcome_unknown",
+                "daemon 无法证明点击是否生效"
+        );
     }
 
     @Override
@@ -181,28 +187,6 @@ public class ClickBrowserElementTool implements Tool {
                                 : "点击已派发；页面可观察状态没有明显变化"
                 )
         ));
-    }
-
-    private ToolOutcome actionOutcome(JsonNode response) {
-        return switch (response.path("status").asText()) {
-            case "applied" -> ToolOutcome.succeeded(response);
-            case "not_applied" -> ToolOutcome.failed(
-                    "browser_action_not_applied",
-                    response.path("message").asText(
-                            "页面或元素状态已变化；点击未执行，请重新观察"
-                    )
-            );
-            case "outcome_unknown" -> ToolOutcome.unknown(
-                    "browser_action_outcome_unknown",
-                    response.path("message").asText(
-                            "daemon 无法证明点击是否生效"
-                    )
-            );
-            default -> ToolOutcome.failed(
-                    "invalid_browser_action_status",
-                    "Browser Runtime 返回了未知动作状态"
-            );
-        };
     }
 
     private String describe(JsonNode element, String fallback) {

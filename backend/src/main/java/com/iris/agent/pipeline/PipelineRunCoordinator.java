@@ -13,6 +13,7 @@ import com.iris.agent.run.AgentRunLauncher;
 import com.iris.agent.run.AgentRunResultRepository;
 import com.iris.agent.run.ChildAgentRunService;
 import com.iris.agent.run.RunPhase;
+import com.iris.agent.run.RunFailureRepository;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundService;
 import com.iris.conversation.domain.ConversationViews.FailureView;
@@ -43,6 +44,7 @@ public class PipelineRunCoordinator {
     private final RunRoundRepository runFacts;
     private final AgentRunResultRepository childResults;
     private final RunRoundService runStates;
+    private final RunFailureRepository failures;
     private final ObjectMapper objectMapper;
     private final ToolInputValidator schemaValidator;
     private final PipelineValueResolver values;
@@ -61,6 +63,7 @@ public class PipelineRunCoordinator {
             RunRoundRepository runFacts,
             AgentRunResultRepository childResults,
             RunRoundService runStates,
+            RunFailureRepository failures,
             ObjectMapper objectMapper,
             ToolInputValidator schemaValidator,
             PipelineValueResolver values,
@@ -77,6 +80,7 @@ public class PipelineRunCoordinator {
         this.runFacts = runFacts;
         this.childResults = childResults;
         this.runStates = runStates;
+        this.failures = failures;
         this.objectMapper = objectMapper;
         this.schemaValidator = schemaValidator;
         this.values = values;
@@ -455,15 +459,28 @@ public class PipelineRunCoordinator {
             return view(run.runId(), run.phase(),
                     step == null ? null : step.stepRunId());
         }
+        FailureView childFailure = step == null
+                || step.childRunId() == null
+                ? null
+                : failures.find(step.childRunId()).orElse(null);
         FailureView failure = new FailureView(
-                code == null ? "pipeline_failed" : code,
-                "pipeline",
-                "这个固定流程没有安全完成；已有步骤、子运行和结果都已保留。",
+                childFailure == null
+                        ? code == null ? "pipeline_failed" : code
+                        : childFailure.code(),
+                childFailure == null
+                        ? "pipeline" : childFailure.category(),
+                childFailure == null
+                        ? "这个固定流程没有安全完成；已有步骤、子运行和结果都已保留。"
+                        : "子任务未完成：" + childFailure.userMessage()
+                                + " 已完成步骤和结果仍然保留。",
                 "trace_" + UUID.randomUUID().toString().replace("-", ""),
-                "pipeline_runtime",
-                "none",
-                "n/a",
-                null
+                childFailure == null
+                        ? "pipeline_runtime" : childFailure.source(),
+                childFailure == null
+                        ? "none" : childFailure.recoveryAction(),
+                childFailure == null
+                        ? "n/a" : childFailure.sideEffectOutcome(),
+                childFailure == null ? null : childFailure.detailsRef()
         );
         var failed = runStates.failRun(
                 run.runId(),
