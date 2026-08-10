@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.pipeline.PipelineDefinition.ChildAgentStep;
 import com.iris.agent.pipeline.PipelineDefinition.ModelTransformStep;
 import com.iris.agent.pipeline.PipelineDefinition.PublishConversationTitleStep;
+import com.iris.agent.pipeline.PipelineDefinition.ToolStep;
 import com.iris.agent.pipeline.PipelineRunRepository.PipelineRun;
 import com.iris.agent.pipeline.PipelineRunRepository.StepRun;
 import com.iris.agent.run.AgentRunLauncher;
@@ -17,6 +18,13 @@ import com.iris.agent.run.RunRoundService;
 import com.iris.conversation.domain.ConversationViews.FailureView;
 import com.iris.conversation.application.GeneratedConversationTitleService;
 import com.iris.tools.core.ToolInputValidator;
+import com.iris.tools.core.ToolContext;
+import com.iris.tools.core.ToolExecutionViews.Invocation;
+import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolRuntime;
+import com.iris.tools.core.ToolRuntimeRepository;
+import com.iris.agent.run.ToolProjectionService;
+import com.iris.workspace.WorkspaceService;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -39,6 +47,10 @@ public class PipelineRunCoordinator {
     private final ToolInputValidator schemaValidator;
     private final PipelineValueResolver values;
     private final GeneratedConversationTitleService generatedTitles;
+    private final ToolRuntime tools;
+    private final ToolRuntimeRepository toolFacts;
+    private final ToolProjectionService toolProjections;
+    private final WorkspaceService workspace;
     private final Clock clock = Clock.systemUTC();
 
     public PipelineRunCoordinator(
@@ -52,7 +64,11 @@ public class PipelineRunCoordinator {
             ObjectMapper objectMapper,
             ToolInputValidator schemaValidator,
             PipelineValueResolver values,
-            GeneratedConversationTitleService generatedTitles
+            GeneratedConversationTitleService generatedTitles,
+            ToolRuntime tools,
+            ToolRuntimeRepository toolFacts,
+            ToolProjectionService toolProjections,
+            WorkspaceService workspace
     ) {
         this.pipelines = pipelines;
         this.definitions = definitions;
@@ -65,6 +81,10 @@ public class PipelineRunCoordinator {
         this.schemaValidator = schemaValidator;
         this.values = values;
         this.generatedTitles = generatedTitles;
+        this.tools = tools;
+        this.toolFacts = toolFacts;
+        this.toolProjections = toolProjections;
+        this.workspace = workspace;
     }
 
     public Mono<PipelineAdvance> advance(String runId) {
@@ -133,7 +153,131 @@ public class PipelineRunCoordinator {
         if (definitionStep instanceof PublishConversationTitleStep publishStep) {
             return advanceConversationTitle(run, step, publishStep);
         }
+        if (definitionStep instanceof ToolStep toolStep) {
+            return advanceTool(run, step, toolStep);
+        }
         return fail(run, step, "pipeline_step_kind_unsupported");
+    }
+
+    private PipelineAdvance advanceTool(
+            PipelineRun run,
+            StepRun step,
+            ToolStep definition
+    ) {
+        if ("accepted".equals(step.phase())) {
+            JsonNode input = values.resolveTemplate(
+                    run,
+                    step,
+                    definition.inputTemplate()
+            );
+            RuntimeResult result = tools.invokeHost(
+                    new Invocation(
+                            "pipeline_tool_" + step.stepRunId()
+                                    .replace(':', '_'),
+                            definition.toolName()
+                    ),
+                    input,
+                    pipelineToolContext(run),
+                    definition.capabilityPath(),
+                    definition.manifestHash()
+            );
+            if (!pipelines.markWaitingTool(
+                    step.stepRunId(),
+                    step.version(),
+                    result.executionId(),
+                    clock.instant()
+            )) {
+                throw new IllegalStateException(
+                        "Pipeline step changed while attaching Tool execution"
+                );
+            }
+            toolProjections.projectPipeline(
+                    run.runId(),
+                    step.stepRunId(),
+                    input,
+                    result
+            );
+            return advanceDurable(run.runId());
+        }
+        if (!"waiting_tool".equals(step.phase())) {
+            return fail(run, step, "invalid_pipeline_tool_phase");
+        }
+        RuntimeResult result = toolFacts.findByExecutionId(
+                step.toolExecutionId()
+        ).orElse(null);
+        if (result == null) {
+            return fail(run, step, "pipeline_tool_execution_missing");
+        }
+        if (!result.terminal()) {
+            return view(run.runId(), run.phase(), step.stepRunId());
+        }
+        if (!"succeeded".equals(result.phase())) {
+            String code = result.errorCode() == null
+                    ? "pipeline_tool_" + result.phase()
+                    : result.errorCode();
+            pipelines.failStep(
+                    step.stepRunId(),
+                    step.version(),
+                    code,
+                    clock.instant()
+            );
+            return fail(run, step, code);
+        }
+        JsonNode output = toolFacts.outputJson(result.executionId())
+                .map(this::readJson)
+                .orElseGet(objectMapper::createObjectNode);
+        if (!pipelines.completeToolStep(
+                step.stepRunId(),
+                step.version(),
+                output,
+                clock.instant()
+        )) {
+            throw new IllegalStateException(
+                    "Pipeline Tool step changed while completing"
+            );
+        }
+        return advanceDurable(run.runId());
+    }
+
+    private ToolContext pipelineToolContext(PipelineRun run) {
+        return new PipelineToolContext(
+                run.conversationId(),
+                run.turnId(),
+                run.runId(),
+                workspace.root(),
+                () -> runFacts.findRun(run.runId())
+                        .map(current -> current.phase().terminal())
+                        .orElse(true)
+        );
+    }
+
+    private JsonNode readJson(String value) {
+        try {
+            return objectMapper.readTree(value);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Stored Tool output is invalid JSON",
+                    exception
+            );
+        }
+    }
+
+    private record PipelineToolContext(
+            String conversationId,
+            String turnId,
+            String runId,
+            java.nio.file.Path workspaceRoot,
+            java.util.function.BooleanSupplier cancellation
+    ) implements ToolContext {
+        @Override
+        public String roundId() {
+            return null;
+        }
+
+        @Override
+        public boolean cancelled() {
+            return cancellation.getAsBoolean();
+        }
     }
 
     private PipelineAdvance advanceConversationTitle(

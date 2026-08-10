@@ -54,7 +54,7 @@ public class SearchFilesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.files.search_files",
-                "4",
+                "5",
                 "search_files",
                 "搜索工作区文本或能力目录描述；不知道事实或能力位于何处时按命名空间定位",
                 inputSchema(),
@@ -189,6 +189,15 @@ public class SearchFilesTool implements Tool {
                     "availabilityReason",
                     match.availabilityReason()
             );
+            item.put("lexicalScore", match.lexicalScore());
+            if (match.semanticScore() == null) {
+                item.putNull("semanticScore");
+            } else {
+                item.put("semanticScore", match.semanticScore());
+            }
+            item.put("combinedScore", match.combinedScore());
+            item.put("exactAnchor", match.exactAnchor());
+            item.put("retrievalStrategy", match.retrievalStrategy());
         }
         output.put("candidateFiles", result.candidateFiles());
         output.put("searchedFiles", result.candidateFiles());
@@ -196,6 +205,15 @@ public class SearchFilesTool implements Tool {
         output.put("scannedEntries", result.scannedEntries());
         output.put("truncated", result.truncated());
         output.put("totalMatches", result.total());
+        output.put("retrievalStrategy", result.retrievalStrategy());
+        if (result.semanticModelIdentity() == null) {
+            output.putNull("semanticModelIdentity");
+        } else {
+            output.put(
+                    "semanticModelIdentity",
+                    result.semanticModelIdentity()
+            );
+        }
         output.put("guidance", capabilityGuidance(result));
         return ToolOutcome.succeeded(output);
     }
@@ -329,6 +347,12 @@ public class SearchFilesTool implements Tool {
         itemProperties.putObject("riskLevel").put("type", "string");
         itemProperties.putObject("availability").put("type", "string");
         itemProperties.putObject("availabilityReason").put("type", "string");
+        itemProperties.putObject("lexicalScore").put("type", "number");
+        itemProperties.putObject("semanticScore")
+                .putArray("type").add("number").add("null");
+        itemProperties.putObject("combinedScore").put("type", "number");
+        itemProperties.putObject("exactAnchor").put("type", "boolean");
+        itemProperties.putObject("retrievalStrategy").put("type", "string");
         properties.putObject("candidateFiles").put("type", "integer")
                 .put("description", "通过路径和 glob 筛选的候选文件数");
         properties.putObject("searchedFiles").put("type", "integer")
@@ -343,6 +367,10 @@ public class SearchFilesTool implements Tool {
                 .put("description", "扫描证据与下一步收窄或核对建议");
         properties.putObject("totalMatches").put("type", "integer")
                 .put("description", "能力搜索在截断前的总命中数；工作区搜索不返回");
+        properties.putObject("retrievalStrategy").put("type", "string")
+                .put("description", "能力目录实际采用的召回计划");
+        properties.putObject("semanticModelIdentity")
+                .putArray("type").add("string").add("null");
         schema.putArray("required")
                 .add("namespace").add("path").add("matches").add("candidateFiles")
                 .add("searchedFiles").add("skippedFiles")

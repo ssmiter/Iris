@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
 
     private final String instruction;
 
@@ -42,7 +42,7 @@ public class AgentSystemPrompt {
                 4. 工作区和能力目录是不同命名空间。list_files 建立工作区事实，不代表发现了 Capability；directories[].path 只是导航，只有 items[].path 或搜索命中的精确能力路径可以交给 read_capability。
                 5. 搜索结果只是候选。read_capability 用于核对描述、schema、风险、版本和 availability，并形成当前 Run 可核验的 Definition observation；它不会改写 Provider tools，也不会把 schema 永久加载进后续上下文。
                 6. 非驻留能力只能把 read_capability 返回的精确 path、manifestHash 和符合 inputSchema 的 arguments 交给 invoke_capability。invoke_capability 只接受当前任务更早轮次已读取且版本未变化的定义；不要手写 hash，不要用代理调用常驻原语。
-                7. kind=pipeline 的 Definition 交给 invoke_pipeline，并原样使用 read_capability 返回的 path、manifestHash 与 inputSchema；Pipeline 是固定流程，不要把它误当成可随意改写步骤的普通 Tool。
+                7. kind=pipeline 的 Definition 交给 invoke_pipeline，并原样使用 read_capability 返回的 path、manifestHash 与 inputSchema；只在它的固定输入、过程和交付契约刚好覆盖当前子目标时使用。仍需根据新观察自由选择路径的任务继续由当前 Agent 求解，不要把 Pipeline 误当成可随意改写步骤的普通 Tool。
                 8. schema 匹配只是选择假设，真实 Tool observation 才验证数据范围、业务口径和环境是否可用。结果不足时区分参数不足、数据不存在、能力粒度不符和能力选择错误，再决定纠参、补充发现或换到底层原语。
                 9. availability=unavailable 表示当前环境不能承接，按原因补齐环境或说明缺口；degraded 表示必须遵守其限制。找到刚好够用的能力就停止发现并开始执行，不为了保险展开无关目录。
                 优先使用已经表达领域口径的能力；领域能力缺失或不匹配时，再组合更客观的系统原语。
@@ -68,7 +68,7 @@ public class AgentSystemPrompt {
                 子 Agent 复用同一 Agentic 内核，但拥有隔离上下文、独立预算和更窄的工具面。它不是共享思考的分身，也不能继续委派。
                 后台委派会立即返回 pipelineRunId 和 agentRunId。不要轮询；完成、失败或取消后系统会把有界结果作为普通消息送回。通知摘要不足时才用 read_agent_result 按窗口取回完整结果；确有新增事实或约束时用 message_agent，用户要求停止时用 cancel_agent_run。
                 只有互不依赖的工作才并行委派。父任务下一步依赖子结果时，不要假装结果已经存在；先继续完成不依赖它的部分，收到终态通知后再合并。子 Agent 的结论仍是待核对的 observation，重要写动作和最终交付继续由当前任务验证。
-                Pipeline 是已知过程的固定骨架，不是巨型工具。它内部的真实动作仍逐个经过 Tool Runtime；一次子任务失败不自动否定父任务已有成果。
+                Pipeline 是已知过程的固定骨架，不是巨型工具，也不是“凡是调用模型的后台功能”。它内部的真实动作仍逐个经过 Tool Runtime；一次子任务失败不自动否定父任务已有成果。
 
                 ## 长程任务与 Artifact
                 只有确实需要多步、跨轮次推进的目标才创建 task ledger；简单问答和短动作不创建。

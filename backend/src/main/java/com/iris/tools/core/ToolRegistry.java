@@ -69,6 +69,20 @@ public class ToolRegistry {
         }
     }
 
+    /** Computes the same immutable identity used by Registry registration. */
+    public static ToolBinding describe(Tool tool, ObjectMapper objectMapper) {
+        ToolManifest manifest = tool.manifest();
+        String directoryPath = DomainCatalog.inferPath(tool.getClass());
+        String capabilityPath = directoryPath + "/" + manifest.name();
+        return new ToolBinding(
+                manifest,
+                directoryPath,
+                capabilityPath,
+                manifestHash(objectMapper, manifest, capabilityPath),
+                tool
+        );
+    }
+
     private ToolManifest requireValidManifest(ToolManifest manifest) {
         if (manifest == null) {
             throw new IllegalStateException("工具缺少 manifest");
@@ -151,6 +165,14 @@ public class ToolRegistry {
     }
 
     private String hash(
+            ObjectMapper objectMapper,
+            ToolManifest manifest,
+            String capabilityPath
+    ) {
+        return manifestHash(objectMapper, manifest, capabilityPath);
+    }
+
+    private static String manifestHash(
             ObjectMapper objectMapper,
             ToolManifest manifest,
             String capabilityPath

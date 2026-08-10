@@ -96,9 +96,33 @@ public class PipelineDefinitionRegistry {
                 validateSelector(transform.sourceInputPointer());
             } else if (step instanceof PipelineDefinition.PublishConversationTitleStep publish) {
                 validateSelector(publish.titleSelector());
+            } else if (step instanceof PipelineDefinition.ToolStep tool) {
+                if (tool.toolName() == null || tool.toolName().isBlank()
+                        || tool.capabilityPath() == null
+                        || !tool.capabilityPath().startsWith("/")
+                        || tool.manifestHash() == null
+                        || tool.manifestHash().isBlank()
+                        || tool.inputTemplate() == null
+                        || !tool.inputTemplate().isObject()) {
+                    throw new IllegalStateException(
+                            "Pipeline Tool step must freeze an exact binding and object input"
+                    );
+                }
+                validateTemplate(tool.inputTemplate());
             }
         }
         return definition;
+    }
+
+    private void validateTemplate(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isTextual()) {
+            String value = node.asText();
+            if (value.startsWith("input:") || value.startsWith("step:")) {
+                validateSelector(value);
+            }
+            return;
+        }
+        node.elements().forEachRemaining(this::validateTemplate);
     }
 
     private void validateSelector(String selector) {

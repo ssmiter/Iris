@@ -1,15 +1,52 @@
 package com.iris.agent.pipeline;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 /** Resolves explicit initial-input or earlier-step selectors. */
 @Service
 public class PipelineValueResolver {
     private final PipelineRunRepository runs;
+    private final ObjectMapper objectMapper;
 
-    public PipelineValueResolver(PipelineRunRepository runs) {
+    public PipelineValueResolver(
+            PipelineRunRepository runs,
+            ObjectMapper objectMapper
+    ) {
         this.runs = runs;
+        this.objectMapper = objectMapper;
+    }
+
+    /** Recursively resolves selector-valued leaves while preserving literals. */
+    public JsonNode resolveTemplate(
+            PipelineRunRepository.PipelineRun run,
+            PipelineRunRepository.StepRun currentStep,
+            JsonNode template
+    ) {
+        if (template.isTextual()) {
+            String value = template.asText();
+            if (value.startsWith("input:") || value.startsWith("step:")) {
+                return resolve(run, currentStep, value).deepCopy();
+            }
+            return template.deepCopy();
+        }
+        if (template.isObject()) {
+            var result = objectMapper.createObjectNode();
+            template.fields().forEachRemaining(entry -> result.set(
+                    entry.getKey(),
+                    resolveTemplate(run, currentStep, entry.getValue())
+            ));
+            return result;
+        }
+        if (template.isArray()) {
+            var result = objectMapper.createArrayNode();
+            template.forEach(item -> result.add(
+                    resolveTemplate(run, currentStep, item)
+            ));
+            return result;
+        }
+        return template.deepCopy();
     }
 
     public JsonNode resolve(

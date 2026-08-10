@@ -8,6 +8,7 @@ import com.iris.tools.core.CapabilityAvailabilityService;
 import com.iris.tools.catalog.CapabilityDirectoryCatalog.DirectoryDefinition;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
+import com.iris.retrieval.HybridRetrievalEngine;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -42,18 +43,21 @@ public class CapabilityService {
     private final CapabilityAvailabilityService availability;
     private final CapabilityDirectoryCatalog directoryCatalog;
     private final PipelineDefinitionRegistry pipelines;
+    private final HybridRetrievalEngine retrieval;
     private final List<CatalogDocument> searchDocuments;
 
     public CapabilityService(
             ToolRegistry registry,
             CapabilityAvailabilityService availability,
             CapabilityDirectoryCatalog directoryCatalog,
-            PipelineDefinitionRegistry pipelines
+            PipelineDefinitionRegistry pipelines,
+            HybridRetrievalEngine retrieval
     ) {
         this.registry = registry;
         this.availability = availability;
         this.directoryCatalog = directoryCatalog;
         this.pipelines = pipelines;
+        this.retrieval = retrieval;
         this.searchDocuments = java.util.stream.Stream.concat(
                 registry.all().stream()
                 .filter(binding -> !BASE_DISCOVERY_TOOLS.contains(
@@ -224,14 +228,59 @@ public class CapabilityService {
                         globPattern
                 ))
                 .toList();
-        List<RankedDocument> matches = candidates.stream()
+        List<RankedDocument> lexical = candidates.stream()
                 .map(document -> rank(document, queryPatterns))
-                .filter(result -> result.score() > 0)
-                .sorted(Comparator
-                        .comparingInt(RankedDocument::score)
-                        .reversed()
-                        .thenComparing(result -> result.document().path()))
                 .toList();
+        List<RankedDocument> matches;
+        String retrievalStrategy;
+        String semanticModelIdentity;
+        if (regex) {
+            matches = lexical.stream()
+                    .filter(result -> result.score() > 0)
+                    .sorted(Comparator
+                            .comparingInt(RankedDocument::score)
+                            .reversed()
+                            .thenComparing(result ->
+                                    result.document().path()))
+                    .toList();
+            retrievalStrategy = "lexical_regex";
+            semanticModelIdentity = null;
+        } else {
+            var fused = retrieval.rank(
+                    normalizedQuery,
+                    lexical.stream().map(result ->
+                            new HybridRetrievalEngine.Candidate<>(
+                                    result,
+                                    result.document().path(),
+                                    semanticText(result.document()),
+                                    result.score(),
+                                    exactAnchor(
+                                            normalizedQuery,
+                                            result.document(),
+                                            caseSensitive
+                                    )
+                            )
+                    ).toList(),
+                    candidates.size()
+            );
+            matches = fused.matches().stream().map(item -> {
+                RankedDocument lexicalResult = item.value();
+                return new RankedDocument(
+                        lexicalResult.score(),
+                        lexicalResult.score() > 0
+                                ? lexicalResult.matchedField()
+                                : "semantic",
+                        lexicalResult.document(),
+                        item.lexicalScore(),
+                        item.semanticScore(),
+                        item.combinedScore(),
+                        item.exactAnchor(),
+                        item.strategy()
+                );
+            }).toList();
+            retrievalStrategy = fused.strategy();
+            semanticModelIdentity = fused.modelIdentity();
+        }
         return new CapabilityFileSearchResult(
                 normalizedQuery,
                 parent,
@@ -242,7 +291,9 @@ public class CapabilityService {
                         .map(this::fileMatch)
                         .toList(),
                 matches.size() > limit,
-                candidates.size()
+                candidates.size(),
+                retrievalStrategy,
+                semanticModelIdentity
         );
     }
 
@@ -304,7 +355,42 @@ public class CapabilityService {
                 matchedField = prefer(matchedField, "metadata");
             }
         }
-        return new RankedDocument(score, matchedField, document);
+        return new RankedDocument(
+                score,
+                matchedField,
+                document,
+                0D,
+                null,
+                0D,
+                false,
+                "lexical"
+        );
+    }
+
+    private String semanticText(CatalogDocument document) {
+        return String.join("\n",
+                document.name(),
+                document.path(),
+                document.description(),
+                document.parameterNames(),
+                document.metadata()
+        );
+    }
+
+    private boolean exactAnchor(
+            String query,
+            CatalogDocument document,
+            boolean caseSensitive
+    ) {
+        String needle = caseSensitive
+                ? query : query.toLowerCase(Locale.ROOT);
+        String name = caseSensitive
+                ? document.name()
+                : document.name().toLowerCase(Locale.ROOT);
+        String path = caseSensitive
+                ? document.path()
+                : document.path().toLowerCase(Locale.ROOT);
+        return name.contains(needle) || path.contains(needle);
     }
 
     private String prefer(String current, String candidate) {
@@ -339,7 +425,12 @@ public class CapabilityService {
                 ranked.matchedField(),
                 document.riskLevel(),
                 current.value(),
-                current.reason()
+                current.reason(),
+                ranked.lexicalScore(),
+                ranked.semanticScore(),
+                ranked.combinedScore(),
+                ranked.exactAnchor(),
+                ranked.strategy()
         );
     }
 
@@ -652,7 +743,9 @@ public class CapabilityService {
             int total,
             List<CapabilityFileMatch> matches,
             boolean truncated,
-            int scannedEntries
+            int scannedEntries,
+            String retrievalStrategy,
+            String semanticModelIdentity
     ) {
     }
 
@@ -663,7 +756,12 @@ public class CapabilityService {
             String matchedField,
             String riskLevel,
             String availability,
-            String availabilityReason
+            String availabilityReason,
+            double lexicalScore,
+            Double semanticScore,
+            double combinedScore,
+            boolean exactAnchor,
+            String retrievalStrategy
     ) {
     }
 
@@ -682,7 +780,12 @@ public class CapabilityService {
     private record RankedDocument(
             int score,
             String matchedField,
-            CatalogDocument document
+            CatalogDocument document,
+            double lexicalScore,
+            Double semanticScore,
+            double combinedScore,
+            boolean exactAnchor,
+            String strategy
     ) {
     }
 }

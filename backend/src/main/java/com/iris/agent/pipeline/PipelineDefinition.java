@@ -29,10 +29,24 @@ public record PipelineDefinition(
     }
 
     public sealed interface Step permits ChildAgentStep, ModelTransformStep,
-            PublishConversationTitleStep {
+            ToolStep, PublishConversationTitleStep {
         String stepId();
 
         String kind();
+    }
+
+    /** Exact Tool binding executed through the shared ToolRuntime. */
+    public record ToolStep(
+            String stepId,
+            String toolName,
+            String capabilityPath,
+            String manifestHash,
+            JsonNode inputTemplate
+    ) implements Step {
+        @Override
+        public String kind() {
+            return "tool";
+        }
     }
 
     /** A bounded Agentic segment that receives only an explicit task. */

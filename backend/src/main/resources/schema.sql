@@ -803,6 +803,7 @@ CREATE TABLE IF NOT EXISTS pipeline_step_run (
     step_kind TEXT NOT NULL,
     phase TEXT NOT NULL,
     child_run_id TEXT,
+    tool_execution_id TEXT,
     input_json TEXT NOT NULL,
     output_json TEXT,
     failure_code TEXT,
@@ -813,11 +814,31 @@ CREATE TABLE IF NOT EXISTS pipeline_step_run (
     UNIQUE (pipeline_run_id, step_id),
     UNIQUE (pipeline_run_id, step_index),
     FOREIGN KEY (pipeline_run_id) REFERENCES agent_run(run_id),
-    FOREIGN KEY (child_run_id) REFERENCES agent_run(run_id)
+    FOREIGN KEY (child_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (tool_execution_id) REFERENCES tool_execution(execution_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_step_child
     ON pipeline_step_run(child_run_id, phase);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_step_tool
+    ON pipeline_step_run(tool_execution_id, phase);
+
+-- Reusable semantic vectors. The cache identity includes the model and text
+-- normalization version so an encoder upgrade cannot silently reuse stale data.
+CREATE TABLE IF NOT EXISTS semantic_embedding_cache (
+    model_identity TEXT NOT NULL,
+    normalization_version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    dimension INTEGER NOT NULL,
+    vector_blob BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,
+    PRIMARY KEY (model_identity, normalization_version, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_embedding_last_used
+    ON semantic_embedding_cache(last_used_at);
 
 CREATE TABLE IF NOT EXISTS agent_round (
     round_id TEXT PRIMARY KEY,

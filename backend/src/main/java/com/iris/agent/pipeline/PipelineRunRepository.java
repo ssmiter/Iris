@@ -118,12 +118,12 @@ public class PipelineRunRepository {
                     INSERT INTO pipeline_step_run(
                         step_run_id, pipeline_run_id, step_id, step_index,
                         step_kind, phase, child_run_id, input_json,
-                        output_json, failure_code, version,
+                        tool_execution_id, output_json, failure_code, version,
                         started_at, ended_at, created_at
                     ) VALUES (
                         :stepRunId, :runId, :stepId, :stepIndex,
                         :stepKind, 'accepted', NULL, :input,
-                        NULL, NULL, 1, NULL, NULL, :now
+                        NULL, NULL, NULL, 1, NULL, NULL, :now
                     )
                     """)
                     .param("stepRunId", runId + ":" + step.stepId())
@@ -245,6 +245,17 @@ public class PipelineRunRepository {
                 .list();
     }
 
+    public Optional<String> waitingPipelineForExecution(String executionId) {
+        return jdbc.sql("""
+                SELECT pipeline_run_id FROM pipeline_step_run
+                WHERE tool_execution_id = :executionId
+                  AND phase = 'waiting_tool'
+                """)
+                .param("executionId", executionId)
+                .query(String.class)
+                .optional();
+    }
+
     public boolean markWaitingChild(
             String stepRunId,
             long expectedVersion,
@@ -259,6 +270,47 @@ public class PipelineRunRepository {
                   AND phase = 'accepted' AND version = :expectedVersion
                 """)
                 .param("childRunId", childRunId)
+                .param("now", now.toString())
+                .param("stepRunId", stepRunId)
+                .param("expectedVersion", expectedVersion)
+                .update() == 1;
+    }
+
+    public boolean markWaitingTool(
+            String stepRunId,
+            long expectedVersion,
+            String executionId,
+            Instant now
+    ) {
+        return jdbc.sql("""
+                UPDATE pipeline_step_run
+                SET phase = 'waiting_tool', tool_execution_id = :executionId,
+                    version = version + 1, started_at = COALESCE(started_at, :now)
+                WHERE step_run_id = :stepRunId
+                  AND phase = 'accepted' AND version = :expectedVersion
+                """)
+                .param("executionId", executionId)
+                .param("now", now.toString())
+                .param("stepRunId", stepRunId)
+                .param("expectedVersion", expectedVersion)
+                .update() == 1;
+    }
+
+    public boolean completeToolStep(
+            String stepRunId,
+            long expectedVersion,
+            JsonNode output,
+            Instant now
+    ) {
+        return jdbc.sql("""
+                UPDATE pipeline_step_run
+                SET phase = 'succeeded', output_json = :output,
+                    version = version + 1, ended_at = :now
+                WHERE step_run_id = :stepRunId
+                  AND phase = 'waiting_tool'
+                  AND version = :expectedVersion
+                """)
+                .param("output", write(output))
                 .param("now", now.toString())
                 .param("stepRunId", stepRunId)
                 .param("expectedVersion", expectedVersion)
@@ -339,6 +391,7 @@ public class PipelineRunRepository {
                 rs.getString("step_kind"),
                 rs.getString("phase"),
                 rs.getString("child_run_id"),
+                rs.getString("tool_execution_id"),
                 read(rs.getString("input_json")),
                 rs.getString("output_json") == null
                         ? null : read(rs.getString("output_json")),
@@ -387,6 +440,7 @@ public class PipelineRunRepository {
             String kind,
             String phase,
             String childRunId,
+            String toolExecutionId,
             JsonNode input,
             JsonNode output,
             String failureCode,

@@ -82,6 +82,42 @@ public class ToolRuntime {
             JsonNode input,
             ToolContext context
     ) {
+        return invokeAuthorized(invocation, input, context, null);
+    }
+
+    /**
+     * Executes a binding frozen by trusted host orchestration (for example a
+     * Pipeline Definition). It skips model exposure only; every runtime policy,
+     * snapshot, approval, commit gate, verification and payload rule remains.
+     */
+    public RuntimeResult invokeHost(
+            Invocation invocation,
+            JsonNode input,
+            ToolContext context,
+            String capabilityPath,
+            String manifestHash
+    ) {
+        if (capabilityPath == null || capabilityPath.isBlank()
+                || manifestHash == null || manifestHash.isBlank()) {
+            throw new ToolRuntimeException(
+                    "invalid_host_tool_binding",
+                    "Host invocation must freeze capabilityPath and manifestHash"
+            );
+        }
+        return invokeAuthorized(
+                invocation,
+                input,
+                context,
+                new HostBinding(capabilityPath, manifestHash)
+        );
+    }
+
+    private RuntimeResult invokeAuthorized(
+            Invocation invocation,
+            JsonNode input,
+            ToolContext context,
+            HostBinding hostBinding
+    ) {
         requireInvocation(invocation, context);
         return withLock(context.conversationId() + ":" + invocation.toolCallId(), () -> {
             ToolBinding visibleBinding = registry.find(invocation.toolName())
@@ -90,7 +126,11 @@ public class ToolRuntime {
                             "找不到工具 " + invocation.toolName()
                                     + "；请先通过能力目录发现精确定义"
                     ));
-            requireExactModelExposure(invocation, visibleBinding);
+            if (hostBinding == null) {
+                requireExactModelExposure(invocation, visibleBinding);
+            } else {
+                requireExactHostBinding(visibleBinding, hostBinding);
+            }
             String inputHash = hash(write(input));
             RuntimeResult existing = repository.findByToolCall(
                     context.conversationId(),
@@ -329,6 +369,28 @@ public class ToolRuntime {
             }
             return execute(executionId, binding, boundedContext);
         });
+    }
+
+    private void requireExactHostBinding(
+            ToolBinding binding,
+            HostBinding expected
+    ) {
+        if (!binding.capabilityPath().equals(expected.capabilityPath())
+                || !binding.manifestHash().equals(expected.manifestHash())) {
+            throw new ToolRuntimeException(
+                    "host_tool_binding_changed",
+                    "The Tool binding frozen by the host definition has changed"
+            );
+        }
+        if (binding.tool() instanceof ToolCallResolver) {
+            throw new ToolRuntimeException(
+                    "host_proxy_tool_not_allowed",
+                    "Host orchestration must freeze the final Tool, not a resolver"
+            );
+        }
+    }
+
+    private record HostBinding(String capabilityPath, String manifestHash) {
     }
 
     /**

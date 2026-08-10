@@ -124,6 +124,17 @@ public class ToolRuntimeRepository {
                 .optional();
     }
 
+    public Optional<String> outputJson(String executionId) {
+        return jdbc.sql("""
+                SELECT output_json FROM tool_execution
+                WHERE execution_id = :executionId
+                  AND phase = 'succeeded'
+                """)
+                .param("executionId", executionId)
+                .query(String.class)
+                .optional();
+    }
+
     public Optional<RuntimeResult> findByExecutionId(
             String conversationId,
             String executionId

@@ -19,6 +19,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.sql.Types;
 
 @Service
 public class ToolProjectionService {
@@ -91,6 +92,69 @@ public class ToolProjectionService {
         if (emission == null) {
             throw new IllegalStateException(
                     "Tool projection transaction returned no result"
+            );
+        }
+        emitRenderNode(emission.run(), emission.toolNode());
+        if (emission.attentionNode() != null) {
+            emitAttention(emission.run(), emission.attentionNode());
+        }
+        if (emission.artifactNode() != null) {
+            emitRenderNode(emission.run(), emission.artifactNode());
+        }
+    }
+
+    /** Projects a ToolRuntime execution owned by a Pipeline rather than a model Round. */
+    public void projectPipeline(
+            String pipelineRunId,
+            String pipelineStepRunId,
+            com.fasterxml.jackson.databind.JsonNode input,
+            RuntimeResult result
+    ) {
+        RoundToolCall call = new RoundToolCall(
+                result.toolCallId(),
+                "host:" + pipelineStepRunId,
+                result.toolName(),
+                input,
+                0,
+                result.executionId()
+        );
+        RoundRow noRound = new RoundRow(
+                null,
+                pipelineRunId,
+                0,
+                RoundPhase.AWAITING_TOOLS,
+                1,
+                1
+        );
+        ProjectionEmission emission = transactions.execute(status -> {
+            RunRow run = runs.findRun(pipelineRunId).orElseThrow();
+            projectTool(run, noRound, call, result);
+            if (result.approvalId() != null) {
+                projectAttention(run, noRound, result);
+            }
+            String inputRequestId = inputRequestId(result.executionId());
+            if (inputRequestId != null) {
+                projectUserInputAttention(
+                        run, noRound, result, inputRequestId
+                );
+            }
+            ObjectNode artifactNode = projectPublishedArtifact(
+                    run, noRound, call, result
+            );
+            return new ProjectionEmission(
+                    run,
+                    projectionForTool(call.toolCallId()),
+                    result.approvalId() == null
+                            ? inputRequestId == null
+                                    ? null
+                                    : projectionForUserInput(inputRequestId)
+                            : projectionForApproval(result.approvalId()),
+                    artifactNode
+            );
+        });
+        if (emission == null) {
+            throw new IllegalStateException(
+                    "Pipeline Tool projection transaction returned no result"
             );
         }
         emitRenderNode(emission.run(), emission.toolNode());
@@ -782,8 +846,13 @@ public class ToolProjectionService {
         node.put("nodeId", nodeId);
         node.put("turnId", run.turnId());
         node.put("runId", run.runId());
-        node.put("roundId", round.roundId());
-        node.putNull("pipelineStepRunId");
+        if (round.roundId() == null) {
+            node.putNull("roundId");
+            node.put("pipelineStepRunId", pipelineStepRunId(run.runId()));
+        } else {
+            node.put("roundId", round.roundId());
+            node.putNull("pipelineStepRunId");
+        }
         node.putNull("groupId");
         node.put("ordinal", ordinal);
         node.put("rendererKey", "default");
@@ -812,7 +881,7 @@ public class ToolProjectionService {
                     final_content_hash, projection_json, created_at, updated_at
                 ) VALUES (
                     :nodeId, :conversationId, :branchId, :turnId, :runId,
-                    :roundId, NULL, :type, :status,
+                    :roundId, :pipelineStepRunId, :type, :status,
                     NULL, :ordinal, :rendererKey, :version,
                     NULL, :projection, :now, :now
                 )
@@ -822,7 +891,13 @@ public class ToolProjectionService {
                 .param("branchId", run.branchId())
                 .param("turnId", run.turnId())
                 .param("runId", run.runId())
-                .param("roundId", round.roundId())
+                .param("roundId", round.roundId(), Types.VARCHAR)
+                .param(
+                        "pipelineStepRunId",
+                        round.roundId() == null
+                                ? pipelineStepRunId(run.runId()) : null,
+                        Types.VARCHAR
+                )
                 .param("type", type)
                 .param("status", status)
                 .param("ordinal", ordinal)
@@ -834,6 +909,20 @@ public class ToolProjectionService {
                 .param("projection", projection.toString())
                 .param("now", now.toString())
                 .update();
+    }
+
+    private String pipelineStepRunId(String pipelineRunId) {
+        return jdbc.sql("""
+                SELECT step_run_id FROM pipeline_step_run
+                WHERE pipeline_run_id = :runId
+                  AND phase = 'waiting_tool'
+                ORDER BY step_index
+                LIMIT 1
+                """)
+                .param("runId", pipelineRunId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
     }
 
     private void updateNode(

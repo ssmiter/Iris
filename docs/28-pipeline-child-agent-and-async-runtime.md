@@ -40,9 +40,11 @@ Iris 只保留一套 Agentic 内核。主对话、同步子任务、后台子任
 - `gate`：检查结构化前置条件或等待用户输入；
 - `publish`：把内部结果显式发布为用户可见 Artifact、记忆或技能。
 
-当前已贯通 `child_agent`、无工具的 `model_transform`，以及首个受控发布步骤 `publish_conversation_title`。前者覆盖“把一个明确子目标交给同一 Agentic 内核”，中者覆盖标题、选区提炼等一次模型转换，后者证明内部结果可以在不授予模型任意写权限的前提下发布为持久产品状态。
+当前已贯通 `child_agent`、无工具的 `model_transform`、受控发布步骤 `publish_conversation_title`，以及严格绑定 Definition 版本的 `tool`。固定 Tool 步骤不另造执行器：参数模板解析后仍进入唯一 Tool Runtime，继续经过 schema 校验、operation snapshot、审批、commit gate、verify、结果落盘和前端投影；Pipeline 只负责编排依赖，不获得绕过真实动作边界的特权。
 
 首轮根 Run 成功且会话仍为“新对话”时，系统事件启动 `conversation_title` Pipeline：短前缀模型只生成标题候选，发布步骤再次检查当前 metadata；用户若已手动命名便保留用户标题。整个过程不新增伪用户消息，也不阻塞原 Turn。
+
+`compose_workspace_artifact` 是首个完整的动作型样例：一次有界模型变换生成成品正文，`write_file` 在工作区围栏和审批下写入，随后 `present_artifact` 冻结并呈现成果。它证明“模型加工 → 真实写动作 → 用户可见交付”能够复用同一套 Agent、Tool、Workspace、Artifact 和 SSE 事实，而不是由某个业务按钮暗中完成半套逻辑。
 
 Pipeline 的失败默认只终结本 Pipeline Run，不拖垮仍可继续的父 Agent。只有同步调用明确声明结果是父任务的必要前置条件时，失败才作为结构化 observation 返回父 Agent。
 
@@ -106,7 +108,19 @@ Compact、记忆与 Skill 都是“信息经过受约束过程变成另一种长
 
 Skill 生成 Pipeline 的输入应是主 Run 的“骨架事实”：目标、关键选择、成功工具链、验证证据、失败后修正和 Artifact 引用。它不能复制完整隐藏推理，也不能仅凭一次偶然成功自动发布。
 
-## 9. 恢复与终态
+## 9. 从 Claude Code 场景得到的边界
+
+Claude Code 中标题、自动压缩、离开摘要、输入建议、任务摘要和 Skill 生成看起来都“调用了模型”，但它们不是同一种运行形态。Iris 只吸收其职责划分：
+
+- **压缩**属于上下文基础设施：由水位线或用户入口触发，输入是版本化历史视野，输出是可追溯边界；它不能退化成普通摘要 Pipeline，更不能删除原历史。
+- **离开摘要与输入建议**属于可丢弃的界面辅助：只读近期有界窗口，使用小模型、无工具、可取消、失败静默，不得写回任务事实或抢占主 Run。Iris 等前端具备可靠的焦点/空闲事实后再接入，而不是先造后台定时器。
+- **任务摘要**属于运行索引：服务于“当前在做什么”的列表或进程视图，可在长 Run 的步骤边界刷新，但不是父子 Agent 的通信正文，也不能替代 durable task state。
+- **标题**属于会话索引：模型只提候选，代码依据当前版本和用户是否已命名决定是否发布；Iris 已按此闭环实现。
+- **Skill 草稿**属于经验提炼：输入是成功路径的骨架事实，输出先是可审阅草稿；只有持久对象、来源、适用条件、依赖和发布生命周期齐全后，才值得接上生成 Pipeline。
+
+据此，Pipeline 的判断标准不是“这个功能用了模型”，而是同时具备**固定入口、已知的数据变换骨架、明确的持久对象或系统动作**。需要根据新观察自由选择路径的研究、浏览器探索和领域求解继续使用主 Agent 或隔离子 Agent。这样既复用 Agentic 能力，也不会把每个产品功能都包装成另一种小 Agent。
+
+## 10. 恢复与终态
 
 - Pipeline 重启后从持久化 Step 状态重建；成功步骤不重跑。
 - 等待 child 的步骤由 child terminal event 唤醒；进程重启时通过未闭合 parent/child 事实恢复。
@@ -114,12 +128,13 @@ Skill 生成 Pipeline 的输入应是主 Run 的“骨架事实”：目标、�
 - child Run 的部分成果与最终文本先持久化，再发送完成通知。
 - 父 Run、child Run 和 Pipeline Run 分别闭合；child 结束不能提前结算整个 Turn。
 
-## 10. 近期实现顺序
+## 11. 近期实现顺序
 
 1. 已完成 Pipeline Definition/Run/Step、隔离 child Agent、durable mailbox 与统一触发入口；
 2. 已完成首个系统 metadata 闭环：标题模型转换与受控发布；
-3. 下一步让固定 Tool 步骤严格复用唯一 Tool Runtime，再适配 Compact；
-4. 建立后端候选召回内核后，再实现可撤销的记忆候选与 Skill 草稿；
-5. 有真实体验数据后再决定并行 join、通用 DSL 和更复杂的多 Agent 拓扑。
+3. 已完成固定 Tool 步骤复用唯一 Tool Runtime，并以工作区成品生成与 Artifact 呈现打通动作闭环；
+4. 已建立可降级的混合候选召回内核；下一步先让既有 Compact 接入统一调度事实，再实现可撤销的记忆候选与 Skill 草稿；
+5. 离开摘要、输入建议等界面辅助等待可靠的前端触发事实；不以增加 Pipeline 数量作为进度；
+6. 有真实体验数据后再决定并行 join、通用 DSL 和更复杂的多 Agent 拓扑。
 
 这条顺序先保证“同一个内核能自然连接起来”，再增加场景数量。

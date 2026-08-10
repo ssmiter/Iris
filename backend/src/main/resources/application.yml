@@ -22,6 +22,18 @@ iris:
   workspace: ~/Iris/workspace
   agent:
     max-parallel-read-tools: ${IRIS_MAX_PARALLEL_READ_TOOLS:4}
+  retrieval:
+    embedding:
+      mode: ${IRIS_EMBEDDING_MODE:disabled}
+      model-path: ${IRIS_EMBEDDING_MODEL_PATH:}
+      vocab-path: ${IRIS_EMBEDDING_VOCAB_PATH:}
+      identity: ${IRIS_EMBEDDING_IDENTITY:distiluse-multilingual-v1}
+      max-tokens: ${IRIS_EMBEDDING_MAX_TOKENS:256}
+      batch-size: ${IRIS_EMBEDDING_BATCH_SIZE:32}
+    hybrid:
+      lexical-weight: ${IRIS_RETRIEVAL_LEXICAL_WEIGHT:0.55}
+      semantic-weight: ${IRIS_RETRIEVAL_SEMANTIC_WEIGHT:0.45}
+      semantic-threshold: ${IRIS_RETRIEVAL_SEMANTIC_THRESHOLD:0.48}
   tools:
     approval-mode: ${IRIS_TOOL_APPROVAL_MODE:required}
   storage:
