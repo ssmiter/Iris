@@ -1,0 +1,42 @@
+name: query_mes_curing_plan_execution
+kind: process
+description: 查询 MES 域的硫化计划与生产实绩；核对设备负荷、模具安排、周期和合格产出时使用，不包含质量终检或设备维护
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    record_type:
+      type: string
+      enum: [plan, production]
+      description: 记录类型：plan 表示硫化计划，production 表示生产实绩；不传则返回全部类型
+    start_date:
+      type: string
+      description: 业务开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 业务结束日期 YYYY-MM-DD；不传则不设上界
+    item:
+      type: string
+      description: 物料或制品编码、名称片段
+    resource_code:
+      type: string
+      description: 硫化设备编码，精确匹配
+    status:
+      type: string
+      description: 业务状态，精确匹配；先不传可观察当前数据中的状态值
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 硫化 计划 实绩 模具 周期 合格 产出

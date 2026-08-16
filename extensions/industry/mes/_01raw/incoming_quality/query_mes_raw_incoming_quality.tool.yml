@@ -1,0 +1,42 @@
+name: query_mes_raw_incoming_quality
+kind: process
+description: 查询 MES 域的来料检验记录、指标明细与判定结论；评估来料质量或处理来料搁置时使用，不包含密炼在线快检（见 query_mes_mixing_quality）
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    record_type:
+      type: string
+      enum: [inspection]
+      description: 记录类型：inspection=来料检验；不传则返回全部类型
+    start_date:
+      type: string
+      description: 业务开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 业务结束日期 YYYY-MM-DD；不传则不设上界
+    item:
+      type: string
+      description: 物料或制品编码、名称片段
+    resource_code:
+      type: string
+      description: 检验台位或采样点编码，精确匹配
+    status:
+      type: string
+      description: 业务状态，精确匹配；先不传可观察当前数据中的状态值
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 来料 检验 IQC 指标 判定 原料质量

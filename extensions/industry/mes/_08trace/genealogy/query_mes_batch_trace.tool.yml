@@ -1,0 +1,29 @@
+name: query_mes_batch_trace
+kind: process
+description: 追溯 MES 域批次全生命周期：按批号或物料跨表串出 计划→批次→投料→快检→半制品→成型→硫化→仓储 各段记录（每段一行、带阶段标记）；质量追溯与去向排查时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    batch_no:
+      type: string
+      description: 批次号片段；与 item 至少提供一个，优先按批号追溯
+    item:
+      type: string
+      description: 物料或制品编码、名称片段；按物料列出相关批次与下游记录
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 批次 追溯 谱系 生命周期 去向 质量排查

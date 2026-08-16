@@ -66,14 +66,13 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 **铁律：文件目录 = 能力树路径，不允许第二套映射。**
 
 ```
-tools/finance/express/QueryExpressTool.java   → /finance/express/query_express
-tools/travel/train/QueryTicketTool.java       → /travel/train/query_ticket
-tools/job/resume/FillFormTool.java            → /job/resume/fill_form
-tools/life/notes/AppendNoteTool.java          → /life/notes/append_note
-tools/industry/mes/_02mixing/_02plan/...     → /industry/mes/_02mixing/_02plan/...
+tools/life/notes/AppendNoteTool.java          → /life/notes/append_note        （内核工具：包名）
+extensions/industry/mes/_02mixing/_02plan/…   → /industry/mes/_02mixing/_02plan/…（插件：文件目录）
 ```
 
-路径由命名空间/包名推断（`tools.finance.express` → `/finance/express`），推断规则集中在 `DomainCatalog` 一个静态类中：
+内核工具的路径由包名推断（`tools.finance.express` → `/finance/express`），推断规则集中在
+`DomainCatalog` 一个静态类中；插件工具的路径就是它在扫描根下的文件目录
+（docs/31 的归属公理），两套来源进入同一个 Catalog。段语义规则有三条：
 
 1. **通用工具集**：任何域都可见的基础工具（文件、搜索、计算）；
 2. **受限域排除集**：某些域不暴露特定能力（如 `guest` 域不可见支付/写文件工具）；

@@ -83,7 +83,7 @@
 | `_13mould/status` | query_mes_mould_status | reference_object(mould) |
 | `aps/demand_schedule` | query_mes_aps_demand_schedule | process_record(aps) |
 
-骨架模式：`AbstractIndustrialReadTool`（统一信封 dataset/simulated/domain/view/filters/rows/rowCount/truncated/guidance）→ `AbstractMesReadTool`（domain=mes）→ `AbstractMesProcessQueryTool` / `AbstractMesReferenceQueryTool`；`IndustrialDemoRepository` 集中 SQL；`IndustrialToolSchemas` 共享 schema 构造；`CapabilityDirectoryCatalog` 目录先行；`DomainCatalog.SEGMENT_LABELS` 段展示名。
+骨架模式：统一信封 dataset/simulated/domain/view/filters/rows/rowCount/truncated/guidance；工具只选择固定数据视图并归一化参数，表、SQL、行预算集中在仓储层；`CapabilityDirectoryCatalog` 目录先行；`DomainCatalog.SEGMENT_LABELS` 段展示名。实现现为内建共享进程插件 `extensions/industry/mes/`（docs/31 §11 M3c）：`Mes.java` 常驻宿主 + 内嵌仓储层，DDL/种子随插件 `seed.sql` 自播到 `{workspace}/industry/mes-demo.db`，内核不再内置这些类与表。
 
 ### 3.2 缺口（对照全景）
 
@@ -215,7 +215,7 @@ industrial_demo_quality_exception (
 ### 5.5 既有工具修正
 
 - `query_mes_mixing_equipment_events`：补固定 process=mixing 过滤（经 equipment_state 反查），否则跨工序事件种子灌入后串域。
-- `IndustrialDemoRepository.productionPlans`：view 名参数化，mens 复用。
+- 仓储层 `productionPlans`：view 名参数化（现位于插件 `Mes.java` 内嵌仓储层），mens 复用。
 
 ## 6. 目录与标签同步
 

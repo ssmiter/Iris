@@ -1,0 +1,29 @@
+name: report_mes_quality_summary
+kind: process
+description: 按物料聚合 MES 域的快检测量数、合格率与未闭环质量异常数，附合计；做质量汇总或筛查重点物料时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    start_date:
+      type: string
+      description: 采样开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 采样结束日期 YYYY-MM-DD；不传则不设上界
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 质量 汇总 合格率 异常 物料 报表

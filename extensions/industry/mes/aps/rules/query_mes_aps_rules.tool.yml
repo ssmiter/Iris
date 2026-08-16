@@ -1,0 +1,32 @@
+name: query_mes_aps_rules
+kind: process
+description: 查询 MES 域的排产规则词表（硬/软约束、适用范围、业务解释）；解释排产结果依据或讨论排产策略时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    query:
+      type: string
+      description: 排产规则编码或名称片段
+    process_code:
+      type: string
+      description: 适用工序编码，精确匹配
+    status:
+      type: string
+      description: 对象状态，精确匹配；先不传可观察当前状态值
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 排产规则 硬约束 软约束 词表 策略

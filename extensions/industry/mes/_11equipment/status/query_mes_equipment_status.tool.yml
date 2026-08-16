@@ -1,0 +1,33 @@
+name: query_mes_equipment_status
+kind: process
+description: 查询 MES 域的设备状态、利用率、当前计划与最新告警；观察车间运行态势时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    process_code:
+      type: string
+      description: 工序编码，如 mixing、forming、curing；精确匹配
+    equipment:
+      type: string
+      description: 设备编码或名称片段
+    state:
+      type: string
+      enum: [running, idle, warning, maintenance, offline]
+      description: 设备状态：running、idle、warning、maintenance 或 offline
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 设备 状态 利用率 告警 车间 态势

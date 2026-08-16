@@ -1,0 +1,40 @@
+name: query_mes_demand_orders
+kind: process
+description: 查询 MES 域的需求订单（数量、交期、优先级、排产状态）；了解链头需求、排查未排产订单或评估交期压力时使用，排产结果见 query_mes_aps_master_plan
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    start_date:
+      type: string
+      description: 交期下界 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 交期上界 YYYY-MM-DD；不传则不设上界
+    item:
+      type: string
+      description: 制品编码或名称片段
+    state:
+      type: string
+      enum: [unscheduled, scheduled, released, completed]
+      description: 排产状态：unscheduled=未排产，scheduled=已排产，released=已下达，completed=已完成；不传则返回全部
+    priority:
+      type: string
+      enum: [high, normal]
+      description: 需求优先级；不传则返回全部
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 需求 订单 交期 优先级 排产 未排产

@@ -1,0 +1,32 @@
+name: query_mes_material_inventory
+kind: process
+description: 查询 MES 域的原材料可用量、预留量与安全库存；排查缺料或库存风险时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    material:
+      type: string
+      description: 物料编码或名称片段；不传则不过滤
+    warehouse_code:
+      type: string
+      description: 仓库编码，精确匹配；不传则查询全部仓库
+    below_safety_stock:
+      type: boolean
+      description: 是否只返回可用量低于安全库存的物料；默认 false
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 原材料 库存 可用量 预留 安全库存 缺料 仓库

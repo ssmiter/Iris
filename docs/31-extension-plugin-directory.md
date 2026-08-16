@@ -368,8 +368,22 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   没有可用连接时 `list_sql_connections` 返回空清单与指引，inspect/query
   在调用时如实报 `sql_connection_not_found`；内核 `com.iris.sql` 包
   与 `tools/data/sql/` 随之删除；
-- **M3c（待做）**：`/industry/mes` 演示域按最终形态重写为内建插件——插件自带
-  演示库并自播种（不依赖内核迁移脚本），删除旧内核 demo 工具类与
-  `IndustrialDemoRepository`；演示数据不再是内核 schema 的一部分；
+- **M3c**：`/industry/mes` 演示域按最终形态重写为内建共享进程
+  插件 `extensions/industry/mes/`——工序叶子目录（深度恰好 2）内的
+  工具清单按 §3.2 共享该目录的常驻进程，entry 逐字一致
+  `["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]`
+  （宿主与驱动在域根一份，叶子目录只放清单；进程惰性拉起、随引用计数
+  回收，未触及的工序零成本）。**演示库所有权搬进插件**：DDL 与
+  脱敏种子随插件自带（`seed.sql`），首次调用在
+  `{workspace}/industry/mes-demo.db` 自播种（BEGIN IMMEDIATE +
+  seed_marker 双重检查，多进程并发首播安全；文件存在即跳过，用户可删
+  可改可重播），内核 schema.sql 的 `industrial_demo_*` 表与种子随之
+  删除——演示数据不再是内核 schema 的一部分。数据访问形态不变：领域
+  工具只选择固定数据视图并归一化参数，表、SQL、行预算集中在插件
+  仓储层；写工具（计划维护、质量处置、APS 发布）保持
+  elevated/external_write/explicit 与乐观守护语义，目标改为插件自有
+  演示库。`/industry/mens` 目录骨架维持纯 `_directory.yml` 元数据不变。
+  内核 `tools/industry/`（39 个工具类与抽象骨架）、
+  `industry/demo/IndustrialDemoRepository` 随之删除；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

@@ -1,0 +1,39 @@
+name: query_mes_mixing_quality
+kind: process
+description: 查询 MES 域的胶料检验测量、上下限、判定和通过率；分析批次质量异常时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    start_date:
+      type: string
+      description: 采样开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 采样结束日期 YYYY-MM-DD；不传则不设上界
+    material_code:
+      type: string
+      description: 胶料编码，精确匹配
+    equipment_code:
+      type: string
+      description: 生产设备编码，精确匹配
+    judge_result:
+      type: string
+      enum: [pass, fail]
+      description: 测量判定：pass 或 fail
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 胶料 快检 测量 门尼 判定 通过率 批次质量

@@ -1,0 +1,39 @@
+name: query_mes_mixing_batches
+kind: process
+description: 查询 MES 域的密炼批次谱系主档：来源计划、机台、产出量、质量状态与下游去向；追溯批次或核对产出时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    batch:
+      type: string
+      description: 批次号片段
+    item:
+      type: string
+      description: 胶料编码或名称片段
+    plan_no:
+      type: string
+      description: 来源计划号，精确匹配
+    equipment_code:
+      type: string
+      description: 密炼设备编码，精确匹配
+    quality_state:
+      type: string
+      enum: [pending, pass, fail]
+      description: 批次质量状态；不传则返回全部
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 密炼 批次 谱系 机台 产出 质量状态 去向

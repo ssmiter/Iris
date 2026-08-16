@@ -1,0 +1,43 @@
+name: query_mes_equipment_events
+kind: process
+description: 查询 MES 域跨工序的设备停机、降速与过程告警事件，可按工序过滤；分析设备损失与异常分布时使用，只看密炼工序可用 query_mes_mixing_equipment_events
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    start_date:
+      type: string
+      description: 事件开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 事件结束日期 YYYY-MM-DD；不传则不设上界
+    equipment_code:
+      type: string
+      description: 设备编码，精确匹配
+    severity:
+      type: string
+      enum: [info, low, medium, high]
+      description: 严重度；不传则返回全部
+    process_code:
+      type: string
+      enum: [mixing, forming, curing, quality]
+      description: 所属工序；不传则跨工序返回
+    unresolved_only:
+      type: boolean
+      description: 是否只返回尚未闭环的事件；默认 false
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 设备 停机 降速 告警 事件 跨工序 损失

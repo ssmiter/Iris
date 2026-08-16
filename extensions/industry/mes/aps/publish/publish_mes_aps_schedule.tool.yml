@@ -1,0 +1,27 @@
+name: publish_mes_aps_schedule
+kind: process
+description: 把已评估的 APS 班次排程发布为生产计划：逐行冲突检查后落库 scheduled 计划，排程标记 published，关联需求回写 scheduled；目标机台同日已有执行中/已完成计划时 block（默认）必拒并列出冲突明细、append 跳过冲突行；重复发布同一排程被幂等拦截并返回原计划号；排产落地时使用
+input_schema:
+  type: object
+  properties:
+    schedule_record_no:
+      type: string
+      description: 要发布的 APS 排程记录号；先用 query_mes_aps_demand_schedule 查到 feasible/accepted 状态的记录
+    conflict_policy:
+      type: string
+      enum: [block, append]
+      description: 目标机台同日已有计划时的处理：block=遇锁定计划整单拒绝，append=跳过冲突行发布其余
+  required: [schedule_record_no, conflict_policy]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将把 APS 排程 {schedule_record_no} 发布为生产计划（冲突策略 {conflict_policy}），向 MES 演示库写入 scheduled 计划并回写关联需求
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 8000
+search_hint: APS 排程 发布 生产计划 冲突 落库 排产落地

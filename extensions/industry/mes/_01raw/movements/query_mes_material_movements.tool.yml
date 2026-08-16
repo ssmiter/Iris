@@ -1,0 +1,42 @@
+name: query_mes_material_movements
+kind: process
+description: 查询 MES 域的原料入库、领出与退回流转及关联单号，附收发退汇总；核对原料去向或批次用料时使用，不包含实时库存（见 query_mes_material_inventory）
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    start_date:
+      type: string
+      description: 流转开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 流转结束日期 YYYY-MM-DD；不传则不设上界
+    material:
+      type: string
+      description: 原料编码或名称片段
+    movement_type:
+      type: string
+      enum: [receipt, issue, return]
+      description: 流转类型；不传则返回全部
+    warehouse_code:
+      type: string
+      description: 仓库编码，精确匹配
+    related_no:
+      type: string
+      description: 关联单号（采购单、批次号等），精确匹配
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 原料 入库 领出 退回 流转 收发 批次 单号

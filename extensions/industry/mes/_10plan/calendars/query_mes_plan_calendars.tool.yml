@@ -1,0 +1,32 @@
+name: query_mes_plan_calendars
+kind: process
+description: 查询 MES 域的工厂日历与班次模板（工作日、节假日、班次起止、休息安排）；评估排产可行性与资源可用时段时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    query:
+      type: string
+      description: 日历或班次模板编码或名称片段
+    process_code:
+      type: string
+      description: 适用工序编码，精确匹配
+    status:
+      type: string
+      description: 对象状态，精确匹配；先不传可观察当前状态值
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 工厂日历 班次模板 工作日 节假日 排产 时段

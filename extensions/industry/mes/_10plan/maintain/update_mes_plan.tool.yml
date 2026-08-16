@@ -1,0 +1,31 @@
+name: update_mes_plan
+kind: process
+description: 维护 MES 域生产计划：start=下达（scheduled→running）、cancel=取消（scheduled→cancelled）、set_priority=调整优先级；已有完成量的计划按锁定规则拒绝；计划状态调整时使用
+input_schema:
+  type: object
+  properties:
+    plan_no:
+      type: string
+      description: 目标生产计划号；先用 query_mes_mixing_plans 等查到 scheduled 状态的计划
+    action:
+      type: string
+      enum: [start, cancel, set_priority]
+      description: 操作：start=下达（scheduled→running），cancel=取消（scheduled→cancelled），set_priority=调整优先级
+    priority:
+      type: string
+      enum: [high, normal]
+      description: 新优先级；仅 action=set_priority 时必填
+  required: [plan_no, action]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将对 MES 演示库中的生产计划 {plan_no} 执行 {action} 操作（下达/取消/调整优先级），写入本地演示数据库
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 8000
+search_hint: 计划 下达 取消 优先级 维护 锁定

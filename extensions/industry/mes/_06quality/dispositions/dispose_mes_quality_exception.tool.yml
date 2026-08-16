@@ -1,0 +1,31 @@
+name: dispose_mes_quality_exception
+kind: process
+description: 处置 MES 域的质量异常（rework=返工、concession=让步接收、scrap=报废）：仅 open→disposed，需带当前 version 乐观锁；异常闭环时使用
+input_schema:
+  type: object
+  properties:
+    exception_no:
+      type: string
+      description: 质量异常单号；先用 query_mes_quality_exceptions 查到 open 状态及当前 version
+    disposition:
+      type: string
+      enum: [rework, concession, scrap]
+      description: 处置方式：rework=返工，concession=让步接收，scrap=报废
+    expected_version:
+      type: integer
+      minimum: 0
+      description: 查询时读到的 version，乐观锁；不匹配说明他人已处置
+  required: [exception_no, disposition, expected_version]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将把 MES 演示库中的质量异常 {exception_no} 处置为 {disposition}（期望版本 {expected_version}），异常将从 open 转为 disposed
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 8000
+search_hint: 质量异常 处置 返工 让步 报废 闭环 乐观锁

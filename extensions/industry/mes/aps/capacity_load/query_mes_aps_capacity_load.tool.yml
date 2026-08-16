@@ -1,0 +1,42 @@
+name: query_mes_aps_capacity_load
+kind: process
+description: 查询 MES 域的产线组产能与负荷、瓶颈标记；评估排产可行性与定位瓶颈工序时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    record_type:
+      type: string
+      enum: [capacity]
+      description: 记录类型：capacity=产能负荷；不传则返回全部类型
+    start_date:
+      type: string
+      description: 业务开始日期 YYYY-MM-DD；不传则不设下界
+    end_date:
+      type: string
+      description: 业务结束日期 YYYY-MM-DD；不传则不设上界
+    item:
+      type: string
+      description: 物料或制品编码、名称片段
+    resource_code:
+      type: string
+      description: 产线组编码，精确匹配
+    status:
+      type: string
+      description: 业务状态，精确匹配；先不传可观察当前数据中的状态值
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: APS 产能 负荷 瓶颈 产线组 可行性

@@ -1,0 +1,34 @@
+name: query_mes_quality_exceptions
+kind: process
+description: 查询 MES 域的质量异常台账（缺陷类别、影响数量、处置状态、乐观锁版本），附 open/disposed 合计；排查未闭环异常时使用，处置前必须先查本视图取 version 传给 dispose_mes_quality_exception
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    item:
+      type: string
+      description: 物料或制品编码、名称片段
+    status:
+      type: string
+      enum: [open, disposed, closed]
+      description: 闭环状态：open=待处置，disposed=已处置，closed=已关闭；不传则返回全部
+    disposition:
+      type: string
+      enum: [none, rework, concession, scrap]
+      description: 处置方式；none 表示尚未处置；不传则返回全部
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 质量异常 台账 缺陷 处置 版本 未闭环

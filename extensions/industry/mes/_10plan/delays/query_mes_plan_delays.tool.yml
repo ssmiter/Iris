@@ -1,0 +1,34 @@
+name: query_mes_plan_delays
+kind: process
+description: 查询 MES 域截至基准日仍未完成的延误计划（延误天数、机台、物料、剩余量），附延误合计；排查交期风险与延误归因时使用
+input_schema:
+  type: object
+  properties:
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 200
+      description: 最多返回记录数；默认 50，上限 200
+    as_of_date:
+      type: string
+      description: 基准日期 YYYY-MM-DD，必填；计划日期早于该日且未完成的计划计为延误
+    process_code:
+      type: string
+      enum: [mixing, forming, curing]
+      description: 工序；不传则覆盖全部工序
+    equipment_code:
+      type: string
+      description: 机台编码，精确匹配
+  required: [as_of_date]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 40000
+search_hint: 延误 计划 交期 风险 剩余量 归因
