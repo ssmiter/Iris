@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, ListRestart, Moon, Sun } from 'lucide-react'
 import {
   cancelSupplement,
@@ -91,6 +91,37 @@ export function ConversationApp() {
     useState<TurnView | null>(null)
   const [pendingAttachments, setPendingAttachments] =
     useState<UploadedArtifact[]>([])
+  const [earlierLoading, setEarlierLoading] = useState(false)
+  const earlierLoadingRef = useRef(false)
+
+  // 向上翻页：以视野内最早 Turn 为水位线取上一页，只补不覆盖；
+  // 压缩线随页并入（dedup 由 addCompactBoundary 保证）。
+  const loadEarlierTurns = useCallback(async () => {
+    if (!currentConversationId || earlierLoadingRef.current) return
+    const chatState = useChatStore.getState()
+    const firstTurnId = chatState.turnOrder[0]
+    if (!firstTurnId || !chatState.hasEarlierTurns) return
+    earlierLoadingRef.current = true
+    setEarlierLoading(true)
+    try {
+      const view = await getConversationView(
+        currentConversationId,
+        useConversationStore.getState().currentBranchId || undefined,
+        firstTurnId,
+      )
+      useChatStore.getState().prependEarlierView(view)
+      for (const boundary of view.compactBoundaries) {
+        useConversationStore.getState().addCompactBoundary(boundary)
+      }
+    } catch (error) {
+      notify.error('更早的轮次暂时没有载入', {
+        description: error instanceof Error ? error.message : '请稍后重试。',
+      })
+    } finally {
+      earlierLoadingRef.current = false
+      setEarlierLoading(false)
+    }
+  }, [currentConversationId])
 
   useEffect(() => {
     setPendingAttachments([])
@@ -774,6 +805,9 @@ export function ConversationApp() {
         <ConversationTimeline
           key={draftKey}
           projection={projection}
+          hasEarlierTurns={chat.hasEarlierTurns}
+          earlierLoading={earlierLoading}
+          onLoadEarlier={loadEarlierTurns}
           onAttentionAction={handleAttentionAction}
           onReplaceRequest={
             activeTurn

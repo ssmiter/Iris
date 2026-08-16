@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { Virtuoso } from 'react-virtuoso'
 import type {
@@ -14,6 +14,9 @@ import { useConversationFollow } from './useConversationFollow'
 
 interface ConversationTimelineProps {
   projection: ConversationProjection
+  hasEarlierTurns?: boolean
+  earlierLoading?: boolean
+  onLoadEarlier?: () => void
   onAttentionAction?: (
     node: AttentionNode,
     action: AttentionAction,
@@ -21,11 +24,38 @@ interface ConversationTimelineProps {
   onReplaceRequest?: (turn: TurnView) => void
 }
 
+// firstItemIndex 的锚定基数：向上翻页时按预插数量递减，
+// Virtuoso 借此保持视口中的内容一个像素都不动。
+const FIRST_ITEM_INDEX_BASE = 1_000_000
+
 export function ConversationTimeline({
   projection,
+  hasEarlierTurns = false,
+  earlierLoading = false,
+  onLoadEarlier,
   onAttentionAction,
   onReplaceRequest,
 }: ConversationTimelineProps) {
+  const firstItemIndexRef = useRef(FIRST_ITEM_INDEX_BASE)
+  const firstTurnIdRef = useRef<string | undefined>(
+    projection.turns[0]?.turnId,
+  )
+
+  // 渲染期检测预插：旧首项在新数组里的位置即预插数量；
+  // 找不到（换对话/换分支）则回到锚定基数。
+  const firstTurnId = projection.turns[0]?.turnId
+  if (firstTurnIdRef.current !== firstTurnId) {
+    const previousFirst = firstTurnIdRef.current
+    const prepended = previousFirst
+      ? projection.turns.findIndex((turn) => turn.turnId === previousFirst)
+      : -1
+    firstItemIndexRef.current =
+      prepended > 0
+        ? firstItemIndexRef.current - prepended
+        : FIRST_ITEM_INDEX_BASE
+    firstTurnIdRef.current = firstTurnId
+  }
+  const firstItemIndex = firstItemIndexRef.current
   const expandedRoundFlags = useViewStateStore(
     (state) => state.expandedRoundIds,
   )
@@ -46,7 +76,7 @@ export function ConversationTimeline({
     handleListHeightChange,
     followOutput,
     jumpToLatest,
-  } = useConversationFollow(projection.turns.length)
+  } = useConversationFollow(projection.turns.length, firstItemIndex)
   const expandedRoundIds = useMemo(
     () => new Set(Object.keys(expandedRoundFlags)),
     [expandedRoundFlags],
@@ -75,8 +105,14 @@ export function ConversationTimeline({
         scrollerRef={setScroller}
         className="conversation-scroll h-full scrollbar-subtle"
         data={projection.turns}
+        firstItemIndex={firstItemIndex}
+        startReached={
+          hasEarlierTurns && onLoadEarlier ? onLoadEarlier : undefined
+        }
         computeItemKey={(_, turn) => turn.turnId}
-        initialTopMostItemIndex={Math.max(0, projection.turns.length - 1)}
+        initialTopMostItemIndex={
+          firstItemIndex + Math.max(0, projection.turns.length - 1)
+        }
         increaseViewportBy={{ top: 420, bottom: 280 }}
         minOverscanItemCount={{ top: 1, bottom: 1 }}
         atBottomThreshold={48}
@@ -120,6 +156,19 @@ export function ConversationTimeline({
           Footer: () => <div className="h-7" aria-hidden="true" />,
         }}
       />
+
+      {earlierLoading && (
+        // 悬浮在历史水位线上方的载入提示：不进列表布局，
+        // 翻页时用户正在读的位置一个像素都不动。
+        <div
+          className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2"
+          role="status"
+        >
+          <span className="rounded-full border border-border/70 bg-surface-raised/92 px-3 py-1 text-caption text-ink-muted shadow-floating backdrop-blur-md">
+            正在载入更早的轮次…
+          </span>
+        </div>
+      )}
 
       {followMode === 'reviewing' && (
         // 居中 transform 放外层、入场动画放内层：keyframes 会整体覆盖 transform，

@@ -325,6 +325,14 @@ DOM 从来不是真相。CSS class 不能反向决定节点状态，组件本地
 - 只渲染当前分支路径，其他分支仍在持久层；
 - assistant-only 的系统回执必须有明确的 `SystemTurn`/`TimelineEvent` 类型，不能靠缺少 user message 兜底。
 
+向上翻页（历史窗口）：
+
+- 首屏只取最近一页（`limit=50`），`hasEarlierTurns=true` 时列表顶部存在"更早"；
+- 触顶（Virtuoso `startReached`）即以当前视野最早 Turn 为 `beforeTurnId` 拉上一页，实体并入本地投影——本地较新版本优先，历史页只补不覆盖；
+- 预插用 Virtuoso `firstItemIndex` 负偏移锚定视口：翻页发生时用户正在读的位置一个像素都不动；
+- 顶端的加载提示是悬浮的一行低对比 caption，不进列表布局（占位会打破锚定），不闪烁、无骨架屏；拉到最早后该入口安静消失；
+- 历史不可丢（不变量 1）在此的用户可感形态：任何长度的对话都能一路滚回第一轮。
+
 ### 7.2 Turn 层
 
 `WaterfallTurn` 只做编排：

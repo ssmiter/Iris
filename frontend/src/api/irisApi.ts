@@ -461,9 +461,11 @@ export function listConversations(): Promise<ConversationPage> {
 export function getConversationView(
   conversationId: string,
   branchId?: string,
+  beforeTurnId?: string,
 ): Promise<ConversationView> {
   const query = new URLSearchParams({ limit: '50' })
   if (branchId) query.set('branchId', branchId)
+  if (beforeTurnId) query.set('beforeTurnId', beforeTurnId)
   return requestJson(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}/view?${query}`,
   )

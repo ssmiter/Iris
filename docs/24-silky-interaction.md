@@ -405,8 +405,9 @@ thinking/child-run/groupId 三项契约超前被两侧独立命中）。修复�
 PermissionMode 四档选择器是纯前端 UI（createTurn 不携带、后端无此字段，
 **安慰剂控件，接线需后端先定义语义**）；`turn_stop.phase='draining'` 后端
 无写入方；`RunClosureView.taskOutcome` 恒 not_assessed、budget 用量恒 0；
-hasEarlierTurns/beforeTurnId 翻页后端就绪、前端无入口；
 clarification/takeover/auth 决议通路；检查点回滚与能力目录无用户 REST 面。
+（hasEarlierTurns/beforeTurnId 向上翻页已接通：触顶拉取上一页并锚定视口，
+见 docs/07 §7.1。）
 
 后续切片仍包括：块级增量 Markdown、千 Turn 长列表的专项性能校准、
 尾部窗口逐字淡入（§3.1）。本文的完整验收门槛不因分批实现而降低。

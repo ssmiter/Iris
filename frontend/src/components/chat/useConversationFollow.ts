@@ -27,14 +27,19 @@ interface ConversationFollow {
  * Native reading gestures detach immediately; list measurement and
  * programmatic scrolling never masquerade as user intent.
  */
-export function useConversationFollow(itemCount: number): ConversationFollow {
+export function useConversationFollow(
+  itemCount: number,
+  firstItemIndex = 0,
+): ConversationFollow {
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const [scroller, setScrollerElement] = useState<HTMLElement | null>(null)
   const [followMode, setFollowMode] = useState<FollowMode>('following')
   const [unseenTurnCount, setUnseenTurnCount] = useState(0)
   const followModeRef = useRef<FollowMode>('following')
   const atBottomRef = useRef(true)
-  const previousItemCountRef = useRef(itemCount)
+  // 末尾游标 = firstItemIndex + itemCount：向上翻页只动 firstItemIndex，
+  // 预插的历史轮次不会被误算成"新轮次"。
+  const endIndexRef = useRef(firstItemIndex + itemCount)
   const followFrameRef = useRef<number | null>(null)
 
   const setScroller = useCallback((element: HTMLElement | Window | null) => {
@@ -84,19 +89,20 @@ export function useConversationFollow(itemCount: number): ConversationFollow {
   const jumpToLatest = useCallback(() => {
     resumeFollowing()
     virtuosoRef.current?.scrollToIndex({
-      index: Math.max(0, itemCount - 1),
+      index: firstItemIndex + Math.max(0, itemCount - 1),
       align: 'end',
       behavior: 'auto',
     })
-  }, [itemCount, resumeFollowing])
+  }, [firstItemIndex, itemCount, resumeFollowing])
 
   useEffect(() => {
-    const added = itemCount - previousItemCountRef.current
-    if (added > 0 && followModeRef.current === 'reviewing') {
-      setUnseenTurnCount((count) => count + added)
+    const endIndex = firstItemIndex + itemCount
+    const appended = endIndex - endIndexRef.current
+    if (appended > 0 && followModeRef.current === 'reviewing') {
+      setUnseenTurnCount((count) => count + appended)
     }
-    previousItemCountRef.current = itemCount
-  }, [itemCount])
+    endIndexRef.current = endIndex
+  }, [firstItemIndex, itemCount])
 
   useEffect(() => {
     if (!scroller) return

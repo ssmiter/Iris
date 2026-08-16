@@ -36,9 +36,13 @@ export interface ChatState {
   eventCursor: string | null
   projectionVersion: number
   pendingSupplements: PendingSupplement[]
+  /** 视野之外还有更早的 Turn（后端分页水位线） */
+  hasEarlierTurns: boolean
 
   hydrateProjection: (projection: ConversationProjection) => void
   hydrateView: (view: ConversationView) => void
+  /** 向上翻一页：只补不覆盖——本地较新版本的实体一律优先 */
+  prependEarlierView: (view: ConversationView) => number
   applyEvent: (event: ConversationEvent) => void
   upsertTurn: (turn: TurnView) => void
   upsertRun: (run: RunView) => void
@@ -223,6 +227,7 @@ export const useChatStore = create<ChatState>((set) => {
   eventCursor: null,
   projectionVersion: 1,
   pendingSupplements: [],
+  hasEarlierTurns: false,
 
   hydrateProjection: (projection) => {
     clearQueuedDeltas()
@@ -248,6 +253,7 @@ export const useChatStore = create<ChatState>((set) => {
       renderNodesById: view.renderNodesById,
       eventCursor: view.eventCursor,
       projectionVersion: view.projectionVersion,
+      hasEarlierTurns: view.hasEarlierTurns,
       pendingSupplements: Object.values(view.turnsById)
         .flatMap((turn) => turn.supplements ?? [])
         .filter((supplement) => supplement.state === 'pending')
@@ -263,6 +269,25 @@ export const useChatStore = create<ChatState>((set) => {
   },
 
   applyEvent,
+
+  prependEarlierView: (view) => {
+    let prepended = 0
+    set((state) => {
+      const known = new Set(state.turnOrder)
+      const freshOrder = view.turnOrder.filter((id) => !known.has(id))
+      prepended = freshOrder.length
+      return {
+        turnOrder: [...freshOrder, ...state.turnOrder],
+        // 历史页实体在前、本地状态在后：本地（可能含流式较新版本）优先
+        turnsById: { ...view.turnsById, ...state.turnsById },
+        runsById: { ...view.runsById, ...state.runsById },
+        roundsById: { ...view.roundsById, ...state.roundsById },
+        renderNodesById: { ...view.renderNodesById, ...state.renderNodesById },
+        hasEarlierTurns: view.hasEarlierTurns,
+      }
+    })
+    return prepended
+  },
 
   upsertTurn: (turn) =>
     set((state) => {
@@ -379,6 +404,7 @@ export const useChatStore = create<ChatState>((set) => {
       connectionState: 'idle',
       eventCursor: null,
       pendingSupplements: [],
+      hasEarlierTurns: false,
     })
   },
   }
