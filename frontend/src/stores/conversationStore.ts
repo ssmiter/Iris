@@ -39,6 +39,8 @@ export interface ConversationState {
   setCurrentConversation: (conversationId: string, branchId: string) => void
   startNewConversation: () => void
   upsertConversation: (conversation: ConversationSummary) => void
+  /** 归档/移出列表：只在本地视野移除，不动历史；返回当前会话被移除时的后继 ID */
+  removeConversation: (conversationId: string) => void
 }
 
 export const useConversationStore = create<ConversationState>((set) => ({
@@ -115,4 +117,24 @@ export const useConversationStore = create<ConversationState>((set) => ({
         ? state.conversationOrder
         : [conversation.conversationId, ...state.conversationOrder],
     })),
+
+  removeConversation: (conversationId) =>
+    set((state) => {
+      const { [conversationId]: _removed, ...rest } =
+        state.conversationsById
+      const order = state.conversationOrder.filter(
+        (id) => id !== conversationId,
+      )
+      const removingCurrent =
+        state.currentConversationId === conversationId
+      return {
+        conversationsById: rest,
+        conversationOrder: order,
+        // 归档当前会话：切到列表下一位，没有则回空态（新对话）
+        currentConversationId: removingCurrent
+          ? order[0] ?? null
+          : state.currentConversationId,
+        currentBranchId: removingCurrent ? null : state.currentBranchId,
+      }
+    }),
 }))

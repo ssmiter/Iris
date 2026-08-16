@@ -493,6 +493,45 @@ export function createConversation(title?: string) {
   })
 }
 
+export function renameConversation(
+  conversationId: string,
+  title: string,
+  expectedVersion: number,
+) {
+  return requestJson<{
+    conversationId: string
+    title: string
+    version: number
+    updatedAt: string
+    eventCursor: string
+  }>(`/api/v1/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'PATCH',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    body: JSON.stringify({ expectedVersion, title }),
+  })
+}
+
+export function setConversationArchived(
+  conversationId: string,
+  archived: boolean,
+  expectedVersion: number,
+) {
+  return requestJson<{
+    conversationId: string
+    archived: boolean
+    version: number
+    updatedAt: string
+    eventCursor: string
+  }>(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/archive`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ expectedVersion, archived }),
+    },
+  )
+}
+
 export function createTurn(
   conversationId: string,
   branchId: string,

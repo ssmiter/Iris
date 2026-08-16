@@ -3,11 +3,19 @@ import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
-import { applyTheme } from '@/theme/theme'
+import { useShellOverlayStore } from '@/stores/shellOverlayStore'
+import {
+  applyAccent,
+  applyHue,
+  applyMotionPreference,
+  applyTheme,
+} from '@/theme/theme'
 import {
   DesktopConversationSidebar,
   MobileConversationSidebar,
 } from './ConversationSidebar'
+import { SearchPalette } from './SearchPalette'
+import { SettingsOverlay } from './SettingsOverlay'
 
 interface ConversationShellProps {
   badge?: ReactNode
@@ -44,14 +52,41 @@ export function ConversationShell({
   )
   const sidebarOpen = useViewStateStore((state) => state.sidebarOpen)
   const theme = useViewStateStore((state) => state.theme)
+  const hue = useViewStateStore((state) => state.hue)
+  const accent = useViewStateStore((state) => state.accent)
+  const motionPreference = useViewStateStore(
+    (state) => state.motionPreference,
+  )
   const setSidebarOpen = useViewStateStore((state) => state.setSidebarOpen)
   const setMobileSidebarOpen = useViewStateStore(
     (state) => state.setMobileSidebarOpen,
   )
+  const setSearchOpen = useShellOverlayStore((state) => state.setSearchOpen)
 
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+  useEffect(() => {
+    applyHue(hue)
+  }, [hue])
+  useEffect(() => {
+    applyAccent(accent)
+  }, [accent])
+  useEffect(() => {
+    applyMotionPreference(motionPreference)
+  }, [motionPreference])
+
+  // Ctrl/Cmd+K 全局打开搜索浮层（输入框内同样生效，与浏览器习惯一致）
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setSearchOpen])
 
   return (
     <div className="flex h-dvh min-h-[32rem] overflow-hidden bg-canvas text-ink">
@@ -101,6 +136,9 @@ export function ConversationShell({
         {children}
         {composer}
       </div>
+
+      <SearchPalette />
+      <SettingsOverlay />
     </div>
   )
 }

@@ -129,6 +129,109 @@
   --shadow-floating: 0 20px 56px rgb(0 0 0 / 0.36);
 }
 
+/* 色调维度（docs/07 §18.3）：只偏移中性面，不碰语义色与品牌色。
+   偏移量刻意压小——色调是纸感，不是换肤。 */
+[data-hue='warm'] {
+  --color-canvas: 249 246 241;
+  --color-surface: 246 243 237;
+  --color-surface-raised: 255 255 255;
+  --color-surface-muted: 240 235 226;
+  --color-border: 228 221 210;
+  --color-border-strong: 202 193 178;
+}
+
+[data-hue='cool'] {
+  --color-canvas: 245 247 250;
+  --color-surface: 243 245 248;
+  --color-surface-raised: 255 255 255;
+  --color-surface-muted: 235 239 244;
+  --color-border: 220 226 233;
+  --color-border-strong: 190 199 210;
+}
+
+[data-theme='dark'][data-hue='warm'] {
+  --color-canvas: 20 18 16;
+  --color-surface: 26 23 21;
+  --color-surface-raised: 32 29 26;
+  --color-surface-muted: 41 36 31;
+  --color-border: 52 46 40;
+  --color-border-strong: 76 68 60;
+}
+
+[data-theme='dark'][data-hue='cool'] {
+  --color-canvas: 16 18 22;
+  --color-surface: 21 24 30;
+  --color-surface-raised: 27 30 37;
+  --color-surface-muted: 35 39 48;
+  --color-border: 44 49 60;
+  --color-border-strong: 64 71 86;
+}
+
+/* 主题色维度：覆盖 primary 五件套。暗色用高明度变体保证对比。 */
+[data-accent='coral'] {
+  --color-primary: 201 99 88;
+  --color-primary-hover: 178 82 72;
+  --color-primary-soft: 252 235 232;
+  --color-primary-foreground: 255 255 255;
+  --color-focus: 222 128 117;
+}
+
+[data-accent='gold'] {
+  --color-primary: 176 124 32;
+  --color-primary-hover: 154 106 22;
+  --color-primary-soft: 250 240 214;
+  --color-primary-foreground: 255 255 255;
+  --color-focus: 200 150 60;
+}
+
+[data-accent='mint'] {
+  --color-primary: 43 138 99;
+  --color-primary-hover: 32 118 83;
+  --color-primary-soft: 226 244 234;
+  --color-primary-foreground: 255 255 255;
+  --color-focus: 90 170 130;
+}
+
+[data-accent='sky'] {
+  --color-primary: 38 118 184;
+  --color-primary-hover: 28 100 160;
+  --color-primary-soft: 228 240 250;
+  --color-primary-foreground: 255 255 255;
+  --color-focus: 80 145 200;
+}
+
+[data-theme='dark'][data-accent='coral'] {
+  --color-primary: 245 160 150;
+  --color-primary-hover: 250 180 170;
+  --color-primary-soft: 70 40 38;
+  --color-primary-foreground: 50 22 20;
+  --color-focus: 245 170 160;
+}
+
+[data-theme='dark'][data-accent='gold'] {
+  --color-primary: 230 185 105;
+  --color-primary-hover: 240 200 130;
+  --color-primary-soft: 70 54 26;
+  --color-primary-foreground: 52 36 8;
+  --color-focus: 235 195 120;
+}
+
+[data-theme='dark'][data-accent='mint'] {
+  --color-primary: 125 205 165;
+  --color-primary-hover: 150 220 185;
+  --color-primary-soft: 28 58 44;
+  --color-primary-foreground: 14 38 26;
+  --color-focus: 140 212 175;
+}
+
+[data-theme='dark'][data-accent='sky'] {
+  --color-primary: 135 180 230;
+  --color-primary-hover: 160 200 240;
+  --color-primary-soft: 30 50 74;
+  --color-primary-foreground: 16 30 48;
+  --color-focus: 150 190 235;
+}
+
 @media (max-width: 767px) {
   :root {
     --conversation-pad: 14px;

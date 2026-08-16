@@ -68,3 +68,13 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 手动减弱动效（设置覆盖层），与系统偏好同一语义、同一收敛强度 */
+[data-motion='reduce'] *,
+[data-motion='reduce'] *::before,
+[data-motion='reduce'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

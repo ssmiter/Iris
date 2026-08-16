@@ -130,7 +130,8 @@ export function ComposerDock({
           </div>
         )}
 
-        <div className="rounded-xl border border-border/70 bg-surface-raised/95 p-2 shadow-hairline backdrop-blur-md transition-[border-color,box-shadow] duration-fast focus-within:border-border-strong focus-within:shadow-raised motion-reduce:transition-none">
+        {/* 焦点双环：浮起阴影 + 1px primary 色环——输入位被锚定，不靠边框变粗 */}
+        <div className="rounded-xl border border-border/70 bg-surface-raised/95 p-2 shadow-hairline backdrop-blur-md transition-[border-color,box-shadow] duration-fast focus-within:border-primary/35 focus-within:shadow-[var(--shadow-raised),0_0_0_1px_rgb(var(--color-primary)/0.3)] motion-reduce:transition-none">
           <div className="flex items-end gap-2 px-2 pt-1">
             <ComposerTextarea
               value={value}

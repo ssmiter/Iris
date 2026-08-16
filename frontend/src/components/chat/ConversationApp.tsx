@@ -67,6 +67,14 @@ export function ConversationApp() {
     (state) => state.permissionMode,
   )
   const theme = useViewStateStore((state) => state.theme)
+  // 顶栏快捷切换作用于「当前呈现」的反色：system 档先解析再取反
+  const resolvedTheme: 'light' | 'dark' =
+    theme === 'system'
+      ? typeof window !== 'undefined'
+        && window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : theme
   const setDraft = useViewStateStore((state) => state.setDraft)
   const setPermissionMode = useViewStateStore(
     (state) => state.setPermissionMode,
@@ -248,11 +256,16 @@ export function ConversationApp() {
                       | 'lastVisibleText'
                       | 'version'
                     >
-                  >
+                  > & { archived?: boolean }
                 | undefined
               const conversationId = event.envelope.conversationId
               if (incoming && conversationId) {
                 const conversationState = useConversationStore.getState()
+                if (incoming.archived === true) {
+                  // 归档即移出列表视野；历史在服务端完整保留
+                  conversationState.removeConversation(conversationId)
+                  return
+                }
                 const existing =
                   conversationState.conversationsById[conversationId]
                 if (existing) {
@@ -738,15 +751,15 @@ export function ConversationApp() {
             variant="ghost"
             size="icon"
             aria-label={
-              theme === 'light'
+              resolvedTheme === 'light'
                 ? '切换到暗色主题'
                 : '切换到亮色主题'
             }
             onClick={() =>
-              setTheme(theme === 'light' ? 'dark' : 'light')
+              setTheme(resolvedTheme === 'light' ? 'dark' : 'light')
             }
           >
-            {theme === 'light' ? (
+            {resolvedTheme === 'light' ? (
               <Moon aria-hidden="true" className="h-4 w-4" />
             ) : (
               <Sun aria-hidden="true" className="h-4 w-4" />
@@ -770,8 +783,16 @@ export function ConversationApp() {
         />
       ) : (
         <main className="grid min-h-0 flex-1 place-items-center px-6 text-center">
-          <div className="max-w-md">
-            <p className="text-title font-semibold text-ink">
+          <div className="max-w-md animate-node-enter motion-reduce:animate-none">
+            {/* 空态裸标：品牌环静置于文案之上，不脉动、不循环——它锚定的是
+                "这里是 Iris"，不是"系统在等待"。 */}
+            <span
+              aria-hidden="true"
+              className="brand-spectrum mx-auto grid h-10 w-10 place-items-center rounded-full p-1 shadow-hairline"
+            >
+              <span className="h-full w-full rounded-full bg-surface-raised" />
+            </span>
+            <p className="mt-5 text-title font-semibold text-ink">
               想先处理什么？
             </p>
             <p className="mt-2 text-small leading-relaxed text-ink-muted">

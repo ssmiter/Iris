@@ -1,7 +1,13 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { PermissionMode } from '@/domain/chat/input'
-import { getInitialTheme, type Theme } from '@/theme/theme'
+import {
+  getInitialTheme,
+  type Accent,
+  type Hue,
+  type MotionPreference,
+  type Theme,
+} from '@/theme/theme'
 
 type FlagMap = Record<string, true>
 
@@ -10,6 +16,9 @@ export interface ViewState {
   expandedNodeIds: FlagMap
   initializedNodeIds: FlagMap
   theme: Theme
+  hue: Hue
+  accent: Accent
+  motionPreference: MotionPreference
   permissionMode: PermissionMode
   draftsByConversationId: Record<string, string>
   sidebarOpen: boolean
@@ -20,6 +29,9 @@ export interface ViewState {
   seedExpandedNodes: (nodeIds: string[]) => void
   revealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
   setTheme: (theme: Theme) => void
+  setHue: (hue: Hue) => void
+  setAccent: (accent: Accent) => void
+  setMotionPreference: (preference: MotionPreference) => void
   setPermissionMode: (mode: PermissionMode) => void
   setDraft: (conversationId: string, value: string) => void
   setSidebarOpen: (open: boolean) => void
@@ -41,6 +53,9 @@ export const useViewStateStore = create<ViewState>()(
       expandedNodeIds: {},
       initializedNodeIds: {},
       theme: getInitialTheme(),
+      hue: 'neutral',
+      accent: 'iris',
+      motionPreference: 'auto',
       permissionMode: 'auto',
       draftsByConversationId: {},
       sidebarOpen: true,
@@ -113,6 +128,9 @@ export const useViewStateStore = create<ViewState>()(
           }
         }),
       setTheme: (theme) => set({ theme }),
+      setHue: (hue) => set({ hue }),
+      setAccent: (accent) => set({ accent }),
+      setMotionPreference: (motionPreference) => set({ motionPreference }),
       setPermissionMode: (permissionMode) => set({ permissionMode }),
       setDraft: (conversationId, value) =>
         set((state) => ({
@@ -127,10 +145,23 @@ export const useViewStateStore = create<ViewState>()(
     }),
     {
       name: 'iris.view-state.v1',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
+      migrate: (persisted) => {
+        // v1 → v2：新增 hue/accent/motionPreference，沿用旧 theme 与草稿
+        const state = persisted as Partial<ViewState>
+        return {
+          ...state,
+          hue: state.hue ?? 'neutral',
+          accent: state.accent ?? 'iris',
+          motionPreference: state.motionPreference ?? 'auto',
+        }
+      },
       partialize: (state) => ({
         theme: state.theme,
+        hue: state.hue,
+        accent: state.accent,
+        motionPreference: state.motionPreference,
         permissionMode: state.permissionMode,
         draftsByConversationId: state.draftsByConversationId,
         sidebarOpen: state.sidebarOpen,
