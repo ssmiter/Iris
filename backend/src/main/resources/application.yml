@@ -43,8 +43,6 @@ iris:
     approval-mode: ${IRIS_TOOL_APPROVAL_MODE:required}
   storage:
     object-root: ${IRIS_OBJECT_STORE_PATH:${user.home}/Iris/data/objects}
-  sql:
-    connections: {}
   model:
     profile: ${IRIS_MODEL_PROFILE:unconfigured}
     kind: ${IRIS_MODEL_KIND:unconfigured}

@@ -471,6 +471,10 @@ normalize → validate → durable claim → prepare → snapshot
 - 只读账号连接外部库（数据库层兜底，不只靠应用层）。
 - Connection Definition 只暴露稳定 ID、方言、说明和读写能力，不暴露 JDBC URL、账号
   或密码；缺少当前 provider binding 时保留历史 Definition，但 availability 为 unavailable。
+- `/data/sql` 子树由 bundled 插件 `extensions/data/sql/` 提供：3 个 manifest 共享一个
+  `kind: process` 常驻进程，连接清单（`connections.json`，凭据只写环境变量名）、
+  JDBC 驱动（插件 `lib/` 自带）与只读词法分析器全部归插件目录所有，内核不持有
+  连接配置与方言知识（docs/31 §11 M3b）。
 - SQL 先经过理解字符串、引用标识符、注释、括号深度和 CTE 的词法分析；无法确定读写
   时返回 ambiguous 并 fail-close，不能用关键词正则默认放行为 SELECT。
 - `query_sql` 与未来 `execute_sql` 是两个 Tool：前者静态 `read_only`，允许并行且只接受

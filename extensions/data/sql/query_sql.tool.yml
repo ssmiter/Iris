@@ -1,0 +1,43 @@
+name: query_sql
+kind: process
+description: 在声明为只读的连接上执行一条经词法分析器确认为只读的参数化 SQL；需要读取结构化业务数据时使用，值一律用 ? 占位不能拼接进 SQL 文本
+input_schema:
+  type: object
+  properties:
+    connection_id:
+      type: string
+      description: list_sql_connections 返回的稳定连接 ID
+    sql:
+      type: string
+      description: 一条只读 SQL；值使用 ? 占位，不能拼接进 SQL 文本
+    parameters:
+      type: array
+      description: 与 SQL 中 ? 顺序一致的标量参数；允许字符串、数字、布尔值和 null
+    max_rows:
+      type: integer
+      minimum: 1
+      maximum: 5000
+      description: 最多返回行数；默认 500，上限 5000
+    max_cell_characters:
+      type: integer
+      minimum: 1
+      maximum: 50000
+      description: 单元格最多内联字符数；默认 8000
+    timeout_seconds:
+      type: integer
+      minimum: 1
+      maximum: 60
+      description: JDBC 查询超时秒数；默认 30，上限 60
+  required: [connection_id, sql]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/lib/*", "{pluginDir}/Sql.java"]
+limits:
+  timeout_ms: 85000
+  max_result_chars: 80000
+search_hint: sql 查询 select 数据库 读取 参数化

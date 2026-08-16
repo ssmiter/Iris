@@ -352,10 +352,22 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   `tools/web/browser/`（20 个工具类）与 `webbridge` 包；
   前端 `browser_screenshot` 预览卡分支随之删除（插件结果走通用
   structured 投影，专门卡片随前端管理页统一重做）；
-- **M3b（待做）**：`/data/sql` 外移为内建插件——连接配置所有权先搬进插件目录
-  （插件自有 `connections.yml`，只写环境变量名引用凭据，与 `runtimes.json`
-  同一归属公理）；词法只读分析器随插件走，内核不再内置 SQL 方言知识；
-  `iris.sql.connections` 配置随之删除；
+- **M3b（已落地）**：`/data/sql` 外移为内建共享进程插件
+  `extensions/data/sql/`——3 个 process 清单共享一个 `Sql.java` 常驻进程
+  （§3.2）。**连接配置所有权搬进插件目录**：插件自有 `connections.json`
+  （与 `runtimes.json` 同一归属公理），URL 可写，凭据只写环境变量名
+  （`username_env`/`password_env`），插件从自己的进程环境读取，内核永不
+  持有 JDBC URL 与口令；`iris.sql.connections` 配置随之删除。**JDBC
+  驱动随插件自带**：`lib/` 目录 vendor sqlite-jdbc（个人版默认连接
+  SQLite），entry 用 `-cp {pluginDir}/lib/*` 装载；其它方言在
+  connections.json 里以 `driver` 指向本机 jar，找不到 =
+  `sql_driver_unavailable` 明确报错，不静默退化。只读分析器（词法级，
+  注释/字符串/CTE/括号深度）原样搬进插件，内核不再内置 SQL 方言知识；
+  只读兑现 = 连接声明 read_only + JDBC `setReadOnly(true)` + 分析器证明
+  三重门，真正的兜底仍是数据库账号本身。availability probe 不外移：
+  没有可用连接时 `list_sql_connections` 返回空清单与指引，inspect/query
+  在调用时如实报 `sql_connection_not_found`；内核 `com.iris.sql` 包
+  与 `tools/data/sql/` 随之删除；
 - **M3c（待做）**：`/industry/mes` 演示域按最终形态重写为内建插件——插件自带
   演示库并自播种（不依赖内核迁移脚本），删除旧内核 demo 工具类与
   `IndustrialDemoRepository`；演示数据不再是内核 schema 的一部分；

@@ -1,0 +1,4 @@
+label: SQL
+summary: 声明式 SQL 连接与只读查询原语：连接目录、结构观察、有界参数化查询
+stats:
+  expose: [tool_count, success_rate_7d, p50_ms_7d]

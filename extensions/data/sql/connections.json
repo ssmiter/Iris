@@ -1,0 +1,4 @@
+{
+  "comment": "SQL Connection 注册表（插件自有配置，docs/31 §11 M3b）：凭据只写环境变量名（username_env/password_env），秘密不落盘；id 必须是小写 snake/kebab；dialect ∈ sqlite/postgresql/mysql/sqlserver/generic；access_mode 默认 read_only，声明 read_only 的连接由插件以 JDBC setReadOnly(true) + 词法分析器双重把关，真正的只读兜底仍应是数据库账号本身；driver 可选，指向本机 JDBC jar（相对插件目录或绝对路径），缺省时 sqlite 使用插件 lib/ 自带的 sqlite-jdbc。SQLite 示例 url：jdbc:sqlite:C:/Users/you/data/app.db",
+  "connections": []
+}

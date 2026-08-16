@@ -1,0 +1,50 @@
+name: inspect_sql_schema
+kind: process
+description: 有界观察只读 SQL 连接中的表、视图、列、主键与外键，把结构化对象映射给模型；写查询前需要理解数据对象结构时使用
+input_schema:
+  type: object
+  properties:
+    connection_id:
+      type: string
+      description: list_sql_connections 返回的稳定连接 ID
+    catalog:
+      type: string
+      description: 目标 catalog；缺省用连接当前 catalog
+    schema_pattern:
+      type: string
+      description: JDBC metadata 的 schema 匹配模式（% 通配）；缺省不限
+    object_pattern:
+      type: string
+      description: 表/视图名匹配模式（% 通配）；缺省 % 即全部
+    include_views:
+      type: boolean
+      description: 是否包含视图；默认 true
+    include_columns:
+      type: boolean
+      description: 是否逐对象展开列；默认 true
+    include_keys:
+      type: boolean
+      description: 是否逐对象展开主键与外键；默认 true
+    max_objects:
+      type: integer
+      minimum: 1
+      maximum: 500
+      description: 最多返回对象数；默认 100，上限 500
+    max_columns_per_object:
+      type: integer
+      minimum: 1
+      maximum: 256
+      description: 每个对象最多展开列数；默认 100，上限 256
+  required: [connection_id]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/lib/*", "{pluginDir}/Sql.java"]
+limits:
+  timeout_ms: 70000
+  max_result_chars: 80000
+search_hint: sql 数据库 表 结构 schema 列 主键 外键 观察

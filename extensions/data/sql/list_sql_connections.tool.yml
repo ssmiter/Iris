@@ -1,0 +1,18 @@
+name: list_sql_connections
+kind: process
+description: 列出当前可用的 SQL 连接及其安全 metadata（id、方言、读写能力），不暴露 URL 与凭据；需要选择 connection_id 时使用
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "-cp", "{pluginDir}/lib/*", "{pluginDir}/Sql.java"]
+limits:
+  timeout_ms: 12000
+  max_result_chars: 16000
+search_hint: sql 数据库 连接 connection 列表 数据源
