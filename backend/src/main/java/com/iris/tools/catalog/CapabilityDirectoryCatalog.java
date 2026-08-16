@@ -1,7 +1,10 @@
 package com.iris.tools.catalog;
 
+import com.iris.extension.ExtensionDirectoryRegistry;
+import com.iris.extension.ExtensionScanner;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +17,7 @@ import java.util.Optional;
  */
 @Component
 public class CapabilityDirectoryCatalog {
+    private final ExtensionDirectoryRegistry extensionDirectories;
     private final List<DirectoryDefinition> definitions = List.of(
             directory(
                     "/system",
@@ -405,12 +409,43 @@ public class CapabilityDirectoryCatalog {
             Comparator.comparing(DirectoryDefinition::path)
     ).toList();
 
+    public CapabilityDirectoryCatalog(
+            ExtensionDirectoryRegistry extensionDirectories
+    ) {
+        this.extensionDirectories = extensionDirectories;
+    }
+
+    /**
+     * 代码内定义 + 拓展根 `_directory.yml` 的合并视图（docs/31 §2.2）：
+     * 代码优先——拓展只能新增代码没有的目录、补充元数据，hidden 即消失。
+     */
     public List<DirectoryDefinition> all() {
-        return definitions;
+        List<DirectoryDefinition> merged = new ArrayList<>(definitions);
+        List<String> knownPaths = definitions.stream()
+                .map(DirectoryDefinition::path)
+                .toList();
+        for (ExtensionScanner.ScannedDirectory directory
+                : extensionDirectories.all()) {
+            if (directory.metadata().hidden()
+                    || knownPaths.contains(directory.directoryPath())) {
+                continue;
+            }
+            String label = directory.metadata().label();
+            merged.add(new DirectoryDefinition(
+                    directory.directoryPath(),
+                    label == null || label.isBlank()
+                            ? directory.directoryPath()
+                            : label,
+                    directory.metadata().summary() == null
+                            ? ""
+                            : directory.metadata().summary()
+            ));
+        }
+        return merged;
     }
 
     public Optional<DirectoryDefinition> find(String path) {
-        return definitions.stream()
+        return all().stream()
                 .filter(definition -> definition.path().equals(path))
                 .findFirst();
     }

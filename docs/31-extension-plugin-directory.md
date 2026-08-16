@@ -1,0 +1,264 @@
+# 31 · 拓展与插件：目录即对象
+
+> 本文是 Iris 插件式拓展的地基规范。先于代码；改插件机制先改本文。
+> 上游约定：CLAUDE.md 五条不变量、docs/03 工具平台、docs/26 对象与能力假设。
+
+## 1. 设计原点
+
+Iris 管理的对象只有一种组织方式：**目录**。文件是目录里的载体，工具是目录里的过程，
+技能是目录里的指引，知识是目录里的语料——它们对模型同构：都能用 ls/grep/read 那套
+发现原语逐步找到，按需读取，按规约使用。
+
+插件因此不是"安装进内核的组件"，而是**放进拓展根的一个目录**。开发一个工具 =
+新建文件夹 + 写清单 + 写执行体；工具的外部依赖（数据库连接、SDK、凭据）由工具自己
+管理，内核不提供也不感知。内核只对目录做四件事：扫描、校验、投影、裁决。
+
+两条公理：
+
+- **归属公理**：对象的物理位置回答"它属于谁"（哪个领域/哪道工序），不回答"它是
+  什么种类"。种类由对象自身的文件格式表达——SKILL.md 就是技能，tool.yml 就是过程
+  工具——不靠目录名区分。
+- **映射禁令**：目录即能力路径，不允许第二份映射表（CLAUDE.md 铁律在拓展面的延伸）。
+  清单里不许写"我挂在哪个路径下"；路径永远由所在目录派生。
+
+## 2. 拓展根与目录组织
+
+拓展根可多个，按优先级叠加（见 §5）。单个拓展根的结构：
+
+```
+extensions/
+├── _root.yml                    # 根级元数据：规范版本、归属判定规则
+│
+├── industry/                    # 领域区：按行业
+│   └── mes/
+│       ├── _directory.yml       #   域元数据（语义标签、说明、统计口径）
+│       ├── _02mixing/           #   工序段：_NN 序号承载工序顺序
+│       │   ├── _directory.yml
+│       │   ├── _01base/
+│       │   │   ├── material-info.tool.yml   # 过程工具：清单
+│       │   │   ├── material-info.py         #   执行体（自管 DB 连接）
+│       │   │   └── material-tester.SKILL.md # 领域技能：与工具同处工序上下文
+│       │   └── _02plan/
+│       │       └── aps-publish.tool.yml     # 写工具：影响陈述模板在清单里
+│       └── _03curing/
+│           ├── knowledge/                   # 领域知识库（唯一保留的种类子目录名）
+│           │   └── 硫化工艺窗口.md
+│           └── curing-press-status.tool.yml
+│
+├── web/                         # 领域区：按对象组织（无工序概念）
+│   └── browser/
+│       ├── _directory.yml
+│       ├── page/                #   对象：Page
+│       │   ├── navigate.tool.yml
+│       │   └── read-page.tool.yml
+│       └── form/                #   对象：Form
+│           └── fill-form.tool.yml
+│
+├── skill/                       # 种类区（仅通用）：不属于任何单一领域的技能
+│   └── charting.SKILL.md
+├── code/                        # 种类区（仅通用）：通用过程工具，按运行时分层
+│   ├── python/execute-python.tool.yml
+│   ├── sql/run-query.tool.yml
+│   └── bash/run-shell.tool.yml
+├── mcp/                         # 种类区（仅接入层）：MCP 服务器声明
+│   └── filesystem.mcp.yml
+└── dsh/                         # 种类区（仅兼容层）：dsh 社区包原样落位
+    └── some-dsh-skill/SKILL.md  #   内部结构不动，按 SKILL.md 规范扫描
+```
+
+领域决定自己的第三层语义：工业域是 `域 → 工序段(_NN) → 对象组 → 对象`，web 域是
+`域 → 对象 → 动作`；规范只约束到二级。
+
+**种类区只收留跨界者。** `skill/`、`code/`、`mcp/`、`dsh/` 只放不属于任何单一领域的
+通用对象；领域内的同类对象永远留在领域内。"不混合"不是种类与领域平级分区，而是：
+默认按领域归位，种类区是兜底。
+
+### 2.1 归属判定（不混合规则的可执行版）
+
+按序判定，取第一条命中：
+
+1. 对象的内容围绕具体领域对象（工单、硫化机、Page）→ 进领域区，哪怕它是技能或知识；
+2. 对象是外部协议的接入声明（MCP server、dsh bundle）→ 进种类区对应接入层；
+3. 以上都不沾 → 进种类区 `skill/` 或 `code/`。
+
+规则写进 `_root.yml`，是目录元数据的一部分，不是散落的惯例。归属判错的代价是
+移动一次文件，不是功能损坏——能力路径随移动变化，旧路径的历史定义仍可寻址（§6）。
+
+### 2.2 目录元数据 `_directory.yml`
+
+```yaml
+label: 密炼工序
+summary: 混炼胶从投料到出片的全过程对象与动作   # 进目录卡片，≤200 字
+order: 20                  # 同级排序（冗余于 _NN 前缀，供无序号目录用）
+tags: [mixing, banbury]    # 搜索语料
+visibility: all            # all | hidden；禁用=hidden，fail-close
+stats:                     # 只声明口径，值由内核实时算，永不手写
+  expose: [tool_count, success_rate_7d, p50_ms_7d]
+```
+
+统计值手写进文件 = 多事实源（WonWork 的教训）；文件只声明"暴露哪些口径"，内核把
+实时值投影成目录卡片，数字本身就是模型的导航信号。
+
+## 3. 对象种类与清单
+
+格式识别，不靠位置。一个目录里可混放五种子内容，全部可选、无强制子目录骨架
+（空骨架目录是噪声）：
+
+| 内容 | 形态 | 识别方式 |
+|---|---|---|
+| 过程工具 | `*.tool.yml` + 同目录执行体 | 清单格式 |
+| 技能 | `*.SKILL.md` 或 `<name>/SKILL.md` 束 | 社区规范（§5.1） |
+| 知识库 | `knowledge/` 子目录（纯文档语料） | 目录名（语料无清单可识别） |
+| 目录元数据 | `_directory.yml` | 下划线前缀 |
+| 接入声明 | `*.mcp.yml` | 清单格式 |
+
+知识库文档投影为只读能力条目：invoke 即读取内容，与文件对模型同构。
+
+### 3.1 过程工具清单 `*.tool.yml`
+
+```yaml
+name: sql_daily_output           # snake_case，全局唯一
+kind: process                    # process | template
+description: 查询某日产量汇总     # 发现用一句话，≤500 字符进目录卡片
+input_schema:                    # JSON Schema 受控子集
+  type: object
+  properties: { date: { type: string } }
+  required: [date]
+risk: { level: read_only, side_effect: none }   # 四级风险 + 副作用，同 docs/03
+approval:
+  mode: auto                     # auto | explicit；写操作必须 explicit
+  impact_statement: null         # explicit 必填，支持 {date} 参数占位，运行时填充
+runtime:
+  entry: python material.py      # process：长驻进程；template：一次性命令模板
+  env: [MES_DB_URL]              # 只声明需要的变量名，值由环境提供
+limits: { timeout_ms: 30000, max_result_chars: 100000 }
+search_hint: 产量 日报 汇总       # 发现打分语料
+```
+
+风险声明与审批裁决仍是内核权力：清单声明只是输入，Runtime 的策略双闸（目录隐藏 +
+执行拒绝）不依赖插件自觉。审批通过前进程不启动。
+
+## 4. 过程工具执行协议
+
+内核与过程插件之间是 stdin/stdout NDJSON，一帧一行：
+
+- 内核 → 插件：`{"type":"invoke","callId","input","context":{"workspace","env"}}`
+- 插件 → 内核：`{"type":"progress","callId","text"}` 任意多次；恰好一次
+  `{"type":"result","callId","success","data","structuredData"|"error"}`
+- 取消三层：内核先发 `{"type":"cancel","callId"}`，200ms 后 SIGTERM，再 SIGKILL——
+  插件有体面退出的机会，内核不等 forever。
+- 超时：清单 `timeout_ms`，内核计时，超时走取消三层。
+- `kind: template` 无长驻进程：清单给命令模板与参数插值，内核代为 spawn 一次性
+  进程，stdout 即结果。包装一个 CLI 的最低成本形态。
+- 进程惰性拉起：首次调用时启动；崩溃自动重启一次再报错；禁用/卸载随最后一个
+  引用退出而回收。高频域未来可在清单声明 keep-alive 优化，协议不变。
+
+## 5. 社区规范兼容层
+
+### 5.1 SKILL.md（原生兼容）
+
+兼容 deepseek-harness / `.agents` 惯例的子集：
+
+- 形态：`<root>/<name>/SKILL.md` 束，或扁平 `<name>.SKILL.md`；束内
+  `references/ scripts/ assets/` 按需惰性加载，资源解析以束目录为 base；
+- frontmatter 字段：`name`（kebab-case，必填）、`description`（必填）、`whenToUse`、
+  `metadata`、`disable-model-invocation`、`user-invocable`；非法字段 fail-closed——
+  整个技能丢弃并告警，绝不带病注册；
+- 目录注入只含 `name` + 截断至 500 字符的 `description`，正文经技能加载原语按需
+  读取（发现优于塞满）。
+
+### 5.2 扫描根与优先级
+
+| rank | 根 | 性质 |
+|---|---|---|
+| 100 | `<workspace>/.iris/extensions/` | 项目级自有 |
+| 200 | `<workspace>/.agents/skills`、`/.dsh/skills` | 社区惯例，原样识别 |
+| 300 | `~/.iris/extensions/` | 机器级自有 |
+| 400 | `~/.dsh/skills`、`~/.agents/skills` | 社区全局 |
+
+同名冲突：rank 小者整件胜出；被遮蔽项在目录标注 `shadowed-by` 且仍可寻址，
+绝不静默双活。社区根只做**投影**不复制文件。
+
+### 5.3 MCP
+
+- 传输在现有 streamable_http 之外补 **stdio**（本地进程即插件）；
+- 远端工具以 `mcp__<server>__<tool>` 命名入注册表（与 Claude Code / dsh 同形）；
+- 声明形态：`mcp/<server>.mcp.yml`（command/args/env 或 endpoint）。
+
+### 5.4 明确不兼容的部分
+
+dsh 的 Cordis `inject`/`apply(ctx)` 代码契约是 JS 生态绑定，不直容；`dsh/` 落位区
+只消费其 SKILL.md 与资源文件。兼容性声明以本文为准，不追 dsh 的 breaking changes。
+
+## 6. 生命周期
+
+- **安装** = 把目录放进拓展根；文件监听触发增量扫描；
+- **校验 fail-closed**：清单非法 → 该插件目录整体拒绝并告警，其余不受影响；
+  合法 → 清单内容 hash 即版本（无独立版本字段，目录即真相），定义快照落
+  `capability_definition`，历史 ToolCall 按 `path + manifestHash` 永远可寻址；
+- **禁用** = `_directory.yml` 翻 `visibility: hidden`（或管理操作改写它）→
+  目录从发现平面消失 + 执行拒绝双闸兜底；**隐藏而非卸载**，定义版本仍可寻址；
+- **热装生效边界**：新 Run 立即看到；进行中 Run 的能力快照不变（manifest hash
+  钉住天然成立）；
+- **卸载** = 删目录；历史定义与审计记录永不删除（不变量 1）；进程句柄随引用
+  退出回收。
+
+## 7. 前缀缓存纪律
+
+- Resident surface（常驻原语面）**永远由内核签发**，插件不可进——稳定前缀的
+  物理保证；
+- 插件能力只出现在两处：发现原语的返回（历史中的 tool_result，天然 append-only）、
+  目录卡片注入块（变化时整块追加新版本，不改写旧块）；
+- `model_attempt_cache_diagnostic` 视图继续逐 attempt 校验：任何插件装卸都不应
+  引起 prefix 漂移。
+
+## 8. 发现平面
+
+模型面对一棵能力树 + 一套文件心智：
+
+| 动作 | 原语 | 文件同构 |
+|---|---|---|
+| 浏览 | list_capabilities | ls |
+| 搜索 | search_files（capabilities 命名空间） | grep |
+| 读取 | read_capability | read |
+| 调用 | invoke_capability（path + manifestHash 钉住） | 执行 |
+
+目录卡片携带统计信号（tool_count、success_rate_7d、p50_ms_7d，按 `_directory.yml`
+声明的口径实时计算）。万能锤（如裸 SQL 查询）不驻留、与业务工具同成本对称。
+
+## 9. 安全边界
+
+- 双闸：目录隐藏只是体验，执行拒绝才是边界；未知来源/禁用态一律 fail-close；
+- 路径围栏不变：文件类插件同样只能在工作区根内操作；
+- 审批不出内核：挂起、决策（带人话影响陈述）、恢复全在 Runtime；无人应答
+  fail-closed；
+- 过程插件跑在用户进程权限下，内核管审批、审计、超时、取消与结果截断。
+
+## 10. 内核/拓展分界
+
+判据：缺了它就无法对任何拓展做裁决的，留内核；可替换实现或只服务某类能力的，外移。
+
+**留内核**：事件 store 与 SSE；Tool Runtime 六闸（schema 校验、路径围栏、审批裁决
+含影响陈述渲染、审计、超时/取消、结果截断）；生命周期裁决；发现原语四件；目录
+投影器；`/system/files` 与 `/system/agents`、`/system/tasks` 编排原语（Runtime 的
+左右手，永留）。
+
+**皆目录对象**：业务域工具（industry、web、data、code、personal、life）、skills、
+memory、knowledge、MCP 适配、Pipeline 定义。
+
+## 11. 迁移路径
+
+- **M0（已落地）**：`ToolRegistry.replaceExternal(providerKey)` 复用为统一"拓展来源"
+  入口（外部路径正则放宽允许工序序号段 `_02mixing`）；拓展根扫描器 + fail-closed
+  清单校验（`com.iris.extension`）；**仅 template 形态**：清单给 argv 模板、内核
+  一次性 spawn，stdout 即结果；`_directory.yml` 元数据叠加进
+  CapabilityDirectoryCatalog（代码优先，hidden 即消失）；WatchService 热加载
+  （防抖整根重扫，新 Run 立即可见，在途 Run 快照不变）；热加载进来的定义随下次
+  启动固化进 `capability_definition`（与 MCP 一致）。
+- **M1**：kind=process 的 NDJSON 常驻协议落地（§4）；`/life/notes`、`/system/math`、
+  `/system/time` 三个无依赖域外移做钉子户，验证协议与生命周期；`/data/sql`、
+  `/code/python`、`/web/browser` 外移（自带外部依赖，最受益）；MCP stdio 传输；
+- **M2**：`/industry/mes` 按工序子目录外移；目录元数据（CapabilityDirectoryCatalog
+  代码内定义）搬进 `_directory.yml`；知识库投影；目录统计进卡片；
+- 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
+  寻址零影响。

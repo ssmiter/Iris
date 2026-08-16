@@ -502,6 +502,8 @@ Capability snapshot、Tool observation 或日志。最终 Windows 产品仍应�
 
 **不做的事**：不为工具数量发明新 UI；不让模型预读全量 schema；不在工具接口里塞业务特例（特例进工具自己的实现）。
 
+**插件式拓展**：外部能力不再只来自编译期 Tool——拓展根下的目录对象（过程工具、SKILL.md 技能、知识库、MCP 声明、dsh 兼容层）经统一"拓展来源"入口进入同一注册表与同一棵能力树。归属公理、清单格式、执行协议、生命周期与前缀缓存纪律见 [docs/31-extension-plugin-directory.md](31-extension-plugin-directory.md)。
+
 ## 11. 检查清单（新工具入库前）
 
 - [ ] name snake_case 且全局唯一

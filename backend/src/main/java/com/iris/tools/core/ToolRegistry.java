@@ -174,8 +174,9 @@ public class ToolRegistry {
     }
 
     private String requireExternalPath(String value) {
+        // 目录段允许前导下划线：工序序号段（_02mixing）与内核目录约定一致（docs/31 §2）。
         if (value == null || !value.matches(
-                "^/(?:[a-z0-9][a-z0-9_-]*/)*[a-z][a-z0-9_]*$"
+                "^/(?:[a-z0-9_][a-z0-9_-]*/)*[a-z][a-z0-9_]*$"
         )) {
             throw new IllegalArgumentException(
                     "External capabilityPath is invalid"
