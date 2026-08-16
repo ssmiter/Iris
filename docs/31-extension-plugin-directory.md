@@ -368,7 +368,7 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   没有可用连接时 `list_sql_connections` 返回空清单与指引，inspect/query
   在调用时如实报 `sql_connection_not_found`；内核 `com.iris.sql` 包
   与 `tools/data/sql/` 随之删除；
-- **M3c**：`/industry/mes` 演示域按最终形态重写为内建共享进程
+- **M3c（已落地）**：`/industry/mes` 演示域按最终形态重写为内建共享进程
   插件 `extensions/industry/mes/`——工序叶子目录（深度恰好 2）内的
   工具清单按 §3.2 共享该目录的常驻进程，entry 逐字一致
   `["{javaBin}", "-cp", "{pluginDir}/../../lib/*", "{pluginDir}/../../Mes.java"]`
