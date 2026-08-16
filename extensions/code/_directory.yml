@@ -1,0 +1,4 @@
+label: 代码执行
+summary: 确定性脚本与分析运行时；预声明输入输出、运行有界、结果落工作区
+stats:
+  expose: [tool_count, success_rate_7d, p50_ms_7d]

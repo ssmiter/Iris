@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -196,6 +197,78 @@ class ExtensionScannerTest {
     @Test
     void skipsHiddenDirectoriesAndMissingRoot() {
         assertTrue(scanner.scan(root.resolve("absent")).tools().isEmpty());
+    }
+
+    @Test
+    void projectsKnowledgeDocsWithSlugTitleAndHashNames() throws IOException {
+        // ascii 名 → snake slug；标题取首个 # 标题行
+        writeDoc("product/knowledge/getting-started.md", """
+                # 入门指南
+
+                正文第一行
+                """);
+        // 纯非 ascii 名 → doc_<内容hash前8位>；无标题行 → 首个非空行
+        writeDoc("product/knowledge/周报模板.md", """
+                本周模板正文
+                """);
+        // 无 knowledge 段的 .md 不投影
+        writeDoc("product/notes/readme.md", """
+                # 不应出现
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.problems().isEmpty(),
+                () -> result.problems().toString());
+        assertEquals(2, result.knowledge().size());
+        ExtensionScanner.ScannedKnowledge guide = result.knowledge().stream()
+                .filter(doc -> doc.name().equals("getting_started"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("入门指南", guide.title());
+        assertEquals("/product/knowledge/getting_started",
+                guide.capabilityPath());
+        assertEquals(16, guide.contentVersion().length());
+        ExtensionScanner.ScannedKnowledge weekly = result.knowledge().stream()
+                .filter(doc -> !doc.name().equals("getting_started"))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(weekly.name().startsWith("doc_"),
+                () -> weekly.name());
+        assertEquals(12, weekly.name().length()); // doc_ + hash8
+        assertEquals("本周模板正文", weekly.title());
+    }
+
+    @Test
+    void knowledgeNameCollisionGetsDeterministicHashSuffix() throws IOException {
+        writeDoc("team/knowledge/a-b.md", "同名之一\n");
+        writeDoc("team/knowledge/a_b.md", "同名之二\n");
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertEquals(2, result.knowledge().size(),
+                () -> result.problems().toString());
+        List<String> names = result.knowledge().stream()
+                .map(ExtensionScanner.ScannedKnowledge::name)
+                .sorted()
+                .toList();
+        assertEquals("a_b", names.get(0));
+        assertTrue(names.get(1).startsWith("a_b_"),
+                () -> names.toString());
+        assertEquals(12, names.get(1).length()); // a_b_ + hash8
+
+        // 确定性：同内容再扫一次，后缀一致
+        ExtensionScanner.ScanResult again = scanner.scan(root);
+        assertEquals(names, again.knowledge().stream()
+                .map(ExtensionScanner.ScannedKnowledge::name)
+                .sorted()
+                .toList());
+    }
+
+    private void writeDoc(String relative, String content) throws IOException {
+        Path file = root.resolve(relative);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
     }
 
     private void writeTool(String relative, String content) throws IOException {

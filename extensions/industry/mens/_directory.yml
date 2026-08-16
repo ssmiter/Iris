@@ -1,0 +1,4 @@
+label: 密炼执行系统
+summary: 预留的密炼执行业务地图；当前不注册具体工具，避免与 MES 样例重复铺量
+stats:
+  expose: [tool_count, success_rate_7d, p50_ms_7d]

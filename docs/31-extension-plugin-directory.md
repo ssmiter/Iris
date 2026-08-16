@@ -113,6 +113,19 @@ stats:                     # 只声明口径，值由内核实时算，永不手
 | 接入声明 | `*.mcp.yml` | 清单格式 |
 
 知识库文档投影为只读能力条目：invoke 即读取内容，与文件对模型同构。
+投影规则（确定性的，不给作者自由命名——映射禁令）：任何名为 `knowledge`
+的目录下的 `*.md` 文件即知识文档；能力名由文件名派生——ascii 段转
+snake_case，纯非 ascii 名退化为 `doc_<内容hash前8位>`，同目录撞名追加
+hash 后缀；标题取首个 `#` 标题行（无则首个非空行），进发现语料；
+定义版本 = 内容 hash，内容变更即新版本，历史定义仍可寻址。
+
+### 3.2 共享常驻进程
+
+同一插件目录里的多个 `kind: process` 清单**共享一个常驻进程**（目录即对象：
+进程是目录的，不是清单的）。前提：同目录所有 process 清单的 `runtime.entry`
+逐字一致，否则整目录 fail-closed 拒绝。内核在 invoke 帧里始终携带 `tool`
+字段（工具名），单清单插件忽略它，多清单插件按它分发。浏览器这类 20 个
+动作共享一个 daemon 连接的域，靠这条约定落成一个进程。
 
 ### 3.1 过程工具清单 `*.tool.yml`
 
@@ -147,7 +160,8 @@ spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 templa
 
 内核与过程插件之间是 stdin/stdout NDJSON，一帧一行：
 
-- 内核 → 插件：`{"type":"invoke","callId","input","context":{"workspace","env"}}`
+- 内核 → 插件：`{"type":"invoke","callId","tool","input","context":{"workspace","env"}}`
+  （`tool` 是清单名；单清单插件可忽略，多清单共享进程按它分发，§3.2）
 - 插件 → 内核：`{"type":"progress","callId","text"}` 任意多次；恰好一次
   `{"type":"result","callId","success","data","structuredData"|"error"}`
 - 取消三层：内核先发 `{"type":"cancel","callId"}`，200ms 后 SIGTERM，再 SIGKILL——
@@ -297,9 +311,25 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   进程随连接器停用回收）+ `*.mcp.yml` 声明扫描落库（来源记
   `mcp_server_origin`，slug 冲突 fail-closed 保手工连接器，删声明=停用）+
   `mcp__<server>__<tool>` 命名入注册表；
-- **M2**：`/data/sql`、`/code/python`、`/web/browser` 外移（自带外部依赖，最受益，
-  也最需要运行时供给约定——插件自管依赖清单与缺失诊断，协议不变）；
-  `/industry/mes` 按工序子目录外移；目录元数据（CapabilityDirectoryCatalog
-  代码内定义）搬进 `_directory.yml`；知识库投影；目录统计进卡片；
+- **M2（已落地）**：知识库投影（`knowledge` 段下的 `.md` → 只读能力条目，§3 投影
+  规则：ascii snake slug / 纯非 ascii 退化为 `doc_<hash8>`、同目录撞名加确定性
+  `_<hash8>` 后缀、标题取首个 `#` 标题行否则首个非空行、版本=内容 hash16）；
+  目录统计进卡片（`_directory.yml` 的 `stats.expose` 声明口径，内核实时算
+  tool_count / success_rate_7d / p50_ms_7d 随 `list_capabilities`
+  卡片返回，零样本口径缺省不返回，值永不手写）；`/industry/**` 目录元数据从代码
+  搬进内建拓展根的 `_directory.yml`（内核 `/system/**` 目录元数据随内核定义留
+  代码）；共享常驻进程（§3.2，invoke 帧增 `tool` 字段，同目录 entry/env 不一致
+  = 整目录 fail-closed 拒绝）；`/code/python` 外移为内建 process 插件——按最终
+  形态重写而非迁移：宿主是 `{javaBin}` 单文件源码（随内核发行），负责定位本机
+  Python（`IRIS_PYTHON` 优先，其次 PATH 的 python/python3，找不到 =
+  `python_runtime_unavailable` 明确报错）、staged I/O、输出集合精确核验、工作区
+  围栏与 cancel 帧杀子进程；输入只引用工作区文件，**不进入内核
+  Checkpoint/Artifact 体系**（跨进程插件的自证就是 result 帧，docs/04 §2）；
+  内核 `sandbox` 包与 `iris.sandbox.python.*` 配置随之删除；
+- **M3**：`/web/browser` 外移（依赖 §3.2 共享进程 + JDK HttpClient 直连
+  webbridge daemon，无新增运行时）；`/data/sql` 外移（连接配置所有权先从内核
+  配置搬进插件目录，再谈外移）；`/industry/mes` 演示域**不做迁移**——现有工具
+  是读内核 demo 库的演示实现，直接按最终形态在内建拓展根重写（插件自带演示库
+  并自播种），旧内核工具届时删除；演示内容属内容工程而非机制工程；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

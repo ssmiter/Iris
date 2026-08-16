@@ -40,6 +40,31 @@ public class ResidentProcessTool implements Tool {
             String contentVersion,
             ObjectMapper objectMapper
     ) {
+        this(
+                definition,
+                contentVersion,
+                new ResidentPluginProcess(
+                        TemplateProcessTool.renderSpawnArgv(
+                                definition.runtime().entry(), pluginDir),
+                        pluginDir,
+                        resolveEnvLazily(definition),
+                        objectMapper
+                ),
+                objectMapper
+        );
+    }
+
+    /**
+     * 共享进程形态（docs/31 §3.2）：同目录多个 process 清单共用一个
+     * {@link ResidentPluginProcess}；进程的生命周期由 ExtensionProviderService
+     * 按目录裁决（所有清单的 entry/env 已校验一致）。
+     */
+    public ResidentProcessTool(
+            ProcessToolDefinition definition,
+            String contentVersion,
+            ResidentPluginProcess sharedProcess,
+            ObjectMapper objectMapper
+    ) {
         this.definition = definition;
         this.objectMapper = objectMapper;
         RiskLevel riskLevel = TemplateProcessTool.riskLevel(definition);
@@ -70,17 +95,13 @@ public class ResidentProcessTool implements Tool {
                         ? ToolManifest.CancellationSemantics.COOPERATIVE
                         : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY
         );
-        this.process = new ResidentPluginProcess(
-                TemplateProcessTool.renderSpawnArgv(
-                        definition.runtime().entry(), pluginDir),
-                pluginDir,
-                resolveEnvLazily(),
-                objectMapper
-        );
+        this.process = sharedProcess;
     }
 
     /** 环境变量在 spawn 前解析——进程未拉起时缺变量不阻塞注册。 */
-    private Map<String, String> resolveEnvLazily() {
+    private static Map<String, String> resolveEnvLazily(
+            ProcessToolDefinition definition
+    ) {
         if (definition.runtime().env() == null
                 || definition.runtime().env().isEmpty()) {
             return Map.of();
@@ -146,6 +167,7 @@ public class ResidentProcessTool implements Tool {
             try {
                 ResidentPluginProcess.InvokeOutcome outcome = process.invoke(
                         operation.executionId(),
+                        definition.name(),
                         operation.normalizedInput(),
                         context.workspaceRoot(),
                         timeout,

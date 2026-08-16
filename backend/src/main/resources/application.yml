@@ -48,15 +48,6 @@ iris:
   webbridge:
     health-cache-ttl: 3s
     runtimes: {}
-  sandbox:
-    python:
-      mode: ${IRIS_PYTHON_MODE:disabled}
-      executable: ${IRIS_PYTHON_EXECUTABLE:python}
-      run-root: ${IRIS_PYTHON_RUN_ROOT:${user.home}/Iris/data/python-runs}
-      timeout-sec: ${IRIS_PYTHON_TIMEOUT_SECONDS:120}
-      capture-limit-kb: ${IRIS_PYTHON_CAPTURE_LIMIT_KB:64}
-      max-input-mb: ${IRIS_PYTHON_MAX_INPUT_MB:64}
-      max-output-mb: ${IRIS_PYTHON_MAX_OUTPUT_MB:32}
   model:
     profile: ${IRIS_MODEL_PROFILE:unconfigured}
     kind: ${IRIS_MODEL_KIND:unconfigured}

@@ -225,18 +225,21 @@ Capability Catalog 是动态多来源投影，不再假定进程启动时已经�
 ### 4.4 `/code/python`：受控计算与产物生成
 
 `execute_python_analysis` 不把宿主 Shell 暴露为万能能力。它接受完整 Python 源码、明确的
-工作区输入和预期输出，把“灵活编程”约束成一次可冻结、可审批、可核验的 Operation：
+工作区输入和预期输出，把”灵活编程”约束成一次可审批、有界、可核验的执行：
 
-- 输入按 Workspace 内容版本复制到独立 staged input，脚本不接收工作区根路径；
-- 输入也可引用同一对话中的 immutable Artifact 或完整 Tool output；Backend 直接搬运
-  规范字节，模型只需观察必要窗口，不承担数据复制；
-- 输出文件名、目标 Workspace 路径、Artifact kind 与标题调用前全部声明，实际集合必须
-  精确匹配；
-- 运行成功不等于任务完成。Backend 重新核对目标版本，建立整组 Checkpoint，原子提交，
-  再把每个精确内容版本登记为 internal Artifact；
-- Capability availability 反映 Application runtime：默认 disabled；本机显式
-  `trusted_process` 为 degraded，未来受 OS 约束的 helper/container 才可报告完整可用；
-- Tool Definition 与运行模式解耦，模型不能选择较弱隔离，也不能要求静默降级。
+- 该能力**不是内核工具**，而是内建拓展根 `extensions/code/python/` 下的 kind=process
+  常驻插件（docs/31 §4）：清单声明 schema、风险与审批模板，执行体是单文件 Java
+  宿主（随内核发行，永远可拉起），由它定位本机 Python 解释器并执行用户脚本；
+- 输入只引用工作区内已存在文件，按声明的扁平文件名复制进 `IRIS_INPUT_DIR`；
+  脚本只写 `IRIS_OUTPUT_DIR`，实际产物必须与声明的 output_name 集合精确一致，
+  核验后才写入工作区围栏内的声明路径（父目录须已存在）；
+- 代码长度、输入总量、单输出体积与 stdout/stderr 捕获都有硬上限；超时与取消
+  在内核三层兜底之外，插件收到 cancel 帧会主动终止在途子进程；
+- 找不到 Python 解释器时本次调用以 `python_runtime_unavailable` 明确报错
+  （已尝试 `IRIS_PYTHON` 环境变量与 PATH 上的 python/python3），不静默降级；
+- 插件写工作区经过常规审批闸（elevated + explicit 影响陈述），但**不进入内核
+  Checkpoint/Artifact 体系**——那是内核工作区工具的语义，跨进程插件的自证就是
+  结果帧（docs/31 §4 边界）。
 
 这个能力适合批量数据变换、确定性计算、图表和文档产物；浏览器交互、领域业务口径和
 外部写入继续由各自对象能力负责。Python 是 Harness 的一个可组合计算环境，不是

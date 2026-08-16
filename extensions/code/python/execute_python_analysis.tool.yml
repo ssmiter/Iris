@@ -1,0 +1,53 @@
+name: execute_python_analysis
+kind: process
+description: 用受控 Python 环境完成数据分析、确定性计算、图表或文档生成；输入和输出必须预先声明，脚本只从 IRIS_INPUT_DIR 读取并向 IRIS_OUTPUT_DIR 写入，不用于联网或通用 Shell 操作
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    code:
+      type: string
+      maxLength: 120000
+      description: 完整 Python 源码；从 IRIS_INPUT_DIR 读取，只向 IRIS_OUTPUT_DIR 写入声明文件
+    inputs:
+      type: array
+      maxItems: 16
+      description: 可选 staged input；每项引用一个工作区内已存在的文件，以扁平文件名挂载进 IRIS_INPUT_DIR
+      items:
+        type: object
+        additionalProperties: false
+        properties:
+          workspace_path:
+            type: string
+            description: 工作区内已存在的相对文件路径
+          mount_name:
+            type: string
+            maxLength: 120
+            description: 脚本在 IRIS_INPUT_DIR 下读取的扁平文件名
+        required: [workspace_path, mount_name]
+    outputs:
+      type: array
+      minItems: 1
+      maxItems: 8
+      description: 脚本必须精确生成的输出集合；不能多也不能少
+      items:
+        type: object
+        additionalProperties: false
+        properties:
+          output_name:
+            type: string
+            maxLength: 120
+            description: 脚本在 IRIS_OUTPUT_DIR 下创建的扁平文件名
+          workspace_path:
+            type: string
+            description: 验证成功后写入的工作区相对路径；父目录必须已存在（可先让工作区工具建目录）
+        required: [output_name, workspace_path]
+  required: [code, outputs]
+risk: { level: elevated, side_effect: workspace_write }
+approval:
+  mode: explicit
+  impact_statement: 将在受控 Python 运行时中执行你提供的脚本，并创建或替换 outputs 里声明的工作区文件；请确认 code 内容可信且输出路径正确
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/ExecutePythonAnalysis.java"]
+limits: { timeout_ms: 180000, max_result_chars: 100000 }
+search_hint: python 数据分析 脚本 图表 计算 沙箱

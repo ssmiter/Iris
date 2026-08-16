@@ -1,0 +1,4 @@
+label: 制造执行系统
+summary: 贯通 需求→排产→发布→执行→质检→仓储→发运 全链路的制造执行能力，横向覆盖人员、设备、工艺、模具与报表追溯
+stats:
+  expose: [tool_count, success_rate_7d, p50_ms_7d]

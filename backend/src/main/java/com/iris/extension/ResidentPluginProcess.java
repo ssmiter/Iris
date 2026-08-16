@@ -88,10 +88,13 @@ final class ResidentPluginProcess {
         }
     }
 
-    /** 标记回收：不再接受新调用，最后一个在途引用退出时销毁进程。 */
+    /** 标记回收：不再接受新调用，最后一个在途引用退出时销毁进程。幂等。 */
     void retire() {
         boolean destroyNow;
         synchronized (lifecycleLock) {
+            if (retired) {
+                return;
+            }
             retired = true;
             destroyNow = inFlight <= 0;
         }
@@ -107,6 +110,7 @@ final class ResidentPluginProcess {
      */
     InvokeOutcome invoke(
             String callId,
+            String toolName,
             JsonNode input,
             Path workspaceRoot,
             Duration timeout,
@@ -121,6 +125,8 @@ final class ResidentPluginProcess {
             ObjectNode invoke = objectMapper.createObjectNode();
             invoke.put("type", "invoke");
             invoke.put("callId", callId);
+            // §3.2：同目录多清单共享进程时插件按 tool 分发；单清单插件忽略
+            invoke.put("tool", toolName);
             invoke.set("input", input);
             ObjectNode context = invoke.putObject("context");
             context.put("workspace",

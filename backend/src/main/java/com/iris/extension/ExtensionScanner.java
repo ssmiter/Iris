@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -31,6 +33,9 @@ public class ExtensionScanner {
             Pattern.compile(".+\\.tool\\.yml");
     private static final Pattern MCP_MANIFEST_NAME =
             Pattern.compile(".+\\.mcp\\.yml");
+    private static final Pattern KNOWLEDGE_DOC_NAME =
+            Pattern.compile(".+\\.md");
+    private static final String KNOWLEDGE_SEGMENT = "knowledge";
     private static final Pattern DIRECTORY_META_NAME =
             Pattern.compile("_directory\\.yml");
     private static final Pattern SNAKE_CASE =
@@ -49,10 +54,12 @@ public class ExtensionScanner {
         List<ScannedTool> tools = new ArrayList<>();
         List<ScannedDirectory> directories = new ArrayList<>();
         List<ScannedMcpServer> mcpServers = new ArrayList<>();
+        List<ScannedKnowledge> knowledge = new ArrayList<>();
+        Map<String, Set<String>> usedKnowledgeNames = new java.util.HashMap<>();
         List<String> problems = new ArrayList<>();
         if (root == null || !Files.isDirectory(root)) {
             return new ScanResult(root, tools, directories, mcpServers,
-                    problems);
+                    knowledge, problems);
         }
         try (Stream<Path> walk = Files.walk(root, MAX_DEPTH)) {
             List<Path> files = walk
@@ -62,7 +69,11 @@ public class ExtensionScanner {
                     .toList();
             for (Path file : files) {
                 String fileName = file.getFileName().toString();
-                if (TOOL_MANIFEST_NAME.matcher(fileName).matches()) {
+                if (isKnowledgeDoc(root, file)
+                        && KNOWLEDGE_DOC_NAME.matcher(fileName).matches()) {
+                    scanKnowledge(root, file, knowledge, usedKnowledgeNames,
+                            problems);
+                } else if (TOOL_MANIFEST_NAME.matcher(fileName).matches()) {
                     scanTool(root, file, tools, problems);
                 } else if (MCP_MANIFEST_NAME.matcher(fileName).matches()) {
                     scanMcpServer(file, mcpServers, problems);
@@ -75,7 +86,89 @@ public class ExtensionScanner {
         }
         return new ScanResult(root, List.copyOf(tools),
                 List.copyOf(directories), List.copyOf(mcpServers),
-                List.copyOf(problems));
+                List.copyOf(knowledge), List.copyOf(problems));
+    }
+
+    /** knowledge 目录下的 .md 文件即知识文档（docs/31 §3 投影规则）。 */
+    private boolean isKnowledgeDoc(Path root, Path file) {
+        for (Path segment : root.relativize(file.getParent())) {
+            if (KNOWLEDGE_SEGMENT.equals(segment.toString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void scanKnowledge(
+            Path root,
+            Path file,
+            List<ScannedKnowledge> knowledge,
+            Map<String, Set<String>> usedNames,
+            List<String> problems
+    ) {
+        String directory = capabilityDirectory(root, file.getParent());
+        if (directory == null) {
+            problems.add("目录段含非法字符，无法派生知识库路径: "
+                    + file.getParent());
+            return;
+        }
+        String fileName = file.getFileName().toString();
+        String base = fileName.substring(0, fileName.length() - 3);
+        String name = knowledgeName(base, file);
+        Set<String> taken = usedNames.computeIfAbsent(
+                directory, key -> new java.util.HashSet<>()
+        );
+        if (!taken.add(name)) {
+            name = name + "_" + contentHash(file).substring(0, 8);
+            taken.add(name);
+        }
+        String capabilityPath =
+                (directory.equals("/") ? "" : directory) + "/" + name;
+        knowledge.add(new ScannedKnowledge(
+                file, name, knowledgeTitle(file, base), capabilityPath,
+                contentHash(file)
+        ));
+    }
+
+    /** ascii 转 snake_case；纯非 ascii 名退化为 doc_<内容hash前8位>（确定性）。 */
+    private String knowledgeName(String base, Path file) {
+        String slug = base.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_")
+                .replaceAll("^_+|_+$", "")
+                .replaceAll("_+", "_");
+        if (slug.isBlank() || !Character.isLetter(slug.charAt(0))) {
+            slug = "doc_" + contentHash(file).substring(0, 8);
+        }
+        return slug;
+    }
+
+    /** 首个 `#` 标题行，无则首个非空行，再退化为文件名；≤120 字符。 */
+    private String knowledgeTitle(Path file, String base) {
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            return base;
+        }
+        String fallback = null;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isBlank()) {
+                continue;
+            }
+            if (trimmed.startsWith("#")) {
+                String heading = trimmed.replaceAll("^#+\\s*", "");
+                if (!heading.isBlank()) {
+                    return heading.length() <= 120
+                            ? heading : heading.substring(0, 120);
+                }
+            }
+            if (fallback == null) {
+                fallback = trimmed;
+            }
+        }
+        String title = fallback == null ? base : fallback;
+        return title.length() <= 120 ? title : title.substring(0, 120);
     }
 
     private void scanTool(
@@ -315,6 +408,7 @@ public class ExtensionScanner {
             List<ScannedTool> tools,
             List<ScannedDirectory> directories,
             List<ScannedMcpServer> mcpServers,
+            List<ScannedKnowledge> knowledge,
             List<String> problems
     ) {
     }
@@ -341,16 +435,36 @@ public class ExtensionScanner {
     ) {
     }
 
+    /** knowledge 目录下的 .md 知识文档（docs/31 §3 投影规则）。 */
+    public record ScannedKnowledge(
+            Path file,
+            String name,
+            String title,
+            String capabilityPath,
+            String contentVersion
+    ) {
+    }
+
     /** {@code _directory.yml}（docs/31 §2.2）。 */
     public record DirectoryMetadata(
             String label,
             String summary,
             Integer order,
             List<String> tags,
-            String visibility
+            String visibility,
+            StatsSpec stats
     ) {
         public boolean hidden() {
             return "hidden".equals(visibility);
+        }
+
+        /** 只声明口径，值由内核实时算（docs/31 §2.2）。 */
+        @com.fasterxml.jackson.annotation.JsonIgnoreProperties(
+                ignoreUnknown = false)
+        public record StatsSpec(List<String> expose) {
+            public List<String> exposeOrEmpty() {
+                return expose == null ? List.of() : expose;
+            }
         }
     }
 }

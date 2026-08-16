@@ -126,6 +126,86 @@ class ResidentProcessToolTest {
         assertEquals("extension_retired", outcome.errorCode());
     }
 
+    /**
+     * §3.2 共享常驻进程：同目录两个清单共用一个进程，插件按 invoke
+     * 帧的 tool 字段分发；任一清单 retire 即回收共享进程。
+     */
+    @Test
+    void sharedProcessDispatchesByToolField() throws Exception {
+        Files.writeString(pluginDir.resolve("ToolEcho.java"), """
+                import java.io.*;
+                public class ToolEcho {
+                    public static void main(String[] args) throws Exception {
+                        BufferedReader in = new BufferedReader(
+                                new InputStreamReader(System.in, "UTF-8"));
+                        BufferedWriter out = new BufferedWriter(
+                                new OutputStreamWriter(System.out, "UTF-8"));
+                        java.util.regex.Pattern callId = java.util.regex.Pattern
+                                .compile("\\"callId\\":\\"([^\\"]+)\\"");
+                        java.util.regex.Pattern tool = java.util.regex.Pattern
+                                .compile("\\"tool\\":\\"([^\\"]+)\\"");
+                        String line;
+                        while ((line = in.readLine()) != null) {
+                            var idMatcher = callId.matcher(line);
+                            var toolMatcher = tool.matcher(line);
+                            if (!line.contains("invoke") || !idMatcher.find()) {
+                                continue;
+                            }
+                            toolMatcher.find();
+                            out.write("{\\"type\\":\\"result\\",\\"callId\\":\\""
+                                    + idMatcher.group(1)
+                                    + "\\",\\"success\\":true,\\"data\\":\\""
+                                    + toolMatcher.group(1) + "\\"}");
+                            out.newLine();
+                            out.flush();
+                        }
+                    }
+                }
+                """);
+        ObjectMapper yaml = new ObjectMapper(
+                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+        String manifestTemplate = """
+                name: %s
+                kind: process
+                description: 共享进程探针
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: ["{javaBin}", "{pluginDir}/ToolEcho.java"]
+                limits: { timeout_ms: 60000 }
+                """;
+        ProcessToolDefinition alpha = yaml.readValue(
+                manifestTemplate.formatted("alpha_tool"),
+                ProcessToolDefinition.class);
+        ProcessToolDefinition beta = yaml.readValue(
+                manifestTemplate.formatted("beta_tool"),
+                ProcessToolDefinition.class);
+        ResidentPluginProcess shared = new ResidentPluginProcess(
+                TemplateProcessTool.renderSpawnArgv(
+                        alpha.runtime().entry(), pluginDir),
+                pluginDir,
+                java.util.Map.of(),
+                objectMapper
+        );
+        ResidentProcessTool alphaTool = new ResidentProcessTool(
+                alpha, "v1", shared, objectMapper);
+        ResidentProcessTool betaTool = new ResidentProcessTool(
+                beta, "v1", shared, objectMapper);
+
+        ToolOutcome alphaOutcome = execute(alphaTool, "{}");
+        ToolOutcome betaOutcome = execute(betaTool, "{}");
+
+        assertEquals(ToolOutcome.Kind.SUCCEEDED, alphaOutcome.kind());
+        assertEquals("alpha_tool",
+                alphaOutcome.output().path("content").asText());
+        assertEquals(ToolOutcome.Kind.SUCCEEDED, betaOutcome.kind());
+        assertEquals("beta_tool",
+                betaOutcome.output().path("content").asText());
+
+        alphaTool.retire();
+        assertEquals("extension_retired",
+                execute(betaTool, "{}").errorCode());
+    }
+
     private ResidentProcessTool tool() throws Exception {
         Files.writeString(pluginDir.resolve("Probe.java"), PROBE_SOURCE);
         ObjectMapper yaml = new ObjectMapper(

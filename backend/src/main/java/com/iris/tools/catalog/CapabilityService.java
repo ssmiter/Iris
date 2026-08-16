@@ -45,6 +45,7 @@ public class CapabilityService {
     private final CapabilityDirectoryCatalog directoryCatalog;
     private final PipelineDefinitionRegistry pipelines;
     private final HybridRetrievalEngine retrieval;
+    private final DirectoryStatsService directoryStats;
     private final List<CapabilityCatalogSource> extensionSources;
 
     public CapabilityService(
@@ -53,6 +54,7 @@ public class CapabilityService {
             CapabilityDirectoryCatalog directoryCatalog,
             PipelineDefinitionRegistry pipelines,
             HybridRetrievalEngine retrieval,
+            DirectoryStatsService directoryStats,
             List<CapabilityCatalogSource> extensionSources
     ) {
         this.registry = registry;
@@ -60,6 +62,7 @@ public class CapabilityService {
         this.directoryCatalog = directoryCatalog;
         this.pipelines = pipelines;
         this.retrieval = retrieval;
+        this.directoryStats = directoryStats;
         this.extensionSources = List.copyOf(extensionSources);
     }
 
@@ -750,6 +753,12 @@ public class CapabilityService {
         Optional<DirectoryDefinition> definition =
                 directoryCatalog.find(path);
         String segment = path.substring(path.lastIndexOf('/') + 1);
+        List<String> expose = definition
+                .map(DirectoryDefinition::statsExpose)
+                .orElse(List.of());
+        Map<String, Object> stats = expose.isEmpty()
+                ? Map.of()
+                : directoryStats.stats(path, count, expose);
         return new DirectoryCard(
                 path,
                 definition.map(DirectoryDefinition::title)
@@ -758,7 +767,8 @@ public class CapabilityService {
                         ),
                 definition.map(DirectoryDefinition::description)
                         .orElse("按目录组织的能力集合"),
-                count
+                count,
+                stats
         );
     }
 
@@ -816,7 +826,9 @@ public class CapabilityService {
             String path,
             String title,
             String description,
-            int capabilityCount
+            int capabilityCount,
+            /** `_directory.yml` 声明的口径的实时值；未声明则为空表。 */
+            Map<String, Object> stats
     ) {
     }
 

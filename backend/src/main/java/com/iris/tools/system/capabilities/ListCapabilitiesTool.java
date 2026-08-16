@@ -32,7 +32,7 @@ public class ListCapabilitiesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.list",
-                "5",
+                "6",
                 "list_capabilities",
                 "结构未知时列出能力目录的直接子目录和当前层能力卡片；具体对象或动作明确时改用 capabilities 搜索",
                 inputSchema(),
@@ -120,7 +120,8 @@ public class ListCapabilitiesTool implements Tool {
                 .put("type", "array")
                 .put(
                         "description",
-                        "直接子目录、语义说明及已注册能力数量；数量为 0 表示只有目录地图"
+                        "直接子目录、语义说明、已注册能力数量及 _directory.yml "
+                                + "声明的实时统计（stats）；数量为 0 表示只有目录地图"
                 );
         ObjectNode items = properties.putObject("items");
         items.put("type", "array");

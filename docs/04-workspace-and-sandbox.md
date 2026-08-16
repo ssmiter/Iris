@@ -99,57 +99,39 @@ Managed Object Store 独占。普通 Workspace Tool 不得读取或枚举对象�
 
 数据处理、文档生成（Word/Excel/PPT/PDF）、图表渲染交给 Python——这是助手从"会聊"到"会干活"的关键一跃。
 
-### 首版架构
+### 插件形态（docs/31 §11 M2 起）
+
+`execute_python_analysis` 已外移为内建拓展根 `extensions/code/python/` 下的
+kind=process 常驻插件，不再是内核 Tool：
 
 ```
-Agentic / Pipeline 提交 execute_python_analysis Invocation
-  → Tool Runtime 校验脚本来源、输入、预算与风险
-  → 把声明输入复制或只读映射到 staged input
-  → Trusted Runner 或未来 Sandbox Helper 在独立 run directory 执行
-  → 只写 separate output
-  → 捕获 stdout/stderr/生成文件清单并截断
-  → Runtime 验证 output
-  → 在同一次已批准 Operation 内建立整组 Checkpoint
-  → 原子导入 Workspace 并登记 internal Artifact
+模型调用 execute_python_analysis（经发现原语找到 /code/python）
+  → 内核六闸：schema 校验 → 风险 elevated → explicit 审批（清单自带影响陈述）
+  → 惰性拉起插件进程（{javaBin} 单文件源码宿主，随内核发行）
+  → invoke 帧携带 code + 声明输入/输出 + context.workspace
+  → 插件定位本机 Python（IRIS_PYTHON 优先，其次 PATH 的 python/python3，
+     找不到 = python_runtime_unavailable 明确报错）
+  → 声明输入复制进 run directory 的 IRIS_INPUT_DIR
+  → 子进程执行脚本，只写 IRIS_OUTPUT_DIR，stdout/stderr 有界捕获
+  → 声明输出集合精确核验后写入工作区围栏内的声明路径
+  → result 帧返回（取消走 cancel 帧 → 内核三层兜底）
 ```
 
-首个可执行契约名为 `execute_python_analysis`，明确限定为数据分析、确定性计算、图表和
-文档产物生成，不提供 Shell。调用必须预先声明：
+调用契约：
 
 ```text
-inputs[]  = exactly one of workspace_path / artifact_ref / tool_execution_id
-            + mount_name
-outputs[] = output_name + workspace_path + kind + title
+inputs[]  = workspace_path + mount_name   （可选，≤16 项，总量 ≤64MB）
+outputs[] = output_name + workspace_path  （≥1 项，≤8 项，单文件 ≤32MB）
 ```
 
-三种输入都先解析为不可变的 `content hash + byte count`，并受同一个 staged input 总预算
-约束：
+输入只引用工作区内已存在文件；插件自证就是 result 帧。**跨进程插件不进入内核
+Checkpoint/Artifact 体系**——写前的可回滚性由审批闸承担，要沉淀为成果由模型随后用
+`present_artifact` 显式发布。父目录不存在时插件报 `workspace_parent_not_found`，
+模型先用工作区工具建目录再重试。
 
-- `workspace_path` 表示用户当前可编辑文件，prepare 与 execute 之间重新核对内容版本；
-- `artifact_ref` 表示同一对话中已经冻结的精确成果版本；
-- `tool_execution_id` 表示同一对话中某次成功 ToolExecution 的完整规范 JSON payload。
-
-模型可以先用 `query_tool_result/read_tool_result` 只观察大结果的一小部分，再把
-`tool_execution_id` 直接交给 Python。完整数据由 Backend 在数据平面复制，不经过模型
-上下文，也不需要模型把几万条记录重新写进 Workspace。只有用户需要继续编辑或交付的内容
-才进入 Workspace；内部工具结果不因“可能以后会用”而污染用户目录。
-
-Backend 按输入版本复制到 staged input；Python 只通过 `IRIS_INPUT_DIR` 读取。脚本只能把
-交付件写到 `IRIS_OUTPUT_DIR`，且执行结果必须与声明的 output_name 集合精确一致。验证后，
-Backend 再逐个核对目标 Workspace version、建立 Checkpoint、原子写入并登记 internal
-Artifact。模型批准的是这次声明完整的输入、代码与目标资源，不会在 Python 完成后再弹
-第二次同义审批。脚本不能直接宣布成功、不能直接发布用户成果；Iris 不向进程传递工作区
-物理根或挂载整个工作区，但 `trusted_process` 仍不能阻止恶意代码自行探测宿主文件系统。
-
-Runtime mode 是 Application availability，而不是 Tool 参数：
-
-- `disabled`：Definition 可发现但 unavailable；
-- `trusted_process`：仅本机显式启用，标记 degraded；具备 staged I/O、输出预算、取消和
-  进程树终止，但不宣称能阻止恶意 Python 访问宿主资源；
-- `container`：未来默认产品模式；断网、只读根文件系统、只读 input、独立可写 output，
-  并限制 CPU、内存和 PID。
-
-模型不能选择较弱 mode，也不能在 container 不可用时静默降级到宿主 Python。
+隔离边界：插件不承诺 OS 级沙箱——超时、staged I/O、输出预算、围栏与取消是
+工程边界，不声称能阻止恶意 Python 访问宿主资源。真正的容器级隔离（断网、只读根、
+资源限额）是未来独立 helper 的形态，接入时仍是同一个清单与协议，模型侧无感。
 
 进程层先提供内部 `WorkspaceProcessRunner`，但它本身不是模型 Tool：命令以 argv
 而不是拼接后的 shell 字符串提交，cwd 必须经 Workspace 围栏解析，环境继承必须显式，
@@ -157,22 +139,21 @@ stdout/stderr 始终并发排空且只做有界留存，取消与超时会终止
 这只是可信本地执行的生命周期内核，不等于安全沙箱；在 Windows Job Object、staged
 I/O 与写入核验接通前，不把任意命令能力暴露给模型。
 
-### 约束（默认值，可配置）
+### 约束（硬编码在插件内，随内容版本演进）
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| 超时 | 120s | 到时强杀进程组 |
-| 输出截断 | 64KB | stdout/stderr 各自截断 |
-| 网络 | Trusted Runner 不承诺隔离 | 环境变量和约定不是安全边界；真正 Sandbox 必须由 OS 级策略验证 |
-| 文件访问 | staged input + separate output | 不把整个 Workspace 读写挂载给执行进程 |
-| 预装库 | python-docx / openpyxl / python-pptx / pypdf / matplotlib / pandas | 文档四件套 + 数据处理 |
+| 超时 | 180s（清单 limits.timeout_ms） | 内核到时走取消三层 |
+| 输出截断 | 64KB | stdout/stderr 各自截断并标记 truncated |
+| 网络 | 不承诺隔离 | 环境变量和约定不是安全边界；真正 Sandbox 必须由 OS 级策略验证 |
+| 文件访问 | staged input + separate output | 脚本只见 run directory，不见工作区根 |
+| 预装库 | 取决于用户本机 Python 环境 | 插件不绑定具体库集；脚本自行 import |
 
 ### 与工具的衔接
 
-- `execute_python_analysis` 是 `/code/python` 下的 Tool；产品默认不开放宿主任意代码，
-  `trusted_process` 只用于用户本机显式选择的开发模式；
-- output 通过验证和导入后登记为 internal Artifact；模型确认适合交付并调用
-  `publish_artifact(user_timeline)` 后才转为用户产物卡片；
+- `execute_python_analysis` 是 `/code/python` 下的插件能力，清单即注册、目录即路径；
+- 产物要交付给用户时，模型再调用 `present_artifact` 把已写入的工作区文件发布到
+  `user_timeline`；中间结果不自动升格；
 - 当前 stdout/stderr 在执行结束后作为有界 Observation 返回。过程级 stdout SSE 是后续
   增量，接入时复用 `WorkspaceProcessRunner.OutputListener`，不能另开轮询通道。
 

@@ -26,6 +26,7 @@ import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -148,29 +149,60 @@ public class ExtensionProviderService
         List<ToolRegistry.ExternalToolRegistration> registrations =
                 new ArrayList<>();
         List<ResidentProcessTool> residentTools = new ArrayList<>();
+        // §3.2：同目录的 process 清单共享一个常驻进程；entry/env 必须逐字一致
+        Map<Path, List<ExtensionScanner.ScannedTool>> processByDir =
+                new java.util.LinkedHashMap<>();
         for (ExtensionScanner.ScannedTool scanned : result.tools()) {
-            Tool tool;
             if ("process".equals(scanned.definition().kind())) {
-                ResidentProcessTool resident = new ResidentProcessTool(
-                        scanned.definition(),
-                        scanned.pluginDir(),
-                        scanned.contentVersion(),
-                        objectMapper
-                );
-                residentTools.add(resident);
-                tool = resident;
-            } else {
-                tool = new TemplateProcessTool(
-                        scanned.definition(),
-                        scanned.pluginDir(),
-                        scanned.contentVersion(),
-                        processRunner,
-                        objectMapper
-                );
+                processByDir.computeIfAbsent(
+                        scanned.pluginDir(), key -> new ArrayList<>()
+                ).add(scanned);
+                continue;
             }
+            Tool tool = new TemplateProcessTool(
+                    scanned.definition(),
+                    scanned.pluginDir(),
+                    scanned.contentVersion(),
+                    processRunner,
+                    objectMapper
+            );
             registrations.add(new ToolRegistry.ExternalToolRegistration(
                     scanned.capabilityPath(),
                     tool
+            ));
+        }
+        for (var entry : processByDir.entrySet()) {
+            Path pluginDir = entry.getKey();
+            List<ExtensionScanner.ScannedTool> group = entry.getValue();
+            ResidentPluginProcess shared = sharedProcess(pluginDir, group);
+            if (shared == null) {
+                continue; // 签名不一致：fail-closed 整目录拒绝，已告警
+            }
+            for (ExtensionScanner.ScannedTool scanned : group) {
+                ResidentProcessTool resident = new ResidentProcessTool(
+                        scanned.definition(),
+                        scanned.contentVersion(),
+                        shared,
+                        objectMapper
+                );
+                residentTools.add(resident);
+                registrations.add(new ToolRegistry.ExternalToolRegistration(
+                        scanned.capabilityPath(),
+                        resident
+                ));
+            }
+        }
+        for (ExtensionScanner.ScannedKnowledge doc : result.knowledge()) {
+            registrations.add(new ToolRegistry.ExternalToolRegistration(
+                    doc.capabilityPath(),
+                    new KnowledgeDocumentTool(
+                            doc.file(),
+                            doc.name(),
+                            doc.title(),
+                            doc.capabilityPath(),
+                            doc.contentVersion(),
+                            objectMapper
+                    )
             ));
         }
         try {
@@ -197,6 +229,53 @@ public class ExtensionProviderService
                     exception.getMessage()
             );
         }
+    }
+
+    /**
+     * 为一个插件目录构建共享常驻进程（docs/31 §3.2）：同目录所有 process
+     * 清单的 entry/env 必须逐字一致，否则整目录拒绝（fail-closed）。
+     */
+    private ResidentPluginProcess sharedProcess(
+            Path pluginDir,
+            List<ExtensionScanner.ScannedTool> group
+    ) {
+        ProcessToolDefinition first = group.getFirst().definition();
+        for (ExtensionScanner.ScannedTool scanned : group) {
+            ProcessToolDefinition other = scanned.definition();
+            if (!first.runtime().entry().equals(other.runtime().entry())
+                    || !java.util.Objects.equals(
+                            first.runtime().env(), other.runtime().env())) {
+                log.error(
+                        "extension plugin dir {} rejected: process manifests "
+                                + "in one directory must share identical "
+                                + "runtime.entry/env ({} vs {})",
+                        pluginDir, first.name(), other.name()
+                );
+                return null;
+            }
+        }
+        return new ResidentPluginProcess(
+                TemplateProcessTool.renderSpawnArgv(
+                        first.runtime().entry(), pluginDir),
+                pluginDir,
+                declaredEnv(first),
+                objectMapper
+        );
+    }
+
+    private Map<String, String> declaredEnv(ProcessToolDefinition definition) {
+        if (definition.runtime().env() == null
+                || definition.runtime().env().isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> names = new java.util.LinkedHashMap<>();
+        for (String name : definition.runtime().env()) {
+            String value = System.getenv(name);
+            if (value != null) {
+                names.put(name, value);
+            }
+        }
+        return names;
     }
 
     void unregisterRoot(Path root) {
