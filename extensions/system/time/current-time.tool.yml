@@ -1,0 +1,15 @@
+name: current_time
+kind: process
+description: 读取指定时区的当前时间；需要可靠时间事实而非模型猜测时使用
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    zone:
+      type: string
+      description: IANA 时区 ID，如 Asia/Hong_Kong；默认 UTC
+risk: { level: read_only, side_effect: none }
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/CurrentTime.java"]
+limits: { timeout_ms: 15000, max_result_chars: 2000 }
+search_hint: 时间 时区 现在 几点 clock

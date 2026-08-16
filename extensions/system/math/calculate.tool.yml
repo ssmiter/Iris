@@ -1,0 +1,21 @@
+name: calculate
+kind: process
+description: 用确定性十进制算术计算表达式；金额、比例、工时或产量不能依赖语言模型心算时使用
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    expression:
+      type: string
+      description: 仅含十进制数字、+ - * / % ^、括号和空白的表达式
+    precision:
+      type: integer
+      minimum: 1
+      maximum: 100
+      description: 有效数字位数；默认 34，舍入为 HALF_EVEN
+  required: [expression]
+risk: { level: read_only, side_effect: none }
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Calculate.java"]
+limits: { timeout_ms: 20000, max_result_chars: 20000 }
+search_hint: 计算 算术 表达式 十进制 金额

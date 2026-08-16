@@ -135,6 +135,11 @@ limits: { timeout_ms: 30000, max_result_chars: 100000 }
 search_hint: 产量 日报 汇总       # 发现打分语料
 ```
 
+`runtime.entry` 是 argv 数组。内核供给占位符：`{pluginDir}`（插件目录绝对路径，
+两种形态可用）、`{javaBin}`（当前 JVM 的 java 可执行文件，仅 process 形态的
+spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 template 形态可用，
+值取输入参数。process 形态的输入永远走 invoke 帧（§4）。
+
 风险声明与审批裁决仍是内核权力：清单声明只是输入，Runtime 的策略双闸（目录隐藏 +
 执行拒绝）不依赖插件自觉。审批通过前进程不启动。
 
@@ -147,6 +152,8 @@ search_hint: 产量 日报 汇总       # 发现打分语料
   `{"type":"result","callId","success","data","structuredData"|"error"}`
 - 取消三层：内核先发 `{"type":"cancel","callId"}`，200ms 后 SIGTERM，再 SIGKILL——
   插件有体面退出的机会，内核不等 forever。
+- 进度帧的归宿：Tool 契约没有进度通道，内核把 `progress.text` 依序收进结果的
+  `progress` 数组（截断纪律同结果字符预算），不伪造中间状态。
 - 超时：清单 `timeout_ms`，内核计时，超时走取消三层。
 - `kind: template` 无长驻进程：清单给命令模板与参数插值，内核代为 spawn 一次性
   进程，stdout 即结果。包装一个 CLI 的最低成本形态。
@@ -171,13 +178,17 @@ search_hint: 产量 日报 汇总       # 发现打分语料
 
 | rank | 根 | 性质 |
 |---|---|---|
+| 50 | `<backend>/../extensions/`（`iris.extension.bundled-root` 可改写） | 内建拓展根：随发行物出厂，仍是普通目录对象 |
 | 100 | `<workspace>/.iris/extensions/` | 项目级自有 |
 | 200 | `<workspace>/.agents/skills`、`/.dsh/skills` | 社区惯例，原样识别 |
 | 300 | `~/.iris/extensions/` | 机器级自有 |
 | 400 | `~/.dsh/skills`、`~/.agents/skills` | 社区全局 |
 
 同名冲突：rank 小者整件胜出；被遮蔽项在目录标注 `shadowed-by` 且仍可寻址，
-绝不静默双活。社区根只做**投影**不复制文件。
+绝不静默双活。社区根只做**投影**不复制文件。当前实现的冲突处置是更强的
+fail-closed 形态——后扫描的根与已注册名冲突时整根拒绝并告警；逐件
+`shadowed-by` 标注随管理页（§11 之后）落地。内建根与代码内工具同名时同样
+拒绝（内核优先），保证出厂目录永远可被内核行为覆盖裁决。
 
 ### 5.3 MCP
 
@@ -243,6 +254,11 @@ dsh 的 Cordis `inject`/`apply(ctx)` 代码契约是 JS 生态绑定，不直容
 投影器；`/system/files` 与 `/system/agents`、`/system/tasks` 编排原语（Runtime 的
 左右手，永留）。
 
+**写工具的特例**：值就在内核写服务（Workspace Checkpoint、编码保持、乐观锁版本）
+里的工具不外移——外移后这些保障无法由进程协议承载，会变成更差的
+`write_file`（例：`/life/notes/append_note` 永留内核）。判据不变：缺了它就无法
+对拓展做裁决的留内核；append_note 的裁决能力（checkpoint）恰恰在内核里。
+
 **皆目录对象**：业务域工具（industry、web、data、code、personal、life）、skills、
 memory、knowledge、MCP 适配、Pipeline 定义。
 
@@ -255,10 +271,14 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   CapabilityDirectoryCatalog（代码优先，hidden 即消失）；WatchService 热加载
   （防抖整根重扫，新 Run 立即可见，在途 Run 快照不变）；热加载进来的定义随下次
   启动固化进 `capability_definition`（与 MCP 一致）。
-- **M1**：kind=process 的 NDJSON 常驻协议落地（§4）；`/life/notes`、`/system/math`、
-  `/system/time` 三个无依赖域外移做钉子户，验证协议与生命周期；`/data/sql`、
-  `/code/python`、`/web/browser` 外移（自带外部依赖，最受益）；MCP stdio 传输；
-- **M2**：`/industry/mes` 按工序子目录外移；目录元数据（CapabilityDirectoryCatalog
+- **M1（进行中）**：kind=process NDJSON 常驻协议落地（§4：惰性拉起、崩溃重启
+  一次、取消三层、随引用计数回收）；内建拓展根（rank 50）；钉子户 =
+  `/system/math`、`/system/time` 两个零依赖域外移为内建插件（单文件 Java 源码
+  启动，`java` 是产品已有运行时，不引入新依赖）；`/life/notes` 不外移——其值在
+  内核 Checkpoint/编码/乐观锁（§10 写工具特例）；MCP stdio 传输；
+- **M2**：`/data/sql`、`/code/python`、`/web/browser` 外移（自带外部依赖，最受益，
+  也最需要运行时供给约定——插件自管依赖清单与缺失诊断，协议不变）；
+  `/industry/mes` 按工序子目录外移；目录元数据（CapabilityDirectoryCatalog
   代码内定义）搬进 `_directory.yml`；知识库投影；目录统计进卡片；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

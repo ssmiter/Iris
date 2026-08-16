@@ -35,6 +35,8 @@ public class ExtensionScanner {
             Pattern.compile("[a-z][a-z0-9]*(?:_[a-z0-9]+)*");
     private static final Pattern PATH_SEGMENT =
             Pattern.compile("[a-z0-9_][a-z0-9_-]*");
+    private static final Pattern SPAWN_PLACEHOLDER =
+            Pattern.compile("\\{([a-zA-Z][a-zA-Z0-9_]*)}");
     private static final int MAX_DEPTH = 10;
 
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
@@ -141,14 +143,29 @@ public class ExtensionScanner {
                 || !definition.inputSchema().isObject()) {
             return "input_schema 必须是 JSON Schema 对象 " + file;
         }
-        if (!"template".equals(definition.kind())) {
-            return "未知或暂未实现的 kind（M0 仅支持 template）"
+        if (!"template".equals(definition.kind())
+                && !"process".equals(definition.kind())) {
+            return "未知 kind（支持 process | template）"
                     + file + ": " + definition.kind();
         }
         if (definition.runtime() == null
                 || definition.runtime().entry() == null
                 || definition.runtime().entry().isEmpty()) {
             return "runtime.entry 不能为空 " + file;
+        }
+        if ("process".equals(definition.kind())) {
+            // 常驻形态的参数走 invoke 帧；spawn argv 只允许内核供给占位符。
+            for (String element : definition.runtime().entry()) {
+                var matcher = SPAWN_PLACEHOLDER.matcher(element);
+                while (matcher.find()) {
+                    String key = matcher.group(1);
+                    if (!"pluginDir".equals(key) && !"javaBin".equals(key)) {
+                        return "kind=process 的 runtime.entry 只允许内核供给"
+                                + "占位符 {pluginDir}/{javaBin}（参数经 "
+                                + "invoke 帧传递）" + file + ": {" + key + "}";
+                    }
+                }
+            }
         }
         String mode = definition.approval() == null
                 ? null

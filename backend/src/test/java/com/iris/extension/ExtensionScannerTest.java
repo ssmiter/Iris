@@ -71,13 +71,13 @@ class ExtensionScannerTest {
                 runtime:
                   entry: [python, write.py]
                 """);
-        writeTool("code/python/process-kind.tool.yml", """
+        writeTool("code/python/process-param.tool.yml", """
                 name: resident_tool
                 kind: process
-                description: 长驻进程形态 M0 未实现
+                description: 常驻形态参数只能走 invoke 帧
                 input_schema: { type: object, properties: {} }
                 runtime:
-                  entry: [python, resident.py]
+                  entry: ["{javaBin}", "{pluginDir}/resident.py", "{input}"]
                 """);
 
         ExtensionScanner.ScanResult result = scanner.scan(root);
@@ -86,6 +86,26 @@ class ExtensionScannerTest {
         assertEquals("ok_tool", result.tools().getFirst().definition().name());
         assertEquals(3, result.problems().size(),
                 () -> result.problems().toString());
+    }
+
+    @Test
+    void scansResidentProcessManifest() throws IOException {
+        writeTool("system/time/current-time.tool.yml", """
+                name: current_time
+                kind: process
+                description: 读取当前时间
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: ["{javaBin}", "{pluginDir}/CurrentTime.java"]
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.problems().isEmpty(),
+                () -> result.problems().toString());
+        assertEquals(1, result.tools().size());
+        assertEquals("/system/time/current_time",
+                result.tools().getFirst().capabilityPath());
     }
 
     @Test

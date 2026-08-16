@@ -2,6 +2,7 @@ package com.iris.extension;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.execution.WorkspaceProcessRunner;
+import com.iris.tools.core.Tool;
 import com.iris.tools.core.ToolRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,9 @@ public class ExtensionProviderService
             ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<Path, ScheduledFuture<?>> pendingRescans =
             new ConcurrentHashMap<>();
+    /** 每根当前注册的常驻工具；换入成功即回收旧快照（docs/31 §6）。 */
+    private final ConcurrentHashMap<Path, List<ResidentProcessTool>>
+            residentToolsByRoot = new ConcurrentHashMap<>();
     private WatchService watchService;
     private Thread watchThread;
     private ScheduledExecutorService scheduler;
@@ -104,15 +108,23 @@ public class ExtensionProviderService
         startWatcher(roots);
     }
 
-    /** 默认根：工作区级优先，机器级其次（docs/31 §5.2 的自有两层）。 */
+    /**
+     * 根解析：内建根（rank 50）永远最先扫描；roots 为空时补默认自有两层
+     * （工作区级 → 机器级，docs/31 §5.2）。
+     */
     private List<Path> resolveRoots() {
+        List<Path> roots = new ArrayList<>();
+        if (properties.getBundledRoot() != null) {
+            roots.add(properties.getBundledRoot()
+                    .toAbsolutePath().normalize());
+        }
         if (!properties.getRoots().isEmpty()) {
-            return properties.getRoots().stream()
+            properties.getRoots().stream()
                     .map(Path::toAbsolutePath)
                     .map(Path::normalize)
-                    .toList();
+                    .forEach(roots::add);
+            return roots;
         }
-        List<Path> roots = new ArrayList<>();
         roots.add(Path.of(workspaceDir)
                 .resolve(".iris/extensions").toAbsolutePath().normalize());
         roots.add(Path.of(System.getProperty("user.home"))
@@ -130,16 +142,30 @@ public class ExtensionProviderService
 
         List<ToolRegistry.ExternalToolRegistration> registrations =
                 new ArrayList<>();
+        List<ResidentProcessTool> residentTools = new ArrayList<>();
         for (ExtensionScanner.ScannedTool scanned : result.tools()) {
+            Tool tool;
+            if ("process".equals(scanned.definition().kind())) {
+                ResidentProcessTool resident = new ResidentProcessTool(
+                        scanned.definition(),
+                        scanned.pluginDir(),
+                        scanned.contentVersion(),
+                        objectMapper
+                );
+                residentTools.add(resident);
+                tool = resident;
+            } else {
+                tool = new TemplateProcessTool(
+                        scanned.definition(),
+                        scanned.pluginDir(),
+                        scanned.contentVersion(),
+                        processRunner,
+                        objectMapper
+                );
+            }
             registrations.add(new ToolRegistry.ExternalToolRegistration(
                     scanned.capabilityPath(),
-                    new TemplateProcessTool(
-                            scanned.definition(),
-                            scanned.pluginDir(),
-                            scanned.contentVersion(),
-                            processRunner,
-                            objectMapper
-                    )
+                    tool
             ));
         }
         try {
@@ -148,6 +174,9 @@ public class ExtensionProviderService
                     registrations,
                     objectMapper
             );
+            List<ResidentProcessTool> previous =
+                    residentToolsByRoot.put(root, residentTools);
+            retireAll(previous);
             log.info(
                     "extension root {} registered: {} tools, {} directories",
                     root,
@@ -156,6 +185,7 @@ public class ExtensionProviderService
             );
         } catch (RuntimeException exception) {
             // 与内核或其他根冲突：整根拒绝（fail-closed），已有绑定保持。
+            retireAll(residentTools);
             log.error(
                     "extension root {} rejected as a whole: {}",
                     root,
@@ -167,7 +197,14 @@ public class ExtensionProviderService
     void unregisterRoot(Path root) {
         directoryRegistry.removeRoot(root);
         toolRegistry.unregisterExternal(providerKey(root));
+        retireAll(residentToolsByRoot.remove(root));
         log.info("extension root {} unregistered", root);
+    }
+
+    private void retireAll(List<ResidentProcessTool> tools) {
+        if (tools != null) {
+            tools.forEach(ResidentProcessTool::retire);
+        }
     }
 
     private String providerKey(Path root) {
@@ -318,6 +355,8 @@ public class ExtensionProviderService
 
     @Override
     public void destroy() {
+        residentToolsByRoot.values().forEach(this::retireAll);
+        residentToolsByRoot.clear();
         if (watchThread != null) {
             watchThread.interrupt();
         }
