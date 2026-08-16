@@ -192,9 +192,26 @@ fail-closed 形态——后扫描的根与已注册名冲突时整根拒绝并�
 
 ### 5.3 MCP
 
-- 传输在现有 streamable_http 之外补 **stdio**（本地进程即插件）；
+- 传输在现有 streamable_http 之外补 **stdio**（本地进程即插件；与 Claude Code
+  同形：spawn command/args，换行分隔 JSON-RPC，stderr 只进日志不进协议）；
 - 远端工具以 `mcp__<server>__<tool>` 命名入注册表（与 Claude Code / dsh 同形）；
-- 声明形态：`mcp/<server>.mcp.yml`（command/args/env 或 endpoint）。
+- 声明形态：`mcp/<server>.mcp.yml`：
+
+```yaml
+slug: filesystem             # snake_case，全局唯一
+display_name: 文件系统        # 管理页展示名
+transport: stdio             # stdio | streamable_http
+command: [npx, -y, "@modelcontextprotocol/server-filesystem", "."]
+env: [SOME_TOKEN]            # 只声明变量名，值由环境提供（不写进文件/库）
+enabled: true
+# streamable_http 时改用：
+# endpoint: https://example.com/mcp
+# authorization_env: MCP_TOKEN
+```
+
+声明经拓展扫描进入 MCP 连接器注册表（来源记录到 `mcp_server_origin`）；
+删除声明 = 停用该连接器，历史定义仍可寻址。与管理页手工建的连接器 slug
+冲突时 fail-closed：保留既有连接器，拒绝声明并告警。
 
 ### 5.4 明确不兼容的部分
 
@@ -271,11 +288,15 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   CapabilityDirectoryCatalog（代码优先，hidden 即消失）；WatchService 热加载
   （防抖整根重扫，新 Run 立即可见，在途 Run 快照不变）；热加载进来的定义随下次
   启动固化进 `capability_definition`（与 MCP 一致）。
-- **M1（进行中）**：kind=process NDJSON 常驻协议落地（§4：惰性拉起、崩溃重启
+- **M1（已落地）**：kind=process NDJSON 常驻协议落地（§4：惰性拉起、崩溃重启
   一次、取消三层、随引用计数回收）；内建拓展根（rank 50）；钉子户 =
   `/system/math`、`/system/time` 两个零依赖域外移为内建插件（单文件 Java 源码
   启动，`java` 是产品已有运行时，不引入新依赖）；`/life/notes` 不外移——其值在
-  内核 Checkpoint/编码/乐观锁（§10 写工具特例）；MCP stdio 传输；
+  内核 Checkpoint/编码/乐观锁（§10 写工具特例）；MCP stdio 传输（
+  McpStdioClient：spawn command/args/env、换行 JSON-RPC、stderr 只进日志、
+  进程随连接器停用回收）+ `*.mcp.yml` 声明扫描落库（来源记
+  `mcp_server_origin`，slug 冲突 fail-closed 保手工连接器，删声明=停用）+
+  `mcp__<server>__<tool>` 命名入注册表；
 - **M2**：`/data/sql`、`/code/python`、`/web/browser` 外移（自带外部依赖，最受益，
   也最需要运行时供给约定——插件自管依赖清单与缺失诊断，协议不变）；
   `/industry/mes` 按工序子目录外移；目录元数据（CapabilityDirectoryCatalog

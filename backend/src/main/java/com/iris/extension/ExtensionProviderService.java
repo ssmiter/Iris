@@ -2,6 +2,7 @@ package com.iris.extension;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.execution.WorkspaceProcessRunner;
+import com.iris.mcp.McpServerService;
 import com.iris.tools.core.Tool;
 import com.iris.tools.core.ToolRegistry;
 import org.slf4j.Logger;
@@ -55,6 +56,7 @@ public class ExtensionProviderService
     private final ExtensionDirectoryRegistry directoryRegistry;
     private final ToolRegistry toolRegistry;
     private final WorkspaceProcessRunner processRunner;
+    private final McpServerService mcpServers;
     private final ObjectMapper objectMapper;
     private final String workspaceDir;
 
@@ -76,6 +78,7 @@ public class ExtensionProviderService
             ExtensionDirectoryRegistry directoryRegistry,
             ToolRegistry toolRegistry,
             WorkspaceProcessRunner processRunner,
+            McpServerService mcpServers,
             ObjectMapper objectMapper,
             @Value("${iris.workspace:~/Iris/workspace}") String workspaceDir
     ) {
@@ -84,6 +87,7 @@ public class ExtensionProviderService
         this.directoryRegistry = directoryRegistry;
         this.toolRegistry = toolRegistry;
         this.processRunner = processRunner;
+        this.mcpServers = mcpServers;
         this.objectMapper = objectMapper;
         this.workspaceDir = workspaceDir;
     }
@@ -139,6 +143,7 @@ public class ExtensionProviderService
             log.warn("extension rejected: {}", problem);
         }
         directoryRegistry.replaceRoot(root, result.directories());
+        registerMcpDeclarations(root, result.mcpServers());
 
         List<ToolRegistry.ExternalToolRegistration> registrations =
                 new ArrayList<>();
@@ -198,7 +203,40 @@ public class ExtensionProviderService
         directoryRegistry.removeRoot(root);
         toolRegistry.unregisterExternal(providerKey(root));
         retireAll(residentToolsByRoot.remove(root));
+        mcpServers.disableDeclaredByRoot(originKey(root));
         log.info("extension root {} unregistered", root);
+    }
+
+    /**
+     * MCP 声明落库（docs/31 §5.3）：声明与手工连接器冲突时 McpServerService
+     * 保留既有连接器并返回告警——声明级 fail-closed，不牵连同根其他插件。
+     */
+    private void registerMcpDeclarations(
+            Path root,
+            List<ExtensionScanner.ScannedMcpServer> servers
+    ) {
+        for (ExtensionScanner.ScannedMcpServer server : servers) {
+            try {
+                String warning = mcpServers.upsertDeclared(
+                        server.declaration(),
+                        originKey(root),
+                        server.declarationFile().toString()
+                );
+                if (warning != null) {
+                    log.warn("extension mcp declaration rejected: {}", warning);
+                }
+            } catch (RuntimeException exception) {
+                log.error(
+                        "extension mcp declaration {} failed: {}",
+                        server.declarationFile(),
+                        exception.getMessage()
+                );
+            }
+        }
+    }
+
+    private String originKey(Path root) {
+        return root.toAbsolutePath().normalize().toString();
     }
 
     private void retireAll(List<ResidentProcessTool> tools) {

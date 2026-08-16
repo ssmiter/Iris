@@ -193,7 +193,11 @@ Capability Catalog 是动态多来源投影，不再假定进程启动时已经�
 首个实现切面遵守以下运行时约束：
 
 - Skill 使用不可变 Definition + 可变 Head；启用后才投影到 `/skills/**`，更新产生新版本，停用只撤出当前 Catalog，不删除历史；
-- MCP 首版实现 Streamable HTTP。Server 状态区分 `pending / connecting / connected / needs_auth / failed / disabled`；连接成功后整组工具原子替换，工具原名与 Iris 规范化名同时持久化，停用或连接失败会撤销 live binding，不能留下仍可发现但无法调用的幽灵工具；
+- MCP 支持 Streamable HTTP 与 **stdio** 两种传输：stdio 即本地进程连接器
+  （command/args/env，换行分隔 JSON-RPC，stderr 只进日志——与 Claude Code
+  同形）；远端工具以 `mcp__<slug>__<tool>` 双下划线命名入注册表（与
+  Claude Code / dsh 同形，docs/31 §5.3）。Server 状态区分
+  `pending / connecting / connected / needs_auth / failed / disabled`；连接成功后整组工具原子替换，工具原名与 Iris 规范化名同时持久化，停用或连接失败会撤销 live binding，不能留下仍可发现但无法调用的幽灵工具；
 - MCP 未声明 `readOnlyHint=true` 的 Tool 默认视为外部写入并等待审批，`destructiveHint=true` 进一步提升风险；远端调用不做不透明自动重试，避免在结果未知时重复写入；
 - 记忆使用不可变 Definition + 可变 Head，保存正文、来源、作用域和置信度。`search_memories` 复用词法与语义向量融合，只返回有界候选和摘要；`read_memory` 才读取精确正文；`remember_memory / forget_memory` 改变个人状态，因此进入审批与验证闭环；
 - 前端管理面是生命周期控制台，不是文件管理器：展示适用条件、来源、连接健康度和当前暴露工具；开关使用版本号乐观并发，服务端失败时回滚视觉状态。

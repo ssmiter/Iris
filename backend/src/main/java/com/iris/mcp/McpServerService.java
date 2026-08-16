@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.iris.extension.McpServerDeclaration;
 import com.iris.storage.ManagedObjectStore;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.PreparedOperation;
@@ -53,6 +54,7 @@ public class McpServerService {
     private final ManagedObjectStore objects;
     private final ToolRegistry registry;
     private final McpHttpClient client;
+    private final McpStdioClient stdioClient;
     private final TransactionTemplate transactions;
     private final Map<String, LiveConnection> live = new ConcurrentHashMap<>();
     private final Clock clock = Clock.systemUTC();
@@ -63,6 +65,7 @@ public class McpServerService {
             ManagedObjectStore objects,
             ToolRegistry registry,
             McpHttpClient client,
+            McpStdioClient stdioClient,
             TransactionTemplate transactions
     ) {
         this.jdbc = jdbc;
@@ -70,6 +73,7 @@ public class McpServerService {
         this.objects = objects;
         this.registry = registry;
         this.client = client;
+        this.stdioClient = stdioClient;
         this.transactions = transactions;
     }
 
@@ -220,6 +224,240 @@ public class McpServerService {
         return require(serverId);
     }
 
+    /**
+     * 拓展声明的连接器落库（docs/31 §5.3）：来源记录到 mcp_server_origin。
+     * 与管理页手工连接器或另一拓展根的 slug 冲突时 fail-closed——保留既有
+     * 连接器，拒绝声明并返回告警文本；返回 null 表示声明被接受。
+     */
+    public String upsertDeclared(
+            McpServerDeclaration declaration,
+            String extensionRoot,
+            String sourceFile
+    ) {
+        try {
+            validateDeclared(declaration);
+        } catch (IllegalArgumentException invalid) {
+            return "MCP 声明非法，拒绝: " + sourceFile + ": "
+                    + invalid.getMessage();
+        }
+        String slug = declaration.slug().trim();
+        boolean stdio = "stdio".equals(declaration.transport());
+        Instant now = clock.instant();
+        var existing = jdbc.sql("""
+                SELECT server_id FROM mcp_server WHERE slug = :slug
+                """)
+                .param("slug", slug)
+                .query(String.class)
+                .optional();
+        if (existing.isPresent()) {
+            String serverId = existing.get();
+            var origin = jdbc.sql("""
+                    SELECT extension_root FROM mcp_server_origin
+                    WHERE server_id = :id
+                    """)
+                    .param("id", serverId)
+                    .query(String.class)
+                    .optional();
+            if (origin.isEmpty()) {
+                return "MCP 声明与管理页手工连接器 slug 冲突，保留既有连接器，"
+                        + "拒绝声明: " + slug + " (" + sourceFile + ")";
+            }
+            if (!origin.get().equals(extensionRoot)) {
+                return "MCP 声明与另一拓展根的同名声明冲突，保留先扫描者，"
+                        + "拒绝声明: " + slug + " (" + sourceFile + ")";
+            }
+            jdbc.sql("""
+                    UPDATE mcp_server
+                    SET display_name = :displayName,
+                        transport = :transport,
+                        endpoint = :endpoint,
+                        authorization_env = :authorizationEnv,
+                        enabled = :enabled,
+                        connection_state = :state,
+                        last_error = NULL,
+                        version = version + 1,
+                        updated_at = :now
+                    WHERE server_id = :id
+                    """)
+                    .param("displayName", declaration.displayName().trim())
+                    .param("transport", declaration.transport())
+                    .param("endpoint", stdio ? "stdio://" + slug
+                            : declaration.endpoint().trim())
+                    .param("authorizationEnv", stdio ? null
+                            : declaration.authorizationEnv())
+                    .param("enabled", declaration.enabledOrDefault() ? 1 : 0)
+                    .param("state", declaration.enabledOrDefault()
+                            ? "pending" : "disabled")
+                    .param("now", now.toString())
+                    .param("id", serverId)
+                    .update();
+            writeStdioConfig(serverId, declaration);
+            jdbc.sql("""
+                    UPDATE mcp_server_origin
+                    SET source_file = :source, updated_at = :now
+                    WHERE server_id = :id
+                    """)
+                    .param("source", sourceFile)
+                    .param("now", now.toString())
+                    .param("id", serverId)
+                    .update();
+            unload(serverId, "declaration updated");
+            if (declaration.enabledOrDefault()) {
+                refresh(serverId);
+            }
+            return null;
+        }
+        String id = "mcp_" + UUID.randomUUID().toString().replace("-", "");
+        jdbc.sql("""
+                INSERT INTO mcp_server(
+                    server_id, slug, display_name, transport, endpoint,
+                    authorization_env, enabled, connection_state,
+                    tool_count, version, created_at, updated_at
+                ) VALUES (
+                    :id, :slug, :displayName, :transport, :endpoint,
+                    :authorizationEnv, :enabled, :state,
+                    0, 1, :now, :now
+                )
+                """)
+                .param("id", id)
+                .param("slug", slug)
+                .param("displayName", declaration.displayName().trim())
+                .param("transport", declaration.transport())
+                // mcp_server.endpoint 是 NOT NULL 列；stdio 连接器以 stdio://<slug> 占位
+                .param("endpoint", stdio ? "stdio://" + slug
+                        : declaration.endpoint().trim())
+                .param("authorizationEnv", stdio ? null
+                        : declaration.authorizationEnv())
+                .param("enabled", declaration.enabledOrDefault() ? 1 : 0)
+                .param("state", declaration.enabledOrDefault()
+                        ? "pending" : "disabled")
+                .param("now", now.toString())
+                .update();
+        writeStdioConfig(id, declaration);
+        jdbc.sql("""
+                INSERT INTO mcp_server_origin(
+                    server_id, extension_root, source_file, updated_at
+                ) VALUES (:id, :root, :source, :now)
+                """)
+                .param("id", id)
+                .param("root", extensionRoot)
+                .param("source", sourceFile)
+                .param("now", now.toString())
+                .update();
+        if (declaration.enabledOrDefault()) {
+            refresh(id);
+        }
+        return null;
+    }
+
+    /** 拓展根卸载 = 其声明的连接器全部停用（历史定义仍可寻址，docs/31 §5.3）。 */
+    public void disableDeclaredByRoot(String extensionRoot) {
+        List<String> serverIds = jdbc.sql("""
+                SELECT server_id FROM mcp_server_origin
+                WHERE extension_root = :root
+                """)
+                .param("root", extensionRoot)
+                .query(String.class)
+                .list();
+        Instant now = clock.instant();
+        for (String serverId : serverIds) {
+            jdbc.sql("""
+                    UPDATE mcp_server
+                    SET enabled = 0,
+                        connection_state = 'disabled',
+                        version = version + 1,
+                        updated_at = :now
+                    WHERE server_id = :id
+                    """)
+                    .param("now", now.toString())
+                    .param("id", serverId)
+                    .update();
+            unload(serverId, "declaration removed");
+        }
+    }
+
+    private void validateDeclared(McpServerDeclaration declaration) {
+        if (declaration.slug() == null
+                || !SLUG.matcher(declaration.slug().trim()).matches()) {
+            throw new IllegalArgumentException("slug must be snake_case");
+        }
+        bounded(declaration.displayName(), "displayName", 120);
+        boolean stdio = "stdio".equals(declaration.transport());
+        if (!stdio && !"streamable_http".equals(declaration.transport())) {
+            throw new IllegalArgumentException(
+                    "transport must be stdio | streamable_http"
+            );
+        }
+        if (stdio) {
+            if (declaration.command() == null
+                    || declaration.command().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "stdio declaration requires a command"
+                );
+            }
+            if (declaration.command().size() > 64
+                    || declaration.command().stream().anyMatch(
+                            element -> element == null || element.isBlank()
+                                    || element.length() > 2_000)) {
+                throw new IllegalArgumentException(
+                        "stdio command elements must be 1..2000 characters"
+                );
+            }
+        } else {
+            URIValidator.requireHttpEndpoint(
+                    bounded(declaration.endpoint(), "endpoint", 2_000)
+            );
+            String authorizationEnv = declaration.authorizationEnv();
+            if (authorizationEnv != null && !authorizationEnv.isBlank()
+                    && !ENVIRONMENT_NAME.matcher(
+                            authorizationEnv.trim()).matches()) {
+                throw new IllegalArgumentException(
+                        "authorizationEnv must name an environment variable"
+                );
+            }
+        }
+        if (declaration.env() != null) {
+            for (String name : declaration.env()) {
+                if (name == null
+                        || !ENVIRONMENT_NAME.matcher(name).matches()) {
+                    throw new IllegalArgumentException(
+                            "env must name environment variables: " + name
+                    );
+                }
+            }
+        }
+    }
+
+    private void writeStdioConfig(
+            String serverId,
+            McpServerDeclaration declaration
+    ) {
+        jdbc.sql("DELETE FROM mcp_server_stdio WHERE server_id = :id")
+                .param("id", serverId)
+                .update();
+        if (!"stdio".equals(declaration.transport())) {
+            return;
+        }
+        try {
+            jdbc.sql("""
+                    INSERT INTO mcp_server_stdio(
+                        server_id, command_json, env_names_json
+                    ) VALUES (:id, :command, :env)
+                    """)
+                    .param("id", serverId)
+                    .param("command", objectMapper.writeValueAsString(
+                            declaration.command()))
+                    .param("env", objectMapper.writeValueAsString(
+                            declaration.env() == null
+                                    ? List.of() : declaration.env()))
+                    .update();
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Unable to serialize MCP stdio launch config", exception
+            );
+        }
+    }
+
     public ServerView refresh(String serverId) {
         ServerView server = require(serverId);
         if (!server.enabled()) {
@@ -227,11 +465,20 @@ public class McpServerService {
             return require(serverId);
         }
         markState(serverId, "connecting", null, null, null, null, 0);
+        LiveConnection connection = null;
         try {
-            String token = authorizationToken(server.authorizationEnv());
-            McpHttpClient.Discovery discovery = client.connect(
-                    server.endpoint(), token
-            );
+            McpHttpClient.Discovery discovery;
+            if ("stdio".equals(server.transport())) {
+                McpStdioClient.Connection stdio = connectStdio(server);
+                discovery = stdio.discovery();
+                connection = new LiveConnection(null, null, null, stdio);
+            } else {
+                String token = authorizationToken(server.authorizationEnv());
+                discovery = client.connect(server.endpoint(), token);
+                connection = new LiveConnection(
+                        server.endpoint(), token, discovery.sessionId(), null
+                );
+            }
             List<DiscoveredTool> tools = discoveredTools(server, discovery);
             registry.replaceExternal(
                     providerKey(serverId),
@@ -242,11 +489,12 @@ public class McpServerService {
                             .toList(),
                     objectMapper
             );
-            live.put(serverId, new LiveConnection(
-                    server.endpoint(), token, discovery.sessionId()
-            ));
+            LiveConnection previous = live.put(serverId, connection);
+            closeStdio(previous);
+            connection = null;
             persistDiscovery(server, discovery, tools);
         } catch (Exception exception) {
+            closeStdio(connection);
             unload(serverId, "connection failed");
             String state = missingCredential(exception)
                     ? "needs_auth" : "failed";
@@ -256,6 +504,65 @@ public class McpServerService {
             );
         }
         return require(serverId);
+    }
+
+    /** 读取 mcp_server_stdio 配置并拉起本地进程（docs/31 §5.3）。 */
+    private McpStdioClient.Connection connectStdio(ServerView server)
+            throws IOException, InterruptedException {
+        var row = jdbc.sql("""
+                SELECT command_json, env_names_json
+                FROM mcp_server_stdio WHERE server_id = :serverId
+                """)
+                .param("serverId", server.serverId())
+                .query((rs, n) -> new String[]{
+                        rs.getString("command_json"),
+                        rs.getString("env_names_json")
+                })
+                .optional()
+                .orElseThrow(() -> new IllegalStateException(
+                        "MCP stdio server lacks launch configuration: "
+                                + server.slug()
+                ));
+        List<String> command = new ArrayList<>();
+        try {
+            objectMapper.readTree(row[0]).forEach(node ->
+                    command.add(node.asText()));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "MCP stdio command is not a JSON array", exception
+            );
+        }
+        List<String> envNames = new ArrayList<>();
+        if (row[1] != null && !row[1].isBlank()) {
+            try {
+                objectMapper.readTree(row[1]).forEach(node ->
+                        envNames.add(node.asText()));
+            } catch (JsonProcessingException exception) {
+                throw new IllegalStateException(
+                        "MCP stdio env names are not a JSON array", exception
+                );
+            }
+        }
+        for (String name : envNames) {
+            String value = System.getenv(name);
+            if (value == null || value.isBlank()) {
+                throw new MissingCredentialException(
+                        "Environment variable " + name + " is not set"
+                );
+            }
+        }
+        if (command.isEmpty()) {
+            throw new IllegalStateException(
+                    "MCP stdio command is empty for " + server.slug()
+            );
+        }
+        return stdioClient.connect(server.slug(), command, envNames);
+    }
+
+    private void closeStdio(LiveConnection connection) {
+        if (connection != null && connection.stdio() != null) {
+            connection.stdio().close();
+        }
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -274,7 +581,9 @@ public class McpServerService {
         for (JsonNode remote : discovery.tools()) {
             String remoteName = requiredRemoteText(remote, "name", 240);
             String normalizedRemote = normalize(remoteName);
-            String localName = "mcp_" + server.slug() + "_" + normalizedRemote;
+            // 与 Claude Code / dsh 同形的命名空间（docs/31 §5.3）。
+            String localName = "mcp__" + server.slug() + "__"
+                    + normalizedRemote;
             if (!names.add(localName)) {
                 throw new IllegalStateException(
                         "MCP tools collide after name normalization: " + localName
@@ -476,7 +785,7 @@ public class McpServerService {
 
     private void unload(String serverId, String reason) {
         registry.unregisterExternal(providerKey(serverId));
-        live.remove(serverId);
+        closeStdio(live.remove(serverId));
         Instant now = clock.instant();
         transactions.executeWithoutResult(tx -> {
             markBindingsUnavailable(serverId, now);
@@ -802,11 +1111,16 @@ public class McpServerService {
                 );
             }
             try {
-                JsonNode result = client.call(
-                        connection.endpoint(), connection.bearerToken(),
-                        connection.sessionId(), remoteName,
-                        operation.normalizedInput()
-                );
+                JsonNode result = connection.stdio() != null
+                        ? connection.stdio().call(
+                                remoteName, operation.normalizedInput()
+                        )
+                        : client.call(
+                                connection.endpoint(),
+                                connection.bearerToken(),
+                                connection.sessionId(), remoteName,
+                                operation.normalizedInput()
+                        );
                 if (result.path("isError").asBoolean(false)) {
                     return ToolOutcome.failed(
                             "mcp_tool_error", summarizeMcpError(result)
@@ -869,7 +1183,8 @@ public class McpServerService {
     private record LiveConnection(
             String endpoint,
             String bearerToken,
-            String sessionId
+            String sessionId,
+            McpStdioClient.Connection stdio
     ) { }
 
     private static final class MissingCredentialException

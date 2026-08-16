@@ -180,10 +180,16 @@ final class ResidentPluginProcess {
                     process.getOutputStream(), StandardCharsets.UTF_8));
             BufferedReader stdout = new BufferedReader(new InputStreamReader(
                     process.getInputStream(), StandardCharsets.UTF_8));
+            BufferedReader stderr = new BufferedReader(new InputStreamReader(
+                    process.getErrorStream(), StandardCharsets.UTF_8));
             Process watched = process;
             Thread.ofVirtual()
                     .name("extension-plugin-reader-" + pluginDir.getFileName())
                     .start(() -> readLoop(watched, stdout));
+            // stderr 必须排空，否则管道缓冲写满会堵死插件（claude-code 同形处理）。
+            Thread.ofVirtual()
+                    .name("extension-plugin-stderr-" + pluginDir.getFileName())
+                    .start(() -> drainStderr(watched, stderr));
         }
     }
 
@@ -233,6 +239,19 @@ final class ResidentPluginProcess {
                 process = null;
                 stdin = null;
             }
+        }
+    }
+
+    /** stderr 只进日志，不进协议通道；截断单行避免刷屏。 */
+    private void drainStderr(Process watched, BufferedReader stderr) {
+        try {
+            String line;
+            while ((line = stderr.readLine()) != null) {
+                log.debug("extension plugin {} stderr: {}", pluginDir,
+                        line.length() > 500 ? line.substring(0, 500) : line);
+            }
+        } catch (IOException ignored) {
+            // 进程结束即管道关闭，正常。
         }
     }
 

@@ -1326,6 +1326,25 @@ CREATE TABLE IF NOT EXISTS mcp_server_tool (
 CREATE INDEX IF NOT EXISTS idx_mcp_server_tool_active
     ON mcp_server_tool(server_id, active, local_name);
 
+-- stdio 传输的连接参数（docs/31 §5.3）。env_names 只存变量名，
+-- 值永远来自进程环境，不落库。endpoint 列对 stdio 行存 command 展示串。
+CREATE TABLE IF NOT EXISTS mcp_server_stdio (
+    server_id TEXT PRIMARY KEY,
+    command_json TEXT NOT NULL,
+    env_names_json TEXT NOT NULL,
+    FOREIGN KEY (server_id) REFERENCES mcp_server(server_id)
+);
+
+-- 声明来源：经拓展根 *.mcp.yml 注册的连接器记录其根与文件，
+-- 根被移除时对应连接器停用（历史定义保留，docs/31 §6）。
+CREATE TABLE IF NOT EXISTS mcp_server_origin (
+    server_id TEXT PRIMARY KEY,
+    extension_root TEXT NOT NULL,
+    source_file TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (server_id) REFERENCES mcp_server(server_id)
+);
+
 -- Personal memories are versioned facts, not Capability definitions. Their
 -- operating tools live in /personal/memory and enter the normal ToolRuntime.
 CREATE TABLE IF NOT EXISTS personal_memory_definition (

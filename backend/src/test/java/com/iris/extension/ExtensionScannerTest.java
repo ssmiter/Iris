@@ -143,6 +143,57 @@ class ExtensionScannerTest {
     }
 
     @Test
+    void scansMcpDeclarationsAndRejectsInvalidOnes() throws IOException {
+        writeTool("mcp/filesystem.mcp.yml", """
+                slug: filesystem
+                display_name: 文件系统
+                transport: stdio
+                command: [npx, -y, "@modelcontextprotocol/server-filesystem", "."]
+                env: [SOME_TOKEN]
+                enabled: true
+                """);
+        writeTool("mcp/remote-search.mcp.yml", """
+                slug: remote_search
+                display_name: 远端检索
+                transport: streamable_http
+                endpoint: https://example.com/mcp
+                authorization_env: MCP_TOKEN
+                enabled: false
+                """);
+        writeTool("mcp/bad-transport.mcp.yml", """
+                slug: bad_transport
+                display_name: 非法传输
+                transport: websocket
+                """);
+        writeTool("mcp/stdio-without-command.mcp.yml", """
+                slug: no_command
+                display_name: 缺启动命令
+                transport: stdio
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertEquals(2, result.mcpServers().size(),
+                () -> result.problems().toString());
+        assertEquals(2, result.problems().size(),
+                () -> result.problems().toString());
+        ExtensionScanner.ScannedMcpServer filesystem = result.mcpServers()
+                .stream()
+                .filter(item -> item.declaration().slug().equals("filesystem"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("stdio", filesystem.declaration().transport());
+        assertEquals(4, filesystem.declaration().command().size());
+        assertTrue(filesystem.declaration().enabledOrDefault());
+        ExtensionScanner.ScannedMcpServer remote = result.mcpServers().stream()
+                .filter(item -> item.declaration().slug()
+                        .equals("remote_search"))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(!remote.declaration().enabledOrDefault());
+    }
+
+    @Test
     void skipsHiddenDirectoriesAndMissingRoot() {
         assertTrue(scanner.scan(root.resolve("absent")).tools().isEmpty());
     }

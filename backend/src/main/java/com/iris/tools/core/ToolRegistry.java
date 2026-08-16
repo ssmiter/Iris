@@ -21,8 +21,13 @@ import java.util.regex.Pattern;
  */
 @Component
 public class ToolRegistry {
+    /**
+     * snake_case，允许双下划线分隔的命名空间段：
+     * MCP 远端工具按社区惯例命名 mcp__&lt;server&gt;__&lt;tool&gt;
+     * （docs/31 §5.3）。插件清单名仍由扫描器用更严格的单下划线规则校验。
+     */
     private static final Pattern SNAKE_CASE =
-            Pattern.compile("[a-z][a-z0-9]*(?:_[a-z0-9]+)*");
+            Pattern.compile("[a-z][a-z0-9]*(?:_+[a-z0-9]+)*");
 
     private final Map<String, ToolBinding> byName = new LinkedHashMap<>();
     private final Map<String, ToolBinding> byIdentity = new LinkedHashMap<>();
