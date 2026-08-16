@@ -21,6 +21,8 @@ import com.iris.conversation.domain.ConversationViews.RunDefinition;
 import com.iris.conversation.domain.ConversationViews.RunView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
 import com.iris.conversation.domain.ConversationViews.RenameConversationResponse;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationResponse;
 import com.iris.conversation.domain.ConversationViews.TurnStats;
 import com.iris.conversation.domain.ConversationViews.TurnView;
 import com.iris.conversation.infrastructure.ConversationEventHub;
@@ -46,6 +48,8 @@ public final class ConversationCommandService {
     private static final String BRANCH_ENDPOINT =
             "POST:/api/v1/conversations/{id}/branches";
     private static final String RENAME_ENDPOINT = "PATCH:/api/v1/conversations/{id}";
+    private static final String ARCHIVE_ENDPOINT =
+            "POST:/api/v1/conversations/{id}/archive";
 
     private final ConversationRepository repository;
     private final ConversationEventHub eventHub;
@@ -220,6 +224,42 @@ public final class ConversationCommandService {
         );
         if (result == null) {
             throw new IllegalStateException("Rename transaction returned no result");
+        }
+        eventHub.publish(result.events());
+        return result.response();
+    }
+
+    public ArchiveConversationResponse archiveConversation(
+            String conversationId,
+            String idempotencyKey,
+            ArchiveConversationRequest request
+    ) {
+        requireIdempotencyKey(idempotencyKey);
+        String requestHash = hash(request);
+        ArchiveResult result = locks.withLock(conversationId, () ->
+                transactions.execute(status -> repository
+                        .findIdempotency(
+                                conversationId,
+                                ARCHIVE_ENDPOINT,
+                                idempotencyKey
+                        )
+                        .map(record -> new ArchiveResult(
+                                replay(
+                                        record,
+                                        requestHash,
+                                        ArchiveConversationResponse.class
+                                ),
+                                List.of()
+                        ))
+                        .orElseGet(() -> archiveConversationOnce(
+                                conversationId,
+                                idempotencyKey,
+                                requestHash,
+                                request
+                        )))
+        );
+        if (result == null) {
+            throw new IllegalStateException("Archive transaction returned no result");
         }
         eventHub.publish(result.events());
         return result.response();
@@ -501,6 +541,90 @@ public final class ConversationCommandService {
                 now
         );
         return new RenameResult(response, List.of(event));
+    }
+
+    private ArchiveResult archiveConversationOnce(
+            String conversationId,
+            String idempotencyKey,
+            String requestHash,
+            ArchiveConversationRequest request
+    ) {
+        ConversationRepository.ConversationMetadata metadata =
+                repository.findConversationMetadata(conversationId)
+                        .orElseThrow(() -> new ApiProblemException(
+                                HttpStatus.NOT_FOUND,
+                                "conversation_not_found",
+                                "not_found",
+                                "找不到这个对话。"
+                        ));
+        if (metadata.version() != request.expectedVersion()) {
+            throw new ApiProblemException(
+                    HttpStatus.CONFLICT,
+                    "stale_version",
+                    "conflict",
+                    "对话已经发生变化，请刷新后重试。",
+                    java.util.Map.of("currentVersion", metadata.version())
+            );
+        }
+
+        Instant now = clock.instant();
+        long version = repository.updateConversationArchived(
+                conversationId,
+                request.expectedVersion(),
+                request.archived(),
+                now
+        );
+        if (version < 0) {
+            throw new ApiProblemException(
+                    HttpStatus.CONFLICT,
+                    "stale_version",
+                    "conflict",
+                    "对话已经发生变化，请刷新后重试。"
+            );
+        }
+
+        String commandId = id("cmd");
+        long sequence = repository.nextEventSequence(conversationId);
+        ObjectNode conversation = objectMapper.createObjectNode();
+        conversation.put("conversationId", conversationId);
+        conversation.put("archived", request.archived());
+        conversation.put("updatedAt", now.toString());
+        conversation.put("version", version);
+        ConversationEvent event = event(
+                id("evt"),
+                "conversation.updated",
+                conversationId,
+                null,
+                null,
+                null,
+                sequence,
+                "conversation",
+                conversationId,
+                commandId,
+                commandId,
+                now,
+                payload("conversation", conversation)
+        );
+        repository.insertEvent(event);
+
+        ArchiveConversationResponse response =
+                new ArchiveConversationResponse(
+                        conversationId,
+                        request.archived(),
+                        version,
+                        now,
+                        event.eventId()
+                );
+        repository.insertIdempotency(
+                conversationId,
+                ARCHIVE_ENDPOINT,
+                idempotencyKey,
+                requestHash,
+                HttpStatus.OK.value(),
+                write(response),
+                now
+        );
+        return new ArchiveResult(response, List.of(event));
     }
 
     private BranchResult createBranchOnce(
@@ -928,6 +1052,12 @@ public final class ConversationCommandService {
 
     private record RenameResult(
             RenameConversationResponse response,
+            List<ConversationEvent> events
+    ) {
+    }
+
+    private record ArchiveResult(
+            ArchiveConversationResponse response,
             List<ConversationEvent> events
     ) {
     }

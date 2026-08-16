@@ -132,7 +132,7 @@ public class ConversationQueryRepository {
                         LIMIT 1
                     ) AS last_visible_text
                 FROM iris_conversation c
-                WHERE 1 = 1
+                WHERE c.archived_at IS NULL
                 """ + cursorClause + """
                 ORDER BY c.updated_at DESC, c.conversation_id DESC
                 LIMIT :limit

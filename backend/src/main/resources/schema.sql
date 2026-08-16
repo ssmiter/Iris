@@ -325,7 +325,9 @@ CREATE TABLE IF NOT EXISTS iris_conversation (
     title TEXT,
     version INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- 归档只是从列表收起，历史照常完整保留（不变量 1）；恢复时清空回 NULL。
+    archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_branch (

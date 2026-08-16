@@ -524,6 +524,31 @@ public class ConversationRepository {
         return expectedVersion + 1;
     }
 
+    public long updateConversationArchived(
+            String conversationId,
+            long expectedVersion,
+            boolean archived,
+            Instant now
+    ) {
+        int updated = jdbc.sql("""
+                UPDATE iris_conversation
+                SET archived_at = :archivedAt,
+                    version = version + 1,
+                    updated_at = :now
+                WHERE conversation_id = :conversationId
+                  AND version = :expectedVersion
+                """)
+                .param("archivedAt", archived ? now.toString() : null)
+                .param("now", now.toString())
+                .param("conversationId", conversationId)
+                .param("expectedVersion", expectedVersion)
+                .update();
+        if (updated == 0) {
+            return -1;
+        }
+        return expectedVersion + 1;
+    }
+
     public long nextEventSequence(String conversationId) {
         return jdbc.sql("""
                 SELECT COALESCE(MAX(sequence), 0) + 1

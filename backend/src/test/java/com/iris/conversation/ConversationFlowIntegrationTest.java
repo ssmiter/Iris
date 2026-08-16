@@ -29,6 +29,7 @@ import com.iris.conversation.domain.ConversationCommands.TurnInput;
 import com.iris.conversation.domain.ConversationEvent;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.ApprovalDecision;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
@@ -389,6 +390,60 @@ class ConversationFlowIntegrationTest {
 
     private static String uniqueKey(String prefix) {
         return prefix + "-" + UUID.randomUUID();
+    }
+
+    @Test
+    void archivesConversationOutOfListWithoutLosingHistory() {
+        var created = commands.createConversation(
+                uniqueKey("create"),
+                new CreateConversationRequest("要归档的对话")
+        );
+        String conversationId = created.conversationId();
+        long version = queries.view(conversationId, null, null, 50)
+                .block(Duration.ofSeconds(5))
+                .version();
+
+        String staleKey = uniqueKey("archive-stale");
+        assertThatThrownBy(() -> commands.archiveConversation(
+                conversationId,
+                staleKey,
+                new ArchiveConversationRequest(version + 9, true)
+        ))
+                .isInstanceOf(ApiProblemException.class)
+                .extracting("status.value")
+                .isEqualTo(409);
+
+        String archiveKey = uniqueKey("archive");
+        var archived = commands.archiveConversation(
+                conversationId,
+                archiveKey,
+                new ArchiveConversationRequest(version, true)
+        );
+        var replayed = commands.archiveConversation(
+                conversationId,
+                archiveKey,
+                new ArchiveConversationRequest(version, true)
+        );
+
+        // 幂等重放返回原响应；归档从列表视野消失，投影与历史仍可凭 ID 读取
+        assertThat(replayed).isEqualTo(archived);
+        assertThat(archived.archived()).isTrue();
+        assertThat(archived.version()).isEqualTo(version + 1);
+        assertThat(queries.list(null, 30).block(Duration.ofSeconds(5)).items())
+                .noneMatch(summary ->
+                        summary.conversationId().equals(conversationId));
+        assertThat(queries.view(conversationId, null, null, 50)
+                .block(Duration.ofSeconds(5))).isNotNull();
+
+        var restored = commands.archiveConversation(
+                conversationId,
+                uniqueKey("restore"),
+                new ArchiveConversationRequest(archived.version(), false)
+        );
+        assertThat(restored.archived()).isFalse();
+        assertThat(queries.list(null, 30).block(Duration.ofSeconds(5)).items())
+                .anyMatch(summary ->
+                        summary.conversationId().equals(conversationId));
     }
 
     private record TestToolContext(

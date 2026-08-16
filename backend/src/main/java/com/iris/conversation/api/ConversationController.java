@@ -17,6 +17,8 @@ import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
 import com.iris.conversation.domain.ConversationViews.RenameConversationResponse;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationResponse;
 import com.iris.agent.run.AgentRunLauncher;
 import com.iris.agent.model.CompactionLauncher;
 import com.iris.agent.model.CompactionRepository;
@@ -103,6 +105,20 @@ public class ConversationController {
             @RequestBody RenameConversationRequest request
     ) {
         return Mono.fromCallable(() -> commands.renameConversation(
+                        conversationId,
+                        idempotencyKey,
+                        request
+                ))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @PostMapping("/conversations/{conversationId}/archive")
+    public Mono<ArchiveConversationResponse> archiveConversation(
+            @PathVariable String conversationId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody ArchiveConversationRequest request
+    ) {
+        return Mono.fromCallable(() -> commands.archiveConversation(
                         conversationId,
                         idempotencyKey,
                         request

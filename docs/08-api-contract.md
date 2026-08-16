@@ -410,6 +410,27 @@ Idempotency-Key: rename-opaque
 
 只允许明确列出的 metadata 字段。Provider、Branch 或历史不能通过这个 endpoint 修改。
 
+### 4.5 归档与恢复
+
+```http
+POST /api/v1/conversations/{conversationId}/archive
+Idempotency-Key: archive-opaque
+```
+
+```json
+{
+  "expectedVersion": 7,
+  "archived": true
+}
+```
+
+归档只是把对话从列表默认视野收起（`list` 过滤 `archived_at IS NULL`），
+全部历史、事件与产物原样保留——历史不可丢是不变量，"删除对话"在产品里
+只有这一种形态。`archived: false` 恢复。归档中的对话仍可凭 ID 打开投影。
+
+归档产生 `conversation.updated` 事件（payload 带 `archived` 字段），
+在线窗口据此把条目移出列表；归档当前打开的会话时，前端先切走再提交。
+
 ## 5. Turn 与运行命令
 
 ### 5.1 提交自然语言 Turn

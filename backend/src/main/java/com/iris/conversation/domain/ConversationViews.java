@@ -204,4 +204,19 @@ public final class ConversationViews {
             String eventCursor
     ) {
     }
+
+    public record ArchiveConversationRequest(
+            long expectedVersion,
+            boolean archived
+    ) {
+    }
+
+    public record ArchiveConversationResponse(
+            String conversationId,
+            boolean archived,
+            long version,
+            Instant updatedAt,
+            String eventCursor
+    ) {
+    }
 }
