@@ -1,0 +1,43 @@
+name: wait_browser_page
+kind: process
+description: 等待页面变化、加载完成或出现指定文本，并只返回最终页面观察；动作触发异步 UI 时使用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    after_observation_ref:
+      type: string
+      description: 作为基线的最近页面观察 ref（必填）
+    condition:
+      type: string
+      enum: [change, ready, text]
+      description: 等待条件，默认 change；text 必须带 text 参数
+    text:
+      type: string
+      description: condition=text 时要等待出现的文本
+    timeout_ms:
+      type: integer
+      minimum: 250
+      maximum: 15000
+      description: 最长等待毫秒数，默认 5000
+  required: [session_id, page_id, after_observation_ref]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 20000
+  max_result_chars: 80000
+search_hint: 浏览器 等待 加载 变化 异步

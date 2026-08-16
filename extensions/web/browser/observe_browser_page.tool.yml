@@ -1,0 +1,50 @@
+name: observe_browser_page
+kind: process
+description: 按交互、页面搜索或阅读目的观察存活页面；返回有界事实和本 revision 内可用的短期元素引用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 可选 BrowserPage ID；缺省观察会话当前活动页
+    purpose:
+      type: string
+      enum: [interact, search, read]
+      description: 观察目的，默认 interact；search 必须带 search_query，read 返回更多正文
+    search_query:
+      type: string
+      description: purpose=search 时的页面内检索词（1-500 字符）
+    max_text_characters:
+      type: integer
+      minimum: 1000
+      maximum: 80000
+      description: 正文字符上限；默认 interact 8000 / read 24000
+    max_elements:
+      type: integer
+      minimum: 1
+      maximum: 500
+      description: 交互元素上限；默认 interact 160 / search 80 / read 40
+    max_matches:
+      type: integer
+      minimum: 1
+      maximum: 50
+      description: search 命中上限，默认 20
+  required: [session_id]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 50000
+  max_result_chars: 80000
+search_hint: 浏览器 观察 页面 元素 搜索 阅读

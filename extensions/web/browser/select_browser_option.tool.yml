@@ -1,0 +1,38 @@
+name: select_browser_option
+kind: process
+description: 选择当前页面观察中原生下拉框的一个可用 option，并返回重读后的页面观察；使用 observation 提供的 option value
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    observation_ref:
+      type: string
+      description: 最近一次页面观察 ref；动作仅在页面仍处于该观察时执行
+    element_ref:
+      type: string
+      description: 同一 observation 中的原生 select 元素 ref
+    value:
+      type: string
+      description: observation 中该下拉框 option 的 value 字符串
+  required: [session_id, page_id, observation_ref, element_ref, value]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将在浏览器会话 {session_id} 页面 {page_id} 的下拉框 {element_ref} 中选择 value={value}；仅当页面仍处于观察 {observation_ref} 时执行，随后重读确认
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 下拉框 选择 option select

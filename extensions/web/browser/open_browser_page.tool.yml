@@ -1,0 +1,29 @@
+name: open_browser_page
+kind: process
+description: 在现有 BrowserSession 中打开并激活一个新网页，同时保留旧页面；用于多来源检索、对照和需要随时切回原页的任务
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    url:
+      type: string
+      description: 目标 http/https URL 或 about:blank
+  required: [session_id, url]
+  additionalProperties: false
+risk:
+  level: standard
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将在浏览器会话 {session_id} 中打开新页面 {url} 并激活，旧页面保留
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 新页面 标签 打开 多标签

@@ -9,8 +9,8 @@ WebBridge 是一个独立的本地守护进程（daemon），通过 CDP（Chrome
 
 ```
 对话："帮我把简历填到这个网申页面"
-  → 模型调用 webbridge_* 工具
-  → 后端转发给 daemon（127.0.0.1:19223，仅本机）
+  → 模型调用 webbridge_* 工具（内建插件 extensions/web/browser/ 提供）
+  → 插件进程直连 daemon（127.0.0.1:19223，仅本机）
   → daemon 操作真实 Chrome
   → 页面状态/截图/结果回流，嵌入对话瀑布流
 ```
@@ -121,11 +121,14 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 | `upload_browser_file(sessionId, pageId, observationRef, elementRef, workspacePath)` | 将工作区围栏内的现有文件设置到真实 file input；模型与历史只保留逻辑路径 |
 | `select_browser_option(sessionId, pageId, observationRef, elementRef, value)` | 使用观察中真实 option value 选择原生下拉项，不让模型猜 label |
 | `press_browser_key(sessionId, pageId, observationRef, key, elementRef?)` | 向当前页或观察中的字段发送一个受限键盘键；用于 Enter、Escape、Tab 和方向键，不接受任意快捷键脚本 |
-| `capture_browser_screenshot(sessionId, pageId)` | 截取当前页面为二进制 Managed Object，只回传对象引用和图像 metadata |
+| `capture_browser_screenshot(sessionId, pageId, workspacePath, format?)` | 截取当前页面，图像字节由插件写入工作区围栏内声明路径，只回传路径、图像 metadata 与内容 hash 自证 |
 | `wait_browser_page(sessionId, pageId, afterObservationRef, condition)` | 在 daemon 内等待异步页面条件，只返回最终观察，避免轮询污染上下文 |
 | `inspect_browser_action(sessionId, toolExecutionId)` | 响应丢失后读取同一幂等动作结果，绝不生成第二次点击 |
-| `request_browser_takeover(sessionId, pageId, observationRef, reason, instructions)` | 为当前可见页面创建持久人工接管 Attention；用户完成或跳过后，同一 ToolCall 返回决定并在继续时重新观察 |
 | `close_browser_session(sessionId)` | 显式回收会话与页面 handle；历史观察仍由 Backend 保存 |
+
+人工接管不再是浏览器原语：接管是跨轮的用户决策，由内核持久 `ask_user` 形成
+Attention，用户交还后用 `observe_browser_page` 重新观察页面再继续（见 §3 末与
+docs/31 §11 M3a）。
 
 设计要点：
 
@@ -134,7 +137,7 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 - **失败必须表达副作用边界**：元素已消失、已禁用、字段类型不支持等可在动作前确定的失败
   返回 `not_applied`；只有动作已经派发而后续确认中断时才返回 `outcome_unknown`。模型据此
   决定纠参还是先核对，不能把所有异常都当成“可能已经点击”。
-- Backend Connector 保留这一语义：daemon 的 4xx 表示本次请求在提交边界前被拒绝，进入
+- 插件保留这一语义：daemon 的 4xx 表示本次请求在提交边界前被拒绝，进入
   Tool Runtime 时标记为无操作效果；5xx、断连和动作派发后的验证失败仍保持 unknown，不能
   因为 HTTP 封装丢掉客观事实。
 - **观察引用是水位线**：动作可以声明 `expectedObservationRef`；若页面已经变化，daemon
@@ -143,17 +146,20 @@ Iris 不把四层同时塞进每一轮。`observe_browser_page` 明确声明 `pu
 - **定位器留在 Runtime**：模型只消费 ref 与 role/label/context；daemon 在该 Observation
   内保存可穿过开放 Shadow Root/同源 frame 的 locator path。页面改版后重新观察，不让模型
   猜 CSS/XPath，也不把 locator 当成跨 revision 的永久身份。
-- **风险由实际动作提升**：通用 click/fill/select/press 的 `prepare` 必须结合目标元素、页面语义和动作批次重新分类，风险只能维持或提升，不能把“点击最终提交”按一个普通 click 降级；无法判断时默认需要审批。
+- **风险由清单静态声明，元素语义在执行时核验**：插件没有 prepare/execute 分界，审批
+  影响陈述只使用输入参数占位（`{session_id}`、`{element_ref}` 等）；元素解析与页面语义
+  核验（字段类型白名单、option 核对、受限键表）随执行进行，无法通过核验的动作以
+  `not_applied` 如实返回，不能靠审批阶段的元素描述放行。
 - **敏感输入不是普通字符串**：当前内核还没有 secret handle 时，`fill_browser_field`
   明确拒绝 password、file 和不可安全重读的字段。以后由凭据对象/人工接管提供值，不能
   先把密码作为 Tool 参数写进对话和 Operation Snapshot。
-- **上传跨两个客观环境**：`upload_browser_file` 的参数只接受工作区逻辑路径。Backend 在
-  prepare 与 execute 时分别经过 `WorkspacePathGuard`，Operation Snapshot 不保存绝对路径；
-  daemon 只在已审批动作中取得物理路径，用 CDP 设置当前 Observation 的 file input，并以
-  文件名、大小和动作后观察验证。网页永远不能反向指定本机任意路径。
-- **截图不走 Base64 JSON**：daemon 返回原始图像字节，Backend 直接写入 Managed Object
-  Store；Tool observation 只含 `objectRef/contentHash/mediaType/byteCount`。这样大图不会
-  穿过模型文本上下文，也不会被 Frontend 重复缓存。
+- **上传跨两个客观环境**：`upload_browser_file` 的参数只接受工作区逻辑路径。插件在
+  执行时经路径围栏解析物理路径，结果帧不携带绝对路径；daemon 用 CDP 设置当前
+  Observation 的 file input，并以文件名、大小和动作后观察验证。网页永远不能反向指定
+  本机任意路径。
+- **截图不走 Base64 JSON**：daemon 返回原始图像字节，浏览器插件直接写入工作区围栏内
+  的声明路径；Tool observation 只含 `workspacePath/contentHash/mediaType/byteCount`。
+  这样大图不会穿过模型文本上下文，也不会被 Frontend 重复缓存。
 - **批处理不是默认捷径**：只有多个动作共享同一份已验证 observation、前置条件彼此独立，
   且 Runtime 能在页面变化时停止剩余动作，才可形成有界 batch。首版仍保持一个动作一份
   新观察，先保证正确性与可恢复性。
@@ -206,22 +212,17 @@ Backend 必须原样保留 daemon 返回的动作身份、结果状态和有界�
 
 ## 4. 人工接管（Takeover）
 
-- 模型遇到登录/验证码/支付确认时，发起 takeover 请求 → Backend 持久化 Attention → 对话中出现"需要人工操作"卡片 → 用户在真实窗口完成 → 提交明确“已完成”命令 → Backend 重新观察后继续；
+- 模型遇到登录/验证码/支付确认时，用内核持久 `ask_user` 形成 Attention → 对话中出现
+  "需要人工操作"卡片 → 用户在真实窗口完成 → 提交明确“已完成”回答 → Agent 用
+  `observe_browser_page` 重新观察后继续；
 - 用户界面不轮询；如果模型需要判断页面变化，调用受预算的只读页面观察原语，daemon 进度先进入 Backend 事件再经 Conversation SSE 投影；
 - **支付/提交类最终按钮永远默认走接管**，即使在工作流里（可在工作流中标记哪些步骤必须人工确认）。
 
-接管不是 daemon 内部的等待循环，也不是一个返回 `success=true` 的同步 Tool。Browser
-ToolExecution 进入 `awaiting_attention` 后释放执行线程；用户完成操作并响应
-`takeover_completed`，Backend 以同一 execution 恢复并立即创建一份新 Observation。用户
-可能改变任意页面状态，因此接管前的 element ref、fingerprint 和 expected observation
-全部作废。
-
-`request_browser_takeover` 复用通用 UserInput/Attention Runtime：Iris 保留可见 Session，给出
-最小人工操作清单；ToolExecution 持久停在 `awaiting_input`，不占用等待线程。用户在 Edge 中
-完成或选择跳过后，同一 ToolCall 恢复；选择继续时 Backend 立即重新观察指定 Page，把用户
-决定和新页面事实一起作为 observation 返回。Session 已失效也如实成为可恢复失败，不能把
-“用户点了完成”直接当成页面成功证据。通用 `ask_user` 仍用于非浏览器的关键选择，二者共用
-一套 Attention 状态机而不是各自实现等待逻辑。
+接管不是 daemon 内部的等待循环，也不是一个返回 `success=true` 的同步 Tool，更不是
+浏览器域的特例工具。`ask_user` 的 ToolExecution 持久停在 `awaiting_input` 并释放执行
+线程，用户决定可跨内核重启存活；用户可能改变任意页面状态，因此接管前的 element ref、
+fingerprint 和 expected observation 全部作废，恢复后必须重新观察。Session 已失效也
+如实成为可恢复失败，不能把“用户点了完成”直接当成页面成功证据。
 
 ## 5. 安全模型
 
@@ -236,11 +237,10 @@ ToolExecution 进入 `awaiting_attention` 后释放执行线程；用户完成�
 - 结束后：舞台收拢为一枚 chip（"操作了 3 个页面 · 42s"），点击可回看；
 - 失败：断点截图 + 模型自诊断（"在'上传附件'步骤找不到文件选择器"）。
 
-第一步不引入一条绕过对话内核的实时画面通道。截图仍先经过 Tool Runtime 写入
-Managed Object Store，再由后端把安全的预览地址和少量 metadata 投影到对应 ToolNode。
-Frontend 只有在用户展开该节点时才请求、解码图像；折叠状态与历史轮次只保留引用。
-预览接口必须用 `conversationId + toolExecutionId` 校验归属，不向前端暴露对象仓物理路径
-或可任意读取的 `objectRef`。这样视觉证据、历史回放和懒加载共用一套持久语义，同时不让
+第一步不引入一条绕过对话内核的实时画面通道。截图字节由浏览器插件写入工作区围栏内
+的声明路径，路径与图像 metadata 随通用 structured 结果投影到对应 ToolNode。
+Frontend 展开该节点时按工作区文件常规链路请求预览；折叠状态与历史轮次只保留路径
+引用。这样视觉证据、历史回放和懒加载共用一套持久语义，同时不让
 Frontend 成为第二个浏览器执行器。
 
 ## 7. 技术选型权衡
@@ -251,9 +251,9 @@ Frontend 成为第二个浏览器执行器。
 | Node.js + Playwright | API 成熟、等待/定位开箱即用 | 多一层依赖 |
 | **Java + Playwright**（并入后端，无独立 daemon） | 少一个进程，统一语言 | 打包体积大（浏览器驱动），Playwright Java 的 CDP 高级用法略绕 |
 
-当前冻结边界：**独立 `webbridge-daemon`、回环监听、本机令牌、Backend Connector
+当前冻结边界：**独立 `webbridge-daemon`、回环监听、本机令牌、浏览器插件进程
 唯一调用方**。首个 adapter 使用 Node + CDP 验证真实“借窗”、状态与幂等动作；实现仍可
-替换，Backend 私有协议和 Tool 语义不依赖 CDP。不能为了少一个进程让 Frontend 直连
+替换，插件私有协议和 Tool 语义不依赖 CDP。不能为了少一个进程让 Frontend 直连
 浏览器，也不能让 daemon 拥有 Conversation、Pipeline 或审批真相。
 
 Windows 默认浏览器实现优先发现 Microsoft Edge，再回退到 Chrome/Chromium；用户显式配置
@@ -263,7 +263,7 @@ Windows 默认浏览器实现优先发现 Microsoft Edge，再回退到 Chrome/C
 
 ## 8. Runtime 生命周期与持久化边界
 
-- Runtime Definition 来自本机配置，稳定 `runtime_id` 进入 Capability observation，地址与
+- Runtime Definition 来自插件自有的 `runtimes.json`，稳定 `runtime_id` 进入 Capability observation，地址与
   bearer token 永不进入模型上下文；
 - 单一可用 Runtime 自动成为默认；多 Runtime 场景由本机配置声明默认对象。只有默认缺失、
   用户要求定向或需要诊断时，模型才读取 Runtime 目录；健康检查始终由 Backend preflight
@@ -281,14 +281,15 @@ Windows 默认浏览器实现优先发现 Microsoft Edge，再回退到 Chrome/C
   并按同一 profile 自动重启，不能让健康接口长期报告假 ready；
 - daemon 重启后历史仍可读，但旧 Session 明确失效；模型发现 unavailable reason 后可以
   重开会话或请求用户启动浏览器，而不是无限重试；
-- 页面正文、元素和截图受预算约束；完整大对象经 Tool Runtime 落 Managed Object Store，
-  Frontend 默认只渲染摘要，需要时再按引用读取。
+- 页面正文、元素和截图受预算约束；截图字节由插件落工作区文件，Frontend 默认只渲染
+  摘要，需要时再按路径读取。
 - daemon 每个 Session 只保留最近 256 条动作幂等结果，足以覆盖响应丢失后的即时恢复，又
   避免几百次动作把完整 Observation 常驻内存；Backend 的持久 ToolCall/Evidence 历史不受
   该运行时窗口影响。
 
-本地开发时，daemon 和 Backend 使用同一个高熵 token，但分别从进程环境和被 Git 忽略
-的本机配置读取：
+本地开发时，daemon 和浏览器插件使用同一个高熵 token，但分别从进程环境和被 Git 忽略
+的本机环境读取。连接配置的所有权在插件目录：`extensions/web/browser/runtimes.json`
+只写环境变量名，不落秘密本身：
 
 ```powershell
 $env:IRIS_BRIDGE_TOKEN = '<至少 24 字符的本机随机值>'
@@ -297,22 +298,25 @@ npm install
 npm start
 ```
 
-```yaml
-# backend/src/main/resources/application-local.yml（不提交）
-iris:
-  webbridge:
-    default-runtime-id: local_browser
-    runtimes:
-      local_browser:
-        title: 本机浏览器
-        description: Iris 专用的可见 Edge 会话，可由用户随时接管
-        base-url: http://127.0.0.1:19223
-        token: ${IRIS_BRIDGE_TOKEN}
-        protocol-version: 2
+```json
+// extensions/web/browser/runtimes.json（插件自有，可覆盖本机副本）
+{
+  "default_runtime": "local",
+  "runtimes": [
+    {
+      "id": "local",
+      "title": "本机浏览器",
+      "endpoint": "http://127.0.0.1:19223",
+      "token_env": "IRIS_BRIDGE_TOKEN",
+      "protocol_version": 1
+    }
+  ]
+}
 ```
 
-Backend 启动时还需激活 `local` profile。Windows 产品化后由 launcher 创建并向两个进程
-注入同一秘密；Frontend 不读取、不签发也不缓存 Runtime token。
+内核不再持有 `iris.webbridge.*` 配置；插件进程从自己的环境读取 token 并直连 daemon。
+Windows 产品化后由 launcher 创建并向两个进程注入同一秘密；Frontend 不读取、不签发
+也不缓存 Runtime token。
 
 ## 9. 杀手场景：秋招网申流水线
 

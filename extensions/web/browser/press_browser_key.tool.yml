@@ -1,0 +1,39 @@
+name: press_browser_key
+kind: process
+description: 在最近页面观察上向当前焦点或指定元素发送一个受限键盘键，并返回动作后观察；用于提交搜索、关闭弹窗、切换焦点和选择自动补全，不接受快捷键脚本或任意文本
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    observation_ref:
+      type: string
+      description: 最近一次页面观察 ref；动作仅在页面仍处于该观察时执行
+    key:
+      type: string
+      enum: [Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Backspace, Delete, Space]
+      description: 受限单键；组合键与任意文本不属于本原语
+    element_ref:
+      type: string
+      description: 可选目标元素 ref；缺省发送到页面当前焦点
+  required: [session_id, page_id, observation_ref, key]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将在浏览器会话 {session_id} 页面 {page_id} 发送按键 {key}；按键可能触发搜索、导航或表单动作，仅当页面仍处于观察 {observation_ref} 时执行
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 按键 回车 键盘 提交

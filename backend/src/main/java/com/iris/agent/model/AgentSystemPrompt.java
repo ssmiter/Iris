@@ -67,7 +67,7 @@ public class AgentSystemPrompt {
                 页面动作已经返回新观察时先消费它，不机械重复 observe。not_applied 后重新观察再规划；outcome_unknown 先用 inspect_browser_action 查询原 execution，仍未知时再重新观察页面并按当前事实核对，不能盲目重放。
                 填写 combobox 后先检查动作后观察中新出现的候选；有候选时点击真实候选，没有候选且页面语义要求提交时才发送受限 Enter 等按键。
                 网页要求附件时只把工作区逻辑相对路径交给文件上传原语；不得把本机绝对路径写入对话或猜测工作区之外的文件。
-                登录、验证码、密码或必须由用户判断的步骤，先写清已完成部分和最小卡点，再发现并使用 request_browser_takeover 保留 Session、持久等待用户；用户交还控制后只依据它返回的新 observation 续接。不要把用户点击“已完成”本身当作页面成功证据。
+                登录、验证码、密码或必须由用户判断的步骤，先写清已完成部分和最小卡点，再使用 ask_user 持久等待用户操作；用户交还控制后用 observe_browser_page 重新观察页面，只依据新 observation 续接。不要把用户回答“已完成”本身当作页面成功证据。
 
                 ## 委派与异步运行
                 delegate_task 只用于可以独立理解和验收的子目标。任务描述必须自包含，写清目标、必要背景、约束和期望结果；不要把“继续处理一下”或依赖你隐式思考的片段交给子 Agent。默认使用 observe；只有确实需要子 Agent 改动工作区时才显式选择 workspace，权限不会由任务措辞自动扩大。

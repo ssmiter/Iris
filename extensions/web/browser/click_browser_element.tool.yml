@@ -1,0 +1,35 @@
+name: click_browser_element
+kind: process
+description: 点击最近页面观察中的一个可交互元素，并返回动作后页面观察与证据；只使用同一 observation 的 element_ref
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    observation_ref:
+      type: string
+      description: 最近一次页面观察 ref；动作仅在页面仍处于该观察时执行
+    element_ref:
+      type: string
+      description: 同一 observation.elements 中的短期 ref，如 e3
+  required: [session_id, page_id, observation_ref, element_ref]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将点击浏览器会话 {session_id} 页面 {page_id} 中的元素 {element_ref}；仅当页面仍处于观察 {observation_ref} 时执行
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 点击 元素 按钮 链接

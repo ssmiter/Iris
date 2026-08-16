@@ -1,0 +1,4 @@
+label: 浏览器
+summary: 经本机 WebBridge daemon 驱动的会话化浏览器：页面观察、导航、交互与截图
+stats:
+  expose: [tool_count, success_rate_7d, p50_ms_7d]

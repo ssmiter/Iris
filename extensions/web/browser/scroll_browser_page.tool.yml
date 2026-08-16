@@ -1,0 +1,40 @@
+name: scroll_browser_page
+kind: process
+description: 移动当前 BrowserPage 的视口并返回滚动后的页面观察；用于查看当前视口之外的内容和交互元素
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    observation_ref:
+      type: string
+      description: 最近一次页面观察 ref；动作仅在页面仍处于该观察时执行
+    direction:
+      type: string
+      enum: [up, down, top, bottom]
+      description: 滚动方向或直达页首/页尾
+    amount:
+      type: integer
+      minimum: 100
+      maximum: 5000
+      description: up/down 时的像素量，默认 800
+  required: [session_id, page_id, observation_ref, direction]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 80000
+search_hint: 浏览器 滚动 视口 翻页

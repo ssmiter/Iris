@@ -1,0 +1,18 @@
+name: list_browser_runtimes
+kind: process
+description: 列出本机浏览器运行时及健康状态；需要定向选择、多 Runtime 判断或故障解释时使用，普通任务无需先调用
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 12000
+  max_result_chars: 12000
+search_hint: 浏览器 运行时 runtime 列表 健康 状态

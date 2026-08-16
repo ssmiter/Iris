@@ -1,0 +1,25 @@
+name: open_browser_session
+kind: process
+description: 创建一个可见、短期的本机浏览器会话并返回首份页面观察；普通任务自动选择默认 Runtime
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    url:
+      type: string
+      description: 可选初始 http/https URL；缺省打开空白页
+  additionalProperties: false
+risk:
+  level: standard
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将在本机浏览器创建一个可见会话；如提供 url 则打开 {url}，否则打开空白页
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 会话 创建 打开 session

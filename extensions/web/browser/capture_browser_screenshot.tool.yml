@@ -1,0 +1,44 @@
+name: capture_browser_screenshot
+kind: process
+description: 截取当前 BrowserPage 并保存为工作区内的图像文件，返回路径与图像 metadata；需要视觉证据时使用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    format:
+      type: string
+      enum: [jpeg, png]
+      description: 图像格式，默认 jpeg
+    quality:
+      type: integer
+      minimum: 30
+      maximum: 90
+      description: jpeg 质量（30-90），默认 70
+    full_page:
+      type: boolean
+      description: 是否截取整页而非可视区域，默认 false
+    workspace_path:
+      type: string
+      description: 截图保存的工作区相对路径，扩展名须与 format 一致（.jpg/.jpeg/.png），父目录须已存在
+  required: [session_id, page_id, workspace_path]
+  additionalProperties: false
+risk:
+  level: standard
+  side_effect: workspace_write
+approval:
+  mode: explicit
+  impact_statement: 将把浏览器会话 {session_id} 页面 {page_id} 的截图保存为工作区文件 {workspace_path}
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 50000
+  max_result_chars: 8000
+search_hint: 浏览器 截图 图像 证据 screenshot

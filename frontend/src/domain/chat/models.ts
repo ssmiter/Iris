@@ -164,17 +164,6 @@ export interface ToolNode extends RenderNodeBase {
   summary: string
   resultRef?: string
   evidenceSummary?: string
-  preview?: BrowserScreenshotPreview
-}
-
-export interface BrowserScreenshotPreview {
-  kind: 'browser_screenshot'
-  url: string
-  mediaType: 'image/jpeg' | 'image/png'
-  contentHash: string
-  byteCount: number
-  pageId: string
-  observationRef: string
 }
 
 export interface AttentionAction {
@@ -187,7 +176,7 @@ export interface AttentionNode extends RenderNodeBase {
   type: 'attention'
   status: 'waiting' | 'resolved' | 'expired' | 'cancelled'
   attentionId: string
-  subtype: 'approval' | 'clarification' | 'takeover' | 'auth'
+  subtype: 'approval' | 'clarification' | 'auth'
   impact: string
   actions: AttentionAction[]
   expiresAt?: string

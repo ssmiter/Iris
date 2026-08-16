@@ -19,7 +19,6 @@ import type {
 import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { ArtifactCard } from './ArtifactCard'
-import { BrowserScreenshotPreview } from './BrowserScreenshotPreview'
 import { ClampText } from './ClampText'
 import { ToolResultText } from './ToolResultText'
 
@@ -243,9 +242,6 @@ function NodeBody({
               )}
             {node.resultRef && (
               <ToolResultText resultRef={node.resultRef} expanded={expanded} />
-            )}
-            {expanded && node.preview?.kind === 'browser_screenshot' && (
-              <BrowserScreenshotPreview preview={node.preview} />
             )}
           </div>
         </ClampText>

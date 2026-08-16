@@ -1,0 +1,38 @@
+name: upload_browser_file
+kind: process
+description: 把工作区围栏内的一个现有文件设置到最近页面观察中的 file input，并返回动作后观察；用于上传简历、附件和表单材料，不接受绝对路径
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    observation_ref:
+      type: string
+      description: 最近一次页面观察 ref；动作仅在页面仍处于该观察时执行
+    element_ref:
+      type: string
+      description: 同一 observation 中的 file input 元素 ref
+    workspace_path:
+      type: string
+      description: 工作区内相对路径（≤128 MiB）；网页随后可读取并上传该文件内容
+  required: [session_id, page_id, observation_ref, element_ref, workspace_path]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将把工作区文件 {workspace_path} 设置到浏览器会话 {session_id} 页面 {page_id} 的文件字段 {element_ref}；网页随后可读取并上传该文件内容
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 120000
+  max_result_chars: 80000
+search_hint: 浏览器 上传 文件 附件 file input

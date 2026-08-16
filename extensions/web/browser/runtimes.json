@@ -1,0 +1,14 @@
+{
+  "comment": "Browser Runtime 注册表（插件自有配置，docs/31 §11 M3）：token 只写环境变量名；endpoint 必须是干净的 http://127.0.0.1 本机地址。默认条目对应 webbridge-daemon（npm start，:19223），daemon 与插件共读 IRIS_BRIDGE_TOKEN。",
+  "default_runtime": "local",
+  "runtimes": [
+    {
+      "id": "local",
+      "title": "本机浏览器",
+      "description": "本机 WebBridge daemon 驱动的 Chrome 会话",
+      "endpoint": "http://127.0.0.1:19223",
+      "token_env": "IRIS_BRIDGE_TOKEN",
+      "protocol_version": 1
+    }
+  ]
+}

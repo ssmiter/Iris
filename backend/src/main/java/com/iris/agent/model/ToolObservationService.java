@@ -197,14 +197,6 @@ public class ToolObservationService {
             );
         }
         if ("outcome_unknown".equals(phase)
-                && "browser_takeover_reobserve_failed".equals(errorCode)) {
-            return new Recovery(
-                    "recover_browser_session",
-                    true,
-                    "用户已经交还控制，但页面重读失败；先 list_browser_sessions，再观察仍存活页面，不要要求用户重复已经完成的操作"
-            );
-        }
-        if ("outcome_unknown".equals(phase)
                 && "postcondition_unknown".equals(errorCode)
                 && toolName != null
                 && toolName.contains("browser")) {

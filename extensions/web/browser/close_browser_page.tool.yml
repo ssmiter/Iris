@@ -1,0 +1,29 @@
+name: close_browser_page
+kind: process
+description: 关闭当前 BrowserSession 拥有的一个明确页面并保留其他页面；用于释放已完成的来源页或误开的标签，最后一页应关闭整个会话
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 要关闭的 BrowserPage ID
+  required: [session_id, page_id]
+  additionalProperties: false
+risk:
+  level: elevated
+  side_effect: internal_state
+approval:
+  mode: explicit
+  impact_statement: 将关闭浏览器会话 {session_id} 的页面 {page_id}；该页未保存的状态随之消失
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 80000
+search_hint: 浏览器 页面 标签 关闭

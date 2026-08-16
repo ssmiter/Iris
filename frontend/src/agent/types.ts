@@ -55,7 +55,7 @@ export interface AnswerNode extends NodeBase {
 
 export interface AttentionNode extends NodeBase {
   type: 'attention'
-  subtype: 'approval' | 'clarify' | 'takeover' | 'auth'
+  subtype: 'approval' | 'clarify' | 'auth'
   reason: string
   prompt?: string
   options?: string[]

@@ -212,13 +212,14 @@ Catalog 发现。这个集合只覆盖高频、跨任务且足以形成最小闭
 - 浏览器先选择 available Runtime，再继续 Session 或创建新 Session；Observation ref 是
   页面动作的短期水位线，元素 ref 不跨 revision；动作直接回流新 Observation 与 Evidence。
 - 普通文本填写绑定同一 Observation 并重读确认；password/file 等敏感字段在 secret handle
-  或人工接管闭环前 fail-close。截图进入二进制对象仓，只把 objectRef 放入文本上下文。
+  或人工接管闭环前 fail-close。截图写入工作区围栏内声明路径，只把路径与 metadata 放入
+  文本上下文。
 - 浏览器 `not_applied` 可以重新观察，`outcome_unknown` 必须先核验当前页面，不能换一个
   action attempt 盲目重放。
 - 异步 UI 用一次有界 `wait_browser_page` 在 daemon 内等待，只回流最终 Observation；
   点击打开新标签时采用动作结果的新 pageId，不继续操作旧页面身份。
-- 当前轻量接管通过普通对话边界完成：保留 Session，告诉用户在可见窗口操作并在完成后
-  回复；下一 Turn 先列出存活 Session 并重新观察，不把旧 element ref 或等待过程带入上下文。
+- 接管通过持久 `ask_user` 完成：写清已完成部分与最小卡点，告诉用户在可见窗口操作并在
+  完成后回答；恢复后先重新观察页面，不把旧 element ref 或等待过程带入上下文。
 
 浏览器更高阶的定位、点击、填写、截图和接管只有在各自 observation、风险、证据与
 恢复链闭合后才进入本节；“daemon 已连接”不等于所有网页动作都已经存在。

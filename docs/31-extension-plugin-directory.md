@@ -326,10 +326,38 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   围栏与 cancel 帧杀子进程；输入只引用工作区文件，**不进入内核
   Checkpoint/Artifact 体系**（跨进程插件的自证就是 result 帧，docs/04 §2）；
   内核 `sandbox` 包与 `iris.sandbox.python.*` 配置随之删除；
-- **M3**：`/web/browser` 外移（依赖 §3.2 共享进程 + JDK HttpClient 直连
-  webbridge daemon，无新增运行时）；`/data/sql` 外移（连接配置所有权先从内核
-  配置搬进插件目录，再谈外移）；`/industry/mes` 演示域**不做迁移**——现有工具
-  是读内核 demo 库的演示实现，直接按最终形态在内建拓展根重写（插件自带演示库
-  并自播种），旧内核工具届时删除；演示内容属内容工程而非机制工程；
+- **M3a（已落地）**：`/web/browser` 外移为内建共享进程插件
+  `extensions/web/browser/`——19 个 process 清单共享一个 `Browser.java`
+  常驻进程（§3.2，entry 逐字一致 `{javaBin} {pluginDir}/Browser.java`），
+  JDK HttpClient 直连 webbridge daemon，无新增运行时。**daemon 协议所有权
+  整体搬进插件**：endpoint/协议版本/健康检查（3s 缓存）、Bearer token
+  （runtimes.json 只写环境变量名，默认 `IRIS_BRIDGE_TOKEN`，与 daemon
+  同源共读）、幂等三键（invoke `callId` = 内核 executionId 即
+  idempotencyKey，`actionAttemptId = callId:<primitive>`）、动作三态
+  （applied / not_applied / outcome_unknown）如实投影为 result 帧，
+  `resolveElement` 前置校验（fill 的字段类型白名单、select 的 option
+  核对、press 的受限键表、upload 的 file input 核对）随执行进行——
+  插件无 prepare/execute 分界，审批影响陈述只用输入参数占位。
+  `runtimes.json` 是插件自有配置（连接配置所有权归插件目录），内核
+  `iris.webbridge.*` 配置随之删除。截图字节由插件写入工作区围栏内声明
+  路径（`workspace_path`，扩展名须与 format 一致），自证 = 内容 hash 随
+  structuredData 返回，内核 BrowserScreenshot* 投影链（Controller /
+  Service / ProjectionEnricher）随之删除。**人工接管不是浏览器原语**：
+  旧 `request_browser_takeover` 不外移——其值在内核持久 UserInput
+  （暂停可跨重启），插件协议承载不了；最终形态是组合：
+  `/system/interaction/ask_user` 暂停任务 → 用户交还后
+  `observe_browser_page` 重读页面再继续，不为浏览器域保留特例工具。
+  取消语义：cancel 帧中止在途 HTTP（sendAsync future cancel），进程
+  EOF 时取消并等待在途调用写出结果帧再退出。内核侧删除
+  `tools/web/browser/`（20 个工具类）与 `webbridge` 包；
+  前端 `browser_screenshot` 预览卡分支随之删除（插件结果走通用
+  structured 投影，专门卡片随前端管理页统一重做）；
+- **M3b（待做）**：`/data/sql` 外移为内建插件——连接配置所有权先搬进插件目录
+  （插件自有 `connections.yml`，只写环境变量名引用凭据，与 `runtimes.json`
+  同一归属公理）；词法只读分析器随插件走，内核不再内置 SQL 方言知识；
+  `iris.sql.connections` 配置随之删除；
+- **M3c（待做）**：`/industry/mes` 演示域按最终形态重写为内建插件——插件自带
+  演示库并自播种（不依赖内核迁移脚本），删除旧内核 demo 工具类与
+  `IndustrialDemoRepository`；演示数据不再是内核 schema 的一部分；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

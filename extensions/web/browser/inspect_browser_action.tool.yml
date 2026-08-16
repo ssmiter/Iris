@@ -1,0 +1,28 @@
+name: inspect_browser_action
+kind: process
+description: 按原 Tool execution ID 读取 daemon 已保存的浏览器动作结果，不再次执行动作；上次动作 outcome_unknown 时使用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 原动作所在的短期 BrowserSession ID
+    tool_execution_id:
+      type: string
+      description: outcome_unknown 结果中的 executionId（也是原动作的 idempotency key）
+  required: [session_id, tool_execution_id]
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 15000
+  max_result_chars: 80000
+search_hint: 浏览器 动作 结果 查询 幂等 outcome_unknown

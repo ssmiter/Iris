@@ -1,0 +1,35 @@
+name: navigate_browser_page
+kind: process
+description: 让指定 BrowserPage 导航到一个网页，并在同一结果中返回动作状态、新页面观察与证据；需要打开链接时使用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 当前 BrowserPage ID
+    url:
+      type: string
+      description: 目标 http/https URL 或 about:blank
+    expected_observation_ref:
+      type: string
+      description: 建议传入的最近页面观察 ref；页面已变化时动作安全地 not_applied
+  required: [session_id, page_id, url]
+  additionalProperties: false
+risk:
+  level: standard
+  side_effect: external_write
+approval:
+  mode: explicit
+  impact_statement: 将把浏览器会话 {session_id} 的页面 {page_id} 导航到 {url}
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 60000
+  max_result_chars: 80000
+search_hint: 浏览器 导航 打开 链接 跳转 url

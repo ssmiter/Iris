@@ -1,0 +1,21 @@
+name: list_browser_sessions
+kind: process
+description: 列出指定浏览器运行时仍存活的短期会话、活动页面和会话拥有的多标签页面；需要续接网页任务、切回旧页或判断会话是否失效时使用
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+  additionalProperties: false
+risk:
+  level: read_only
+  side_effect: none
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 12000
+  max_result_chars: 16000
+search_hint: 浏览器 会话 session 列表 续接 存活

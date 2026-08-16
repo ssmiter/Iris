@@ -1,0 +1,28 @@
+name: switch_browser_page
+kind: process
+description: 切换到当前 BrowserSession 已拥有的另一个页面并返回新的交互观察；用于多标签检索和比对，不能接管会话之外的浏览器标签
+input_schema:
+  type: object
+  properties:
+    runtime_id:
+      type: string
+      description: 可选定向 Runtime ID；缺省由默认 Runtime 解析
+    session_id:
+      type: string
+      description: 当前短期 BrowserSession ID
+    page_id:
+      type: string
+      description: 要切换到的 BrowserPage ID（必须属于该会话）
+  required: [session_id, page_id]
+  additionalProperties: false
+risk:
+  level: standard
+  side_effect: internal_state
+approval:
+  mode: auto
+runtime:
+  entry: ["{javaBin}", "{pluginDir}/Browser.java"]
+limits:
+  timeout_ms: 30000
+  max_result_chars: 80000
+search_hint: 浏览器 切换 标签 页面 激活

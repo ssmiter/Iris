@@ -457,9 +457,15 @@ normalize → validate → durable claim → prepare → snapshot
 | `/web/browser/upload_browser_file` | `upload_browser_file` | 将工作区围栏内现有文件上传到观察中的 file input；绝对路径不进入模型或持久历史 |
 | `/web/browser/select_browser_option` | `select_browser_option` | 使用 Observation 给出的 option value 修改原生下拉框并重读 |
 | `/web/browser/press_browser_key` | `press_browser_key` | 向当前页或观察内元素发送受限单键，覆盖 Enter、Escape、Tab 与方向导航，不开放任意脚本 |
-| `/web/browser/capture_browser_screenshot` | `capture_browser_screenshot` | 图像字节直接进入 Managed Object Store，模型只接收稳定对象引用与 metadata |
+| `/web/browser/capture_browser_screenshot` | `capture_browser_screenshot` | 截图字节由插件写入工作区围栏内声明路径，模型只接收路径与图像 metadata |
 | `/web/browser/inspect_browser_action` | `inspect_browser_action` | 按原 execution/idempotency identity 读取 daemon 动作日志，不产生第二次动作 |
 | `/web/browser/close_browser_session` | `close_browser_session` | 显式释放短期 Session/Page handle；历史 Observation 与 ToolCall 仍保留 |
+
+`/web/browser` 整个子树由 bundled 插件 `extensions/web/browser/` 提供：19 个 manifest
+共享一个 `kind: process` 常驻进程，daemon 协议、runtime 清单（`runtimes.json`）与
+令牌解析全部归插件目录所有，内核只负责发现、审批与调用转发。浏览器没有独立的
+“人工接管”原语——接管是跨轮的用户决策，由内核持久化的 `ask_user` 加上
+`observe_browser_page` 观察组合表达，见 docs/31 §11 M3a。
 
 - 按连接标识路由到对应数据源（demo SQLite / 个人 PostgreSQL）；
 - 只读账号连接外部库（数据库层兜底，不只靠应用层）。

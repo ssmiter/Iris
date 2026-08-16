@@ -2,7 +2,7 @@
 
 > 状态：大陆 0 / 节点 0.4 契约定稿候选
 >
-> 范围：定义 Frontend 与 Java Backend 的 REST 命令、读模型和 SSE 投影，以及 Backend 与 WebBridge 的私有边界。本文不冻结数据库列，不是 OpenAPI 生成文件。
+> 范围：定义 Frontend 与 Java Backend 的 REST 命令、读模型和 SSE 投影，以及浏览器插件与 WebBridge daemon 的私有边界。本文不冻结数据库列，不是 OpenAPI 生成文件。
 >
 > 总体职责见 [02 · Iris 总体架构](02-architecture-overview.md)。
 
@@ -899,7 +899,6 @@ precondition failure。澄清成功后更新同一 Attention，并恢复被它�
 clarification_answer
 manual_verification_confirmed_applied
 manual_verification_confirmed_not_applied
-takeover_completed
 cancel
 ```
 
@@ -1470,9 +1469,11 @@ outcome_unknown
 projection_version_unsupported
 ```
 
-## 13. Backend 与 WebBridge 私有契约
+## 13. 浏览器插件与 WebBridge 私有契约
 
-该 API 不暴露给 Frontend，只监听 `127.0.0.1`，每次请求携带 Backend 启动时协商的本机令牌。
+该 API 不暴露给 Frontend，只监听 `127.0.0.1`。它是内建插件 `extensions/web/browser/`
+与 daemon 之间的私有边界：令牌从插件进程环境读取（`runtimes.json` 只写环境变量名），
+内核不持有 daemon 地址与令牌。
 
 首版最小原语：
 
@@ -1485,17 +1486,16 @@ POST /sessions/{sessionId}/elements/resolve
 POST /sessions/{sessionId}/screenshot
 POST /sessions/{sessionId}/actions
 GET  /sessions/{sessionId}/actions/{idempotencyKey}
-POST /sessions/{sessionId}/takeover
 DELETE /sessions/{sessionId}
 ```
 
-`elements/resolve` 是 Backend `prepare` 阶段使用的只读协议：输入当前
-`observationRef + elementRef`，只返回审批影响陈述所需的 tag/role/name/disabled 等安全
+`elements/resolve` 是动作执行前核验使用的只读协议：输入当前
+`observationRef + elementRef`，只返回 tag/role/name/disabled 等安全
 metadata，不返回 daemon 内部 selector。`GET .../actions/{idempotencyKey}` 只读回已落在
 当前 Session 幂等日志中的结果；不存在时明确 `not_found`，不得隐式执行。
 `screenshot` 返回 `image/jpeg` 或 `image/png` 原始字节，并通过响应 header 关联当前
-Page/Observation；禁止把图像包装成 Base64 JSON。Backend 收到后直接写 Managed Object
-Store，daemon 与 Frontend 都不创建第二份持久化缓存。
+Page/Observation；禁止把图像包装成 Base64 JSON。插件收到后直接写入工作区围栏内的
+声明路径，daemon 与 Frontend 都不创建第二份持久化缓存。
 
 `actions` 只接受单个或明确批次的浏览器原语，并冻结：
 
