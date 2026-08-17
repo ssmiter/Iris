@@ -1125,12 +1125,16 @@ GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/qu
   投影源，标题来自 `_directory.yml`；`stats` 是 `_directory.yml` 声明口径的实时值，
   未声明则为空表。
 - `items`：某目录下的对象清单。字段在 discovery card（§8.1）之外增加管理切面：
-  `origin`（kernel | extension | mcp | skill_store）、`sourceRoot`（拓展根 / MCP
+  `origin`（kernel | extension | mcp | skill_store | schedule）、`sourceRoot`（拓展根 / MCP
   serverId）、`sourceFile`（来源文件绝对路径，"揭示所在目录"用）、`shadowedBy`
   （被遮蔽件的胜出者来源，见 docs/31 §5.2 / docs/32 §3）。`kind` 与 `query` 是
   过滤切面（kind：kernel_tool | process | template | skill | knowledge | mcp_tool |
-  pipeline…），不是分页。
+  pipeline | schedule…），不是分页。
 - `detail`：单件的完整定义快照（manifest JSON）；被遮蔽件无快照（definition 为 null）。
+  kind=pipeline 时另附 `recentRuns`——最近 10 次运行（runId / triggerKind /
+  phase / startedAt / endedAt / conversationId，新→旧），数据全部来自既有
+  `agent_run` / `run_invocation` / `run_definition_snapshot`（docs/33 §5），
+  其他 kind 为 null。
 - 全部只读；写路径回到各 kind 自己的真相源（docs/32 §1）：Skill 用
   `/api/v1/skills`，MCP 连接器用 `/api/v1/mcp/servers`，文件真相对象改文件。
 

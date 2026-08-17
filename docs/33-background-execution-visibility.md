@@ -1,6 +1,7 @@
 # 33 · 后台执行：定时调度与运行可视化
 
-> 状态：M6a 已落地（cron 后端），M6b 已落地（子 agent 前端投影）。回答"后台执行如何可管理、可视化"。
+> 状态：全部落地（M6a cron 后端、M6b 子 agent 前端投影、M6c cron 管理
+> UI + Pipeline 运行记录）。回答"后台执行如何可管理、可视化"。
 > 实现顺序：M6a 后端 cron → M6b 子 agent 前端投影 → M6c cron 管理
 > UI + Pipeline 运行记录。
 
@@ -51,8 +52,11 @@ cron_execution   每次触发一行：task_id / fired_at /
 
 kind=schedule，DB 真相（与 kernel_skill、手工 MCP 连接器同类）：
 
-- 目录投影：`/system/schedule` 下每个任务一个叶子，name/description/
-  enabled/next_fire_at 进清单字段；模型与人用同一棵树发现。
+- 目录投影（`ScheduleCatalogSource`）：`/system/schedule/<taskId>` 每
+  个**启用**任务一个叶子；manifest 含 expression/prompt/next_fire_at/
+  fire_count，availabilityReason 带下次触发时刻。停用任务不进模型视野
+  （发现纪律：不会触发的东西不占用探索注意力），管理页经
+  `/api/v1/schedules` 看全部——树投影与管理真相各看各的口径。
 - 写路径回到自己的真相源：管理动作（新建/启停/删除/立即运行/查看
   结果会话）在统一能力页的 schedule 子视图与详情内完成，沿用
   McpConsole/MemoryConsole 的既有模式，不新增顶层导航。
@@ -114,5 +118,11 @@ Pipeline 已可寻址（kind=pipeline 在树里），缺运行记录：
   完整视图（ChildRunDialog = Modal + RunSection，展开状态对话框局部，
   打开时继承全局已播种节点）。卡片直接订阅 store 绕过 FlowNode 的 memo
   比较器；纯前端，零新 API。
-- **M6c**：cron 进能力树（kind=schedule 投影 + 管理子视图）+
-  Pipeline 最近运行区块。docs/08、docs/31、docs/03 同步。
+- **M6c（已落地）**：cron 进能力树 + Pipeline 最近运行。
+  `ScheduleCatalogSource` 把启用任务投影为 kind=schedule 叶子；
+  `CapabilityAdminService.detail` 补上 pipeline 分支（此前 404）并附
+  `recentRuns`（`PipelineRunRepository.recentRunsByDefinition`，上限
+  10 条）；前端 ScheduleConsole 子视图（列表/启停/立即运行/编辑器 +
+  最近触发）+ 详情卡"最近运行"区块。CronScheduleIntegrationTest 增
+  投影与运行记录用例（7 个全绿）。docs/08 §8.7/§8.8、docs/32 §1、
+  docs/31 路线图已同步。

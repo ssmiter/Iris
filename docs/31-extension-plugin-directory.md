@@ -414,5 +414,10 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   只读管理查询 API（`/api/v1/capability-admin`）+ CapabilityCenter
   重构为目录树统一页。设计与边界见
   [docs/32](32-capability-management-page.md)；
+- **M6（已落地）**：后台执行可管理、可视化——后端持久化 cron（到点
+  开新会话 + root Run，唤醒器只负责苏醒）、子 agent Run 前端投影
+  （嵌套节点/运行中胶囊/复用时间线的完整视图）、定时任务作为第七种
+  叶子 kind=schedule 进能力树、Pipeline 详情附最近运行。设计与边界见
+  [docs/33](33-background-execution-visibility.md)；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

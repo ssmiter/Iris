@@ -3,6 +3,7 @@ package com.iris.tools.catalog;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.agent.pipeline.PipelineDefinitionRegistry;
+import com.iris.agent.pipeline.PipelineRunRepository;
 import com.iris.extension.ExtensionProviderService;
 import com.iris.extension.KnowledgeDocumentTool;
 import com.iris.extension.ResidentProcessTool;
@@ -29,11 +30,14 @@ public class CapabilityAdminService {
 
     /** 管理页视角 = 用户本人视角（personal 身份看到的就是用户拥有的树）。 */
     private static final String ADMIN_SYSTEM_CODE = "personal";
+    /** Pipeline 详情"最近运行"区块的条数上限（docs/33 §5）。 */
+    private static final int RECENT_RUNS_LIMIT = 10;
 
     private final CapabilityService capabilities;
     private final CapabilityDirectoryCatalog directoryCatalog;
     private final ToolRegistry registry;
     private final PipelineDefinitionRegistry pipelines;
+    private final PipelineRunRepository pipelineRuns;
     private final List<CapabilityCatalogSource> extensionSources;
     private final ExtensionProviderService extensions;
     private final DirectoryStatsService directoryStats;
@@ -44,6 +48,7 @@ public class CapabilityAdminService {
             CapabilityDirectoryCatalog directoryCatalog,
             ToolRegistry registry,
             PipelineDefinitionRegistry pipelines,
+            PipelineRunRepository pipelineRuns,
             List<CapabilityCatalogSource> extensionSources,
             ExtensionProviderService extensions,
             DirectoryStatsService directoryStats,
@@ -53,6 +58,7 @@ public class CapabilityAdminService {
         this.directoryCatalog = directoryCatalog;
         this.registry = registry;
         this.pipelines = pipelines;
+        this.pipelineRuns = pipelineRuns;
         this.extensionSources = List.copyOf(extensionSources);
         this.extensions = extensions;
         this.directoryStats = directoryStats;
@@ -245,7 +251,8 @@ public class CapabilityAdminService {
                     ));
             return Optional.of(new AdminDetail(
                     item,
-                    objectMapper.valueToTree(binding.get().manifest())
+                    objectMapper.valueToTree(binding.get().manifest()),
+                    null
             ));
         }
         for (CapabilityCatalogSource source : extensionSources) {
@@ -260,11 +267,43 @@ public class CapabilityAdminService {
                                 found.description(), found.riskLevel(),
                                 found.availability(),
                                 found.availabilityReason(),
-                                "skill_store", null, null, null
+                                originOf(found.kind()), null, null, null
                         ),
-                        found.manifest()
+                        found.manifest(),
+                        null
                 ));
             }
+        }
+        // Pipeline 不在注册表也不在投影源：按路径命中 Definition 注册表，
+        // 附最近运行（docs/33 §5，管理页视角，不进模型上下文）。
+        Optional<PipelineDefinitionRegistry.Binding> pipeline =
+                pipelines.findByPath(normalized);
+        if (pipeline.isPresent()) {
+            var definition = pipeline.get().definition();
+            List<PipelineRunSummary> recent = pipelineRuns
+                    .recentRunsByDefinition(definition.id(), RECENT_RUNS_LIMIT)
+                    .stream()
+                    .map(run -> new PipelineRunSummary(
+                            run.runId(),
+                            run.triggerKind(),
+                            run.phase().name().toLowerCase(
+                                    java.util.Locale.ROOT),
+                            run.startedAt(),
+                            run.endedAt(),
+                            run.conversationId()
+                    ))
+                    .toList();
+            return Optional.of(new AdminDetail(
+                    new AdminItem(
+                            definition.id(), definition.version(), "pipeline",
+                            definition.name(), normalized,
+                            definition.description(), "standard",
+                            "available", "本地 Pipeline Definition 已注册",
+                            "kernel", null, null, null
+                    ),
+                    objectMapper.valueToTree(definition),
+                    recent
+            ));
         }
         return extensions.shadowed().stream()
                 .filter(shadow -> shadow.capabilityPath().equals(normalized))
@@ -278,6 +317,7 @@ public class CapabilityAdminService {
                                 "extension", shadow.root(), shadow.file(),
                                 shadow.shadowedBy()
                         ),
+                        null,
                         null
                 ));
     }
@@ -285,7 +325,19 @@ public class CapabilityAdminService {
     public record AdminDetail(
             AdminItem item,
             /** 完整定义快照（manifest JSON）；被遮蔽件为 null。 */
-            JsonNode definition
+            JsonNode definition,
+            /** kind=pipeline 时的最近运行（新→旧）；其他 kind 为 null。 */
+            List<PipelineRunSummary> recentRuns
+    ) {
+    }
+
+    public record PipelineRunSummary(
+            String runId,
+            String triggerKind,
+            String phase,
+            java.time.Instant startedAt,
+            java.time.Instant endedAt,
+            String conversationId
     ) {
     }
 
@@ -316,9 +368,18 @@ public class CapabilityAdminService {
                 card.id(), card.version(), card.kind(), card.name(),
                 card.path(), card.description(), card.riskLevel(),
                 card.availability(), card.availabilityReason(),
-                "pipeline".equals(card.kind()) ? "kernel" : "skill_store",
+                originOf(card.kind()),
                 null, null, null
         );
+    }
+
+    /** 非注册表叶子的来源切面：DB 真相各归各类（docs/32 §4、docs/33 §3）。 */
+    private String originOf(String kind) {
+        return switch (kind) {
+            case "pipeline" -> "kernel";
+            case "schedule" -> "schedule";
+            default -> "skill_store";
+        };
     }
 
     /** 注册表工具的 kind 细分：实例类型即种类（docs/32 §1）。 */

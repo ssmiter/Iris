@@ -381,6 +381,17 @@ export interface CapabilityAdminListing {
 export interface CapabilityAdminDetail {
   item: CapabilityAdminItem
   definition: unknown | null
+  /** kind=pipeline 时的最近运行（新→旧）；其他 kind 为 null（docs/33 §5） */
+  recentRuns?: PipelineRunSummary[] | null
+}
+
+export interface PipelineRunSummary {
+  runId: string
+  triggerKind: string | null
+  phase: string
+  startedAt: string
+  endedAt: string | null
+  conversationId: string
 }
 
 /** 统一能力管理页的只读投影（docs/32 §4、docs/08 §8.7） */
@@ -393,6 +404,85 @@ export const capabilityAdminApi = {
   detail: (path: string) =>
     requestJson<CapabilityAdminDetail>(
       `/api/v1/capability-admin/items/detail?path=${encodeURIComponent(path)}`,
+    ),
+}
+
+/** 定时任务管理（docs/33 §3、docs/08 §8.8）：DB 真相，能力树只投影启用件。 */
+export interface ScheduleView {
+  taskId: string
+  name: string
+  expression: string
+  prompt: string
+  enabled: boolean
+  nextFireAt: string | null
+  lastFireAt: string | null
+  fireCount: number
+  createdBy: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ScheduleDraft {
+  name: string
+  expression: string
+  prompt: string
+  enabled: boolean
+}
+
+export interface ScheduleExecutionView {
+  executionId: string
+  taskId: string
+  triggerKind: 'schedule' | 'manual'
+  firedAt: string
+  conversationId: string | null
+  runId: string | null
+  status: 'fired' | 'failed'
+  error: string | null
+}
+
+export const scheduleApi = {
+  list: () => requestJson<ScheduleView[]>('/api/v1/schedules'),
+  create: (draft: ScheduleDraft) =>
+    requestJson<ScheduleView>('/api/v1/schedules', {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+  update: (task: ScheduleView, draft: ScheduleDraft) =>
+    requestJson<ScheduleView>(
+      `/api/v1/schedules/${encodeURIComponent(task.taskId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          expectedVersion: task.version,
+          ...draft,
+        }),
+      },
+    ),
+  setEnabled: (task: ScheduleView, enabled: boolean) =>
+    requestJson<ScheduleView>(
+      `/api/v1/schedules/${encodeURIComponent(task.taskId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          expectedVersion: task.version,
+          enabled,
+        }),
+      },
+    ),
+  remove: (task: ScheduleView) =>
+    requestJson<void>(
+      `/api/v1/schedules/${encodeURIComponent(task.taskId)}?expectedVersion=${task.version}`,
+      { method: 'DELETE' },
+    ),
+  runNow: (task: ScheduleView) =>
+    requestJson<ScheduleExecutionView>(
+      `/api/v1/schedules/${encodeURIComponent(task.taskId)}/run`,
+      { method: 'POST' },
+    ),
+  executions: (taskId: string, limit = 20) =>
+    requestJson<ScheduleExecutionView[]>(
+      `/api/v1/schedules/${encodeURIComponent(taskId)}/executions?limit=${limit}`,
     ),
 }
 

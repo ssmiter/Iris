@@ -3,6 +3,7 @@ import {
   Brain,
   ChevronDown,
   ChevronRight,
+  Clock3,
   Copy,
   Plug,
   Plus,
@@ -48,6 +49,8 @@ function kindMeta(item: CapabilityAdminItem): { label: string; tone: BadgeTone }
       return { label: 'MCP', tone: 'warning' }
     case 'pipeline':
       return { label: '流水线', tone: 'neutral' }
+    case 'schedule':
+      return { label: '定时', tone: 'info' }
     default:
       return { label: item.kind, tone: 'neutral' }
   }
@@ -66,12 +69,45 @@ const ORIGIN_LABEL: Record<string, string> = {
   skill_store: '技能库',
   mcp: 'MCP',
   pipeline: '内置',
+  schedule: '定时',
 }
 
 const STAT_LABELS: Record<string, string> = {
   tool_count: '工具数',
   success_rate_7d: '7 日成功率',
   p50_ms_7d: '7 日 p50',
+}
+
+/** Pipeline 最近运行的触发来源与阶段（docs/33 §5） */
+const TRIGGER_LABEL: Record<string, string> = {
+  agent_tool: '工具调用',
+  ui_action: '界面动作',
+  system_event: '系统事件',
+  schedule: '定时任务',
+}
+
+const RUN_PHASE_META: Record<string, { label: string; tone: BadgeTone }> = {
+  accepted: { label: '已接受', tone: 'info' },
+  running: { label: '进行中', tone: 'info' },
+  suspended: { label: '等待审批', tone: 'warning' },
+  verifying: { label: '验证中', tone: 'info' },
+  outcome_unknown: { label: '结果待核实', tone: 'warning' },
+  succeeded: { label: '已完成', tone: 'success' },
+  failed: { label: '失败', tone: 'danger' },
+  cancelled: { label: '已取消', tone: 'neutral' },
+}
+
+function formatRunTime(value: string) {
+  const date = new Date(value)
+  const sameDay = date.toDateString() === new Date().toDateString()
+  return sameDay
+    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
 }
 
 function formatStat(key: string, value: unknown): string {
@@ -116,9 +152,11 @@ function ancestorsOf(path: string): string[] {
 export function CapabilityTreeView({
   onOpenMcp,
   onOpenMemory,
+  onOpenSchedule,
 }: {
   onOpenMcp: (serverId?: string) => void
   onOpenMemory: () => void
+  onOpenSchedule: () => void
 }) {
   const [tree, setTree] = useState<CapabilityTreeNode | null>(null)
   const [treeFailed, setTreeFailed] = useState(false)
@@ -320,6 +358,10 @@ export function CapabilityTreeView({
           <Button variant="ghost" size="sm" onClick={() => onOpenMcp()}>
             <Plug className="h-3.5 w-3.5" />
             MCP 连接
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onOpenSchedule}>
+            <Clock3 className="h-3.5 w-3.5" />
+            定时任务
           </Button>
           <Button variant="ghost" size="sm" onClick={onOpenMemory}>
             <Brain className="h-3.5 w-3.5" />
@@ -655,6 +697,43 @@ function DetailPanel({
             <pre className="scrollbar-subtle max-h-64 overflow-auto rounded-md bg-surface-muted p-3 font-mono text-caption leading-relaxed text-ink-subtle">
               {JSON.stringify(state.detail.definition, null, 2)}
             </pre>
+          )}
+          {state?.status === 'ready' && state.detail.recentRuns != null && (
+            <div className="grid gap-1.5">
+              <p className="text-caption font-semibold text-ink-muted">
+                最近运行
+              </p>
+              {state.detail.recentRuns.length === 0 ? (
+                <p className="text-small text-ink-muted">还没有运行记录。</p>
+              ) : (
+                <ul className="grid gap-1">
+                  {state.detail.recentRuns.map((run) => {
+                    const phase = RUN_PHASE_META[run.phase]
+                    return (
+                      <li
+                        key={run.runId}
+                        className="flex flex-wrap items-center gap-2 text-caption text-ink-subtle"
+                      >
+                        <Badge tone={phase?.tone ?? 'neutral'}>
+                          {phase?.label ?? run.phase}
+                        </Badge>
+                        <Badge appearance="outline">
+                          {TRIGGER_LABEL[run.triggerKind ?? ''] ??
+                            run.triggerKind ??
+                            '未知来源'}
+                        </Badge>
+                        <span>{formatRunTime(run.startedAt)}</span>
+                        {run.endedAt && (
+                          <span className="text-ink-muted">
+                            → {formatRunTime(run.endedAt)}
+                          </span>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
           )}
         </>
       )}

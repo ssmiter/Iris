@@ -210,6 +210,36 @@ public class PipelineRunRepository {
                 .list();
     }
 
+    /**
+     * 某 Pipeline Definition 的最近运行（docs/33 §5）：
+     * 管理页"最近运行"区块的唯一查询，数据全部来自既有表，零新表。
+     */
+    public List<RecentRun> recentRunsByDefinition(String definitionId, int limit) {
+        return jdbc.sql("""
+                SELECT run.run_id, invocation.trigger_kind, run.phase,
+                       run.started_at, run.ended_at, run.conversation_id
+                FROM run_definition_snapshot snapshot
+                JOIN agent_run run ON run.run_id = snapshot.run_id
+                LEFT JOIN run_invocation invocation
+                  ON invocation.run_id = run.run_id
+                WHERE snapshot.definition_id = :definitionId
+                ORDER BY run.started_at DESC
+                LIMIT :limit
+                """)
+                .param("definitionId", definitionId)
+                .param("limit", limit)
+                .query((rs, rowNum) -> new RecentRun(
+                        rs.getString("run_id"),
+                        rs.getString("trigger_kind"),
+                        RunPhase.valueOf(rs.getString("phase").toUpperCase()),
+                        Instant.parse(rs.getString("started_at")),
+                        rs.getString("ended_at") == null
+                                ? null : Instant.parse(rs.getString("ended_at")),
+                        rs.getString("conversation_id")
+                ))
+                .list();
+    }
+
     public Optional<StepRun> nextOpenStep(String pipelineRunId) {
         return jdbc.sql("""
                 SELECT * FROM pipeline_step_run
@@ -430,6 +460,15 @@ public class PipelineRunRepository {
             String snapshotHash,
             JsonNode input,
             PipelineDefinition.DeliveryPolicy deliveryPolicy
+    ) { }
+
+    public record RecentRun(
+            String runId,
+            String triggerKind,
+            RunPhase phase,
+            Instant startedAt,
+            Instant endedAt,
+            String conversationId
     ) { }
 
     public record StepRun(

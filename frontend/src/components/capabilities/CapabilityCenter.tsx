@@ -4,8 +4,9 @@ import { Button, Modal } from '@/components/ui'
 import { CapabilityTreeView } from './CapabilityTreeView'
 import { McpConsole } from './McpConsole'
 import { MemoryConsole } from './MemoryConsole'
+import { ScheduleConsole } from './ScheduleConsole'
 
-type View = 'tree' | 'mcp' | 'memory'
+type View = 'tree' | 'mcp' | 'memory' | 'schedule'
 
 /**
  * 统一能力管理页（docs/32 §5）：能力目录树是脊柱，kind 是切面；
@@ -47,8 +48,14 @@ export function CapabilityCenter() {
         />
       ) : view === 'memory' ? (
         <MemoryConsole onBack={() => setView('tree')} />
+      ) : view === 'schedule' ? (
+        <ScheduleConsole onBack={() => setView('tree')} />
       ) : (
-        <CapabilityTreeView onOpenMcp={openMcp} onOpenMemory={() => setView('memory')} />
+        <CapabilityTreeView
+          onOpenMcp={openMcp}
+          onOpenMemory={() => setView('memory')}
+          onOpenSchedule={() => setView('schedule')}
+        />
       )}
     </Modal>
   )
