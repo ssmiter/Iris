@@ -161,6 +161,32 @@ class ExtensionProviderIntegrationTest {
                 知识库正文内容
                 """);
 
+        // 技能投影夹具（docs/31 §5.1）：束 + 资源 + disable-model-invocation
+        Path skillDir = EXTENSION_ROOT.resolve("skills/web-research");
+        Files.createDirectories(skillDir.resolve("references"));
+        Files.writeString(skillDir.resolve("SKILL.md"), """
+                ---
+                name: web-research
+                description: 联网检索并归纳资料
+                whenToUse: 需要查最新资料时
+                ---
+                # 联网研究
+
+                先列问题再检索。
+                """);
+        Files.writeString(skillDir.resolve("references/sources.md"),
+                "# 来源清单\n");
+        Path disabledSkill = EXTENSION_ROOT.resolve("skills/internal-only");
+        Files.createDirectories(disabledSkill);
+        Files.writeString(disabledSkill.resolve("SKILL.md"), """
+                ---
+                name: internal-only
+                description: 作者声明模型不可调用
+                disable-model-invocation: true
+                ---
+                正文
+                """);
+
         Files.createDirectories(WORKSPACE.resolve("marker-dir"));
 
         registry.add(
@@ -246,6 +272,29 @@ class ExtensionProviderIntegrationTest {
                 new Invocation("call-knowledge-1", "getting_started"),
                 objectMapper.createObjectNode(),
                 new TestToolContext(WORKSPACE, "knowledge")
+        );
+        assertThat(result.phase()).isEqualTo("succeeded");
+        assertThat(result.approvalId()).isNull();
+    }
+
+    /**
+     * 技能投影（docs/31 §5.1）：束技能注册为只读能力（kebab 束目录 +
+     * snake 能力名），可真实执行；作者声明 disable-model-invocation 的
+     * 技能不暴露给模型。
+     */
+    @Test
+    void skillIsRegisteredAsReadOnlyCapabilityAndDisabledSkillIsSkipped() {
+        var binding = toolRegistry.find("web_research");
+        assertThat(binding).isPresent();
+        assertThat(binding.get().capabilityPath())
+                .isEqualTo("/skills/web_research");
+        assertThat(toolRegistry.find("internal_only")).isEmpty();
+
+        seedExecutionParents("skill");
+        var result = toolRuntime.invoke(
+                new Invocation("call-skill-1", "web_research"),
+                objectMapper.createObjectNode(),
+                new TestToolContext(WORKSPACE, "skill")
         );
         assertThat(result.phase()).isEqualTo("succeeded");
         assertThat(result.approvalId()).isNull();

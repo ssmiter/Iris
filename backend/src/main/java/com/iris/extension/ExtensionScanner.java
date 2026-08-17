@@ -22,9 +22,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * 拓展根扫描器（docs/31 §2/§6）：识别 {@code *.tool.yml}、
- * {@code *.mcp.yml} 与 {@code _directory.yml}，能力路径由相对目录派生
- * （映射禁令）。校验 fail-closed：非法插件整体进入 problems，合法插件不受影响。
+ * 拓展根扫描器（docs/31 §2/§6）：格式识别 {@code *.tool.yml}、
+ * {@code *.mcp.yml}、{@code _directory.yml}、SKILL.md（束与扁平，
+ * §5.1）与 knowledge 段下的 {@code *.md}（§3），能力路径由相对目录
+ * 派生（映射禁令）。校验 fail-closed：非法插件整体进入 problems，
+ * 合法插件不受影响。
  */
 @Component
 public class ExtensionScanner {
@@ -38,6 +40,12 @@ public class ExtensionScanner {
     private static final String KNOWLEDGE_SEGMENT = "knowledge";
     private static final Pattern DIRECTORY_META_NAME =
             Pattern.compile("_directory\\.yml");
+    /** 束形态的固定文件名（docs/31 §5.1），大小写敏感。 */
+    private static final String SKILL_BUNDLE_FILE = "SKILL.md";
+    private static final Pattern SKILL_FLAT_NAME =
+            Pattern.compile(".+\\.SKILL\\.md");
+    private static final Pattern KEBAB_CASE =
+            Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
     private static final Pattern SNAKE_CASE =
             Pattern.compile("[a-z][a-z0-9]*(?:_[a-z0-9]+)*");
     private static final Pattern ENVIRONMENT_NAME =
@@ -55,11 +63,12 @@ public class ExtensionScanner {
         List<ScannedDirectory> directories = new ArrayList<>();
         List<ScannedMcpServer> mcpServers = new ArrayList<>();
         List<ScannedKnowledge> knowledge = new ArrayList<>();
+        List<ScannedSkill> skills = new ArrayList<>();
         Map<String, Set<String>> usedKnowledgeNames = new java.util.HashMap<>();
         List<String> problems = new ArrayList<>();
         if (root == null || !Files.isDirectory(root)) {
             return new ScanResult(root, tools, directories, mcpServers,
-                    knowledge, problems);
+                    knowledge, skills, problems);
         }
         try (Stream<Path> walk = Files.walk(root, MAX_DEPTH)) {
             List<Path> files = walk
@@ -71,8 +80,12 @@ public class ExtensionScanner {
                 String fileName = file.getFileName().toString();
                 if (isKnowledgeDoc(root, file)
                         && KNOWLEDGE_DOC_NAME.matcher(fileName).matches()) {
+                    // knowledge 段优先：语料目录下的 SKILL.md 仍按知识投影（§5.1）
                     scanKnowledge(root, file, knowledge, usedKnowledgeNames,
                             problems);
+                } else if (SKILL_BUNDLE_FILE.equals(fileName)
+                        || SKILL_FLAT_NAME.matcher(fileName).matches()) {
+                    scanSkill(root, file, fileName, skills, problems);
                 } else if (TOOL_MANIFEST_NAME.matcher(fileName).matches()) {
                     scanTool(root, file, tools, problems);
                 } else if (MCP_MANIFEST_NAME.matcher(fileName).matches()) {
@@ -86,7 +99,8 @@ public class ExtensionScanner {
         }
         return new ScanResult(root, List.copyOf(tools),
                 List.copyOf(directories), List.copyOf(mcpServers),
-                List.copyOf(knowledge), List.copyOf(problems));
+                List.copyOf(knowledge), List.copyOf(skills),
+                List.copyOf(problems));
     }
 
     /** knowledge 目录下的 .md 文件即知识文档（docs/31 §3 投影规则）。 */
@@ -169,6 +183,81 @@ public class ExtensionScanner {
         }
         String title = fallback == null ? base : fallback;
         return title.length() <= 120 ? title : title.substring(0, 120);
+    }
+
+    /**
+     * 技能识别（docs/31 §5.1）：束 {@code <name>/SKILL.md} 或扁平
+     * {@code <name>.SKILL.md}。frontmatter 白名单校验，非法即整件丢弃。
+     */
+    private void scanSkill(
+            Path root,
+            Path file,
+            String fileName,
+            List<ScannedSkill> skills,
+            List<String> problems
+    ) {
+        String content;
+        try {
+            content = Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            problems.add("技能读取失败 " + file + ": " + exception.getMessage());
+            return;
+        }
+        String[] parts = SkillDocument.split(content);
+        if (parts == null) {
+            problems.add("技能缺少 --- 开合的 frontmatter " + file);
+            return;
+        }
+        SkillDefinition definition;
+        try {
+            definition = yaml.readValue(parts[0], SkillDefinition.class);
+        } catch (IOException exception) {
+            problems.add("技能 frontmatter 非法（含白名单外字段或类型错误）"
+                    + file + ": " + exception.getMessage());
+            return;
+        }
+        if (definition.name() == null
+                || !KEBAB_CASE.matcher(definition.name()).matches()) {
+            problems.add("技能 name 必须是 kebab-case " + file);
+            return;
+        }
+        if (definition.description() == null
+                || definition.description().isBlank()) {
+            problems.add("技能缺少 description " + file);
+            return;
+        }
+        String name = definition.name().replace('-', '_');
+        if (!SNAKE_CASE.matcher(name).matches()) {
+            problems.add("技能名转换为 snake_case 后非法（须字母开头）"
+                    + file + ": " + definition.name());
+            return;
+        }
+        Path bundleDir = null;
+        Path parentDir;
+        if (SKILL_BUNDLE_FILE.equals(fileName)) {
+            bundleDir = file.getParent();
+            if (bundleDir.equals(root)) {
+                problems.add("SKILL.md 必须位于命名束目录内，不能直接挂在根上 "
+                        + file);
+                return;
+            }
+            parentDir = bundleDir.getParent();
+        } else {
+            parentDir = file.getParent();
+        }
+        // 束与扁平同形：父目录 + 转换后能力名（叶段必须 snake_case，
+        // ToolRegistry.requireExternalPath 约束）。
+        String directory = capabilityDirectory(root, parentDir);
+        if (directory == null) {
+            problems.add("目录段含非法字符，无法派生技能路径: " + parentDir);
+            return;
+        }
+        String capabilityPath =
+                (directory.equals("/") ? "" : directory) + "/" + name;
+        skills.add(new ScannedSkill(
+                file, bundleDir, name, definition, capabilityPath,
+                contentHash(file)
+        ));
     }
 
     private void scanTool(
@@ -409,6 +498,7 @@ public class ExtensionScanner {
             List<ScannedDirectory> directories,
             List<ScannedMcpServer> mcpServers,
             List<ScannedKnowledge> knowledge,
+            List<ScannedSkill> skills,
             List<String> problems
     ) {
     }
@@ -440,6 +530,20 @@ public class ExtensionScanner {
             Path file,
             String name,
             String title,
+            String capabilityPath,
+            String contentVersion
+    ) {
+    }
+
+    /**
+     * SKILL.md 技能（docs/31 §5.1）。{@code bundleDir} 为束目录；扁平形态
+     * 为 null（无束内资源可读）。
+     */
+    public record ScannedSkill(
+            Path file,
+            Path bundleDir,
+            String name,
+            SkillDefinition definition,
             String capabilityPath,
             String contentVersion
     ) {

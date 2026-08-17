@@ -265,8 +265,114 @@ class ExtensionScannerTest {
                 .toList());
     }
 
-    private void writeDoc(String relative, String content) throws IOException {
-        Path file = root.resolve(relative);
+    @Test
+    void scansSkillBundleAndFlatForms() throws IOException {
+        // 束形态：父目录 + 转换后能力名（叶段 snake_case 约束）
+        writeDoc("skills/web-research/SKILL.md", """
+                ---
+                name: web-research
+                description: 联网检索并归纳资料
+                whenToUse: 需要查最新资料时
+                metadata: { origin: community }
+                ---
+                # 联网研究
+
+                先列问题再检索。
+                """);
+        // 扁平形态：路径 = 所在目录 + 派生名
+        writeDoc("skills/summarize.SKILL.md", """
+                ---
+                name: summarize
+                description: 归纳长文为要点
+                ---
+                正文
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.problems().isEmpty(),
+                () -> result.problems().toString());
+        assertEquals(2, result.skills().size());
+        ExtensionScanner.ScannedSkill bundle = result.skills().stream()
+                .filter(skill -> skill.name().equals("web_research"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("/skills/web_research", bundle.capabilityPath());
+        assertEquals(root.resolve("skills/web-research"), bundle.bundleDir());
+        assertEquals("需要查最新资料时",
+                bundle.definition().whenToUse());
+        assertTrue(!bundle.definition().disabledForModel());
+        ExtensionScanner.ScannedSkill flat = result.skills().stream()
+                .filter(skill -> skill.name().equals("summarize"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("/skills/summarize", flat.capabilityPath());
+        assertEquals(null, flat.bundleDir());
+    }
+
+    @Test
+    void rejectsInvalidSkillsFailClosed() throws IOException {
+        // 缺 frontmatter
+        writeDoc("skills/no-front.SKILL.md", "# 只有正文\n");
+        // 白名单外字段
+        writeDoc("skills/extra-field.SKILL.md", """
+                ---
+                name: extra-field
+                description: 带未知字段
+                license: MIT
+                ---
+                正文
+                """);
+        // name 非 kebab-case
+        writeDoc("skills/bad-name.SKILL.md", """
+                ---
+                name: Bad_Name
+                description: 名字非法
+                ---
+                正文
+                """);
+        // 缺 description
+        writeDoc("skills/no-desc.SKILL.md", """
+                ---
+                name: no-desc
+                ---
+                正文
+                """);
+        // SKILL.md 直接挂根上（束目录必须有名）
+        writeDoc("SKILL.md", """
+                ---
+                name: root-level
+                description: 直接挂根
+                ---
+                正文
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.skills().isEmpty());
+        assertEquals(5, result.problems().size(),
+                () -> result.problems().toString());
+    }
+
+    @Test
+    void knowledgeSegmentKeepsPrecedenceOverSkillName() throws IOException {
+        // knowledge 段下的 SKILL.md 按知识投影，不作技能（§5.1）
+        writeDoc("team/knowledge/SKILL.md", """
+                ---
+                name: not-a-skill
+                description: 语料目录里的普通文档
+                ---
+                正文
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.skills().isEmpty());
+        assertEquals(1, result.knowledge().size(),
+                () -> result.problems().toString());
+    }
+
+    private void writeDoc(String relative, String content) throws IOException {        Path file = root.resolve(relative);
         Files.createDirectories(file.getParent());
         Files.writeString(file, content);
     }

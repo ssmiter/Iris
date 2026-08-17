@@ -180,13 +180,29 @@ spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 templa
 
 兼容 deepseek-harness / `.agents` 惯例的子集：
 
-- 形态：`<root>/<name>/SKILL.md` 束，或扁平 `<name>.SKILL.md`；束内
-  `references/ scripts/ assets/` 按需惰性加载，资源解析以束目录为 base；
-- frontmatter 字段：`name`（kebab-case，必填）、`description`（必填）、`whenToUse`、
-  `metadata`、`disable-model-invocation`、`user-invocable`；非法字段 fail-closed——
-  整个技能丢弃并告警，绝不带病注册；
-- 目录注入只含 `name` + 截断至 500 字符的 `description`，正文经技能加载原语按需
-  读取（发现优于塞满）。
+- 形态：`<root>/<name>/SKILL.md` 束，或扁平 `<name>.SKILL.md`；文件名精确
+  `SKILL.md`（大小写敏感）。`knowledge/` 段下的 `.md` 永远按 §3 知识投影
+  识别，不作技能——语料目录优先，确定无疑义。
+- frontmatter：文件开头 `---` 行开合的 YAML 头。字段白名单：
+  `name`（kebab-case，必填）、`description`（必填）、`whenToUse`、
+  `metadata`、`disable-model-invocation`、`user-invocable`；白名单外字段、
+  缺必填、name 非 kebab-case 均 fail-closed——整个技能丢弃并告警，
+  绝不带病注册。正文 = frontmatter 之后的部分。
+- 投影（与知识文档同构）：技能 = 只读能力（read_only/none/auto）。能力名 =
+  frontmatter `name` 确定性转换（`-` → `_` 得 snake_case，转换后仍非法
+  则整件拒绝）；能力路径 = 束/扁平同形——**父目录 + 转换后能力名**
+  （叶段必须 snake_case，注册表约束；束目录名本身可 kebab）。
+  定义版本 = SKILL.md 内容 hash。
+- 加载原语：invoke 无参返回正文 + 束内资源相对路径清单（≤200 条）；
+  `resource` 参数按相对路径读束内文件——围栏到束目录（resolve 后越界
+  拒绝），按文本读取、同知识文档的字符预算；扁平形态无束，`resource`
+  如实报 `skill_resource_unavailable`。
+- 目录注入只含 `name` + 截断至 500 字符的 `description`，正文经上述
+  加载原语按需读取（发现优于塞满）。`whenToUse` 仅随正文与结果元数据
+  呈现，不进目录卡片。
+- `disable-model-invocation: true` 遵循作者声明：不注册为模型能力
+  （记扫描日志，非 problem）；`user-invocable` 仅记录——用户直连通道
+  随管理页落地，当前不改变行为。
 
 ### 5.2 扫描根与优先级
 
@@ -194,9 +210,13 @@ spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 templa
 |---|---|---|
 | 50 | `<backend>/../extensions/`（`iris.extension.bundled-root` 可改写） | 内建拓展根：随发行物出厂，仍是普通目录对象 |
 | 100 | `<workspace>/.iris/extensions/` | 项目级自有 |
-| 200 | `<workspace>/.agents/skills`、`/.dsh/skills` | 社区惯例，原样识别 |
+| 200 | `<workspace>/.agents/skills`、`<workspace>/.dsh/skills` | 社区惯例，原样识别 |
 | 300 | `~/.iris/extensions/` | 机器级自有 |
 | 400 | `~/.dsh/skills`、`~/.agents/skills` | 社区全局 |
+
+默认扫描序列即上表 rank 升序（不存在的根跳过）；`iris.extension.roots`
+显式配置时以配置为准。社区根里同样只做格式识别（§3 五种内容都可能
+出现），不复制文件。
 
 同名冲突：rank 小者整件胜出；被遮蔽项在目录标注 `shadowed-by` 且仍可寻址，
 绝不静默双活。社区根只做**投影**不复制文件。当前实现的冲突处置是更强的
@@ -385,5 +405,10 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   演示库。`/industry/mens` 目录骨架维持纯 `_directory.yml` 元数据不变。
   内核 `tools/industry/`（39 个工具类与抽象骨架）、
   `industry/demo/IndustrialDemoRepository` 随之删除；
+- **M4（已落地）**：SKILL.md 原生兼容与社区扫描根（§5.1 + §5.2 rank
+  200/400）。技能投影为只读能力（与知识文档同构：invoke 读正文，
+  `resource` 参数围栏读取束内资源）；frontmatter 白名单校验 fail-closed；
+  默认扫描序列补全五个 rank，冲突处置维持整根 fail-closed（逐件
+  `shadowed-by` 标注仍随管理页落地）；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

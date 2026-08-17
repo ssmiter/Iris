@@ -114,8 +114,9 @@ public class ExtensionProviderService
     }
 
     /**
-     * 根解析：内建根（rank 50）永远最先扫描；roots 为空时补默认自有两层
-     * （工作区级 → 机器级，docs/31 §5.2）。
+     * 根解析：内建根（rank 50）永远最先扫描；roots 为空时补默认五层
+     * （rank 升序 = 优先级降序，docs/31 §5.2）：工作区自有 → 工作区
+     * 社区惯例 → 机器级自有 → 机器级社区全局。不存在的根跳过。
      */
     private List<Path> resolveRoots() {
         List<Path> roots = new ArrayList<>();
@@ -130,10 +131,15 @@ public class ExtensionProviderService
                     .forEach(roots::add);
             return roots;
         }
-        roots.add(Path.of(workspaceDir)
-                .resolve(".iris/extensions").toAbsolutePath().normalize());
-        roots.add(Path.of(System.getProperty("user.home"))
-                .resolve(".iris/extensions").toAbsolutePath().normalize());
+        Path workspace = Path.of(workspaceDir).toAbsolutePath().normalize();
+        Path home = Path.of(System.getProperty("user.home"))
+                .toAbsolutePath().normalize();
+        roots.add(workspace.resolve(".iris/extensions"));   // rank 100
+        roots.add(workspace.resolve(".agents/skills"));     // rank 200
+        roots.add(workspace.resolve(".dsh/skills"));        // rank 200
+        roots.add(home.resolve(".iris/extensions"));        // rank 300
+        roots.add(home.resolve(".dsh/skills"));             // rank 400
+        roots.add(home.resolve(".agents/skills"));          // rank 400
         return roots;
     }
 
@@ -201,6 +207,28 @@ public class ExtensionProviderService
                             doc.title(),
                             doc.capabilityPath(),
                             doc.contentVersion(),
+                            objectMapper
+                    )
+            ));
+        }
+        for (ExtensionScanner.ScannedSkill skill : result.skills()) {
+            if (skill.definition().disabledForModel()) {
+                // disable-model-invocation：遵循作者声明，不暴露给模型（§5.1）
+                log.info(
+                        "extension skill {} skipped (disable-model-invocation)",
+                        skill.file()
+                );
+                continue;
+            }
+            registrations.add(new ToolRegistry.ExternalToolRegistration(
+                    skill.capabilityPath(),
+                    new SkillTool(
+                            skill.file(),
+                            skill.bundleDir(),
+                            skill.name(),
+                            skill.definition(),
+                            skill.capabilityPath(),
+                            skill.contentVersion(),
                             objectMapper
                     )
             ));
