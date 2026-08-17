@@ -219,10 +219,10 @@ spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 templa
 出现），不复制文件。
 
 同名冲突：rank 小者整件胜出；被遮蔽项在目录标注 `shadowed-by` 且仍可寻址，
-绝不静默双活。社区根只做**投影**不复制文件。当前实现的冲突处置是更强的
-fail-closed 形态——后扫描的根与已注册名冲突时整根拒绝并告警；逐件
-`shadowed-by` 标注随管理页（§11 之后）落地。内建根与代码内工具同名时同样
-拒绝（内核优先），保证出厂目录永远可被内核行为覆盖裁决。
+绝不静默双活。社区根只做**投影**不复制文件。逐件裁决与标注随统一能力管理页
+落地（[docs/32](32-capability-management-page.md) §3）：冲突件不注册、记
+胜出者来源、管理页可见而模型目录不出现；内建根与代码内工具同名时同样
+遮蔽（内核恒胜），保证出厂目录永远可被内核行为覆盖裁决。
 
 ### 5.3 MCP
 
@@ -410,5 +410,8 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   `resource` 参数围栏读取束内资源）；frontmatter 白名单校验 fail-closed；
   默认扫描序列补全五个 rank，冲突处置维持整根 fail-closed（逐件
   `shadowed-by` 标注仍随管理页落地）；
+- **M5**：统一能力管理页——逐件 `shadowed-by` 裁决（§5.2）+ 只读管理
+  查询 API + CapabilityCenter 重构为目录树统一页。设计与边界见
+  [docs/32](32-capability-management-page.md)；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。
