@@ -1110,6 +1110,29 @@ capability hints；后续需要时按结果引用读回或重新 discovery/inspe
 Frontend 不提交 `loadedTools[]`，也不接收完整 Catalog schema。它可以浏览 Catalog，但浏览
 行为不会授权代理调用；执行资格由 Backend 的 inspect provenance 与 Runtime 核验决定。
 
+### 8.7 能力管理投影（只读，管理页专用）
+
+统一能力管理页（[docs/32](32-capability-management-page.md)）消费的管理投影，与上面的
+模型发现契约完全分离——不进模型上下文，不参与 inspect/invoke 链路：
+
+```http
+GET /api/v1/capability-admin/tree
+GET /api/v1/capability-admin/items?path=/industry/mes&kind=process&query=库存
+GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/query_mes_material_inventory
+```
+
+- `tree`：目录树（path/name/title/count/children），计数覆盖注册表 + Pipeline + 目录
+  投影源，标题来自 `_directory.yml`。
+- `items`：某目录下的对象清单。字段在 discovery card（§8.1）之外增加管理切面：
+  `origin`（kernel | extension | mcp | skill_store）、`sourceRoot`（拓展根 / MCP
+  serverId）、`sourceFile`（来源文件绝对路径，"揭示所在目录"用）、`shadowedBy`
+  （被遮蔽件的胜出者来源，见 docs/31 §5.2 / docs/32 §3）。`kind` 与 `query` 是
+  过滤切面（kind：kernel_tool | process | template | skill | knowledge | mcp_tool |
+  pipeline…），不是分页。
+- `detail`：单件的完整定义快照（manifest JSON）；被遮蔽件无快照（definition 为 null）。
+- 全部只读；写路径回到各 kind 自己的真相源（docs/32 §1）：Skill 用
+  `/api/v1/skills`，MCP 连接器用 `/api/v1/mcp/servers`，文件真相对象改文件。
+
 ## 9. Workspace 与 Artifact 读取
 
 ### 9.1 列目录

@@ -138,6 +138,20 @@ public class ToolRegistry {
         removeProvider(providerKey);
     }
 
+    /** 某工具名当前的来源 provider（{@code local-java} / {@code extension:<root>} /
+     * {@code mcp:<serverId>}…）；未注册返回 null。 */
+    public synchronized String providerOf(String toolName) {
+        return providerByName.get(toolName);
+    }
+
+    /** 某身份（{@code id@version}）当前的来源 provider；未注册返回 null。 */
+    public synchronized String providerOfIdentity(String identity) {
+        ToolBinding binding = byIdentity.get(identity);
+        return binding == null
+                ? null
+                : providerByName.get(binding.manifest().name());
+    }
+
     private void addBinding(
             ToolBinding binding,
             String identity,

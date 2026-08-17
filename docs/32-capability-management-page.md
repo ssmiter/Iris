@@ -51,7 +51,8 @@ shadowed-by 且仍可寻址"。当前实现是更强的整根 fail-closed——�
 - shadowed 件仍可寻址：管理查询 API 返回它（带 shadowed_by 与来源
   文件路径）；模型目录不出现它（不产生第二活绑定）。
 - 裁决记录留在内存运行时视图（随重扫重算，不落库）——扫描顺序即
-  rank，重扫即重裁，无状态漂移。
+  rank，重扫即重裁，无状态漂移。胜出者卸载后，被遮蔽件在其自身根
+  下一次重扫或重启时恢复（不跨根追裁）。
 
 这一改动只影响冲突场景：无冲突的根注册结果与现在完全一致。
 
@@ -118,7 +119,7 @@ CapabilityCenter 从"三标签弹窗"重构为"目录树统一页"（仍是 Moda
 
 ## 7. 里程碑
 
-- **M5a**：逐件 shadowed-by 裁决 + 管理查询 API（§3、§4）+
+- **M5a（已落地）**：逐件 shadowed-by 裁决 + 管理查询 API（§3、§4）+
   ExtensionProviderIntegrationTest 覆盖遮蔽场景。
 - **M5b**：CapabilityCenter 重构为目录树统一页（§5），旧三标签的
   编辑器作为详情内编辑保留；irisApi 增加 capabilityAdminApi。

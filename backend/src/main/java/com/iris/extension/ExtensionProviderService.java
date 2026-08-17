@@ -69,6 +69,12 @@ public class ExtensionProviderService
     /** 每根当前注册的常驻工具；换入成功即回收旧快照（docs/31 §6）。 */
     private final ConcurrentHashMap<Path, List<ResidentProcessTool>>
             residentToolsByRoot = new ConcurrentHashMap<>();
+    /** 每根被遮蔽件的运行时视图（docs/32 §3）：随重扫重算，不落库。 */
+    private final ConcurrentHashMap<Path, List<ShadowedCapability>>
+            shadowedByRoot = new ConcurrentHashMap<>();
+    /** 已注册件的能力路径 → 来源文件（管理页"揭示所在目录"用），按根整体替换。 */
+    private final ConcurrentHashMap<Path, Map<String, String>>
+            filesByRoot = new ConcurrentHashMap<>();
     private WatchService watchService;
     private Thread watchThread;
     private ScheduledExecutorService scheduler;
@@ -152,8 +158,7 @@ public class ExtensionProviderService
         directoryRegistry.replaceRoot(root, result.directories());
         registerMcpDeclarations(root, result.mcpServers());
 
-        List<ToolRegistry.ExternalToolRegistration> registrations =
-                new ArrayList<>();
+        List<PendingRegistration> pending = new ArrayList<>();
         List<ResidentProcessTool> residentTools = new ArrayList<>();
         // §3.2：同目录的 process 清单共享一个常驻进程；entry/env 必须逐字一致
         Map<Path, List<ExtensionScanner.ScannedTool>> processByDir =
@@ -165,16 +170,17 @@ public class ExtensionProviderService
                 ).add(scanned);
                 continue;
             }
-            Tool tool = new TemplateProcessTool(
-                    scanned.definition(),
-                    scanned.pluginDir(),
-                    scanned.contentVersion(),
-                    processRunner,
-                    objectMapper
-            );
-            registrations.add(new ToolRegistry.ExternalToolRegistration(
+            pending.add(new PendingRegistration(
                     scanned.capabilityPath(),
-                    tool
+                    new TemplateProcessTool(
+                            scanned.definition(),
+                            scanned.pluginDir(),
+                            scanned.contentVersion(),
+                            processRunner,
+                            objectMapper
+                    ),
+                    scanned.definition().kind(),
+                    scanned.manifestFile()
             ));
         }
         for (var entry : processByDir.entrySet()) {
@@ -192,14 +198,16 @@ public class ExtensionProviderService
                         objectMapper
                 );
                 residentTools.add(resident);
-                registrations.add(new ToolRegistry.ExternalToolRegistration(
+                pending.add(new PendingRegistration(
                         scanned.capabilityPath(),
-                        resident
+                        resident,
+                        scanned.definition().kind(),
+                        scanned.manifestFile()
                 ));
             }
         }
         for (ExtensionScanner.ScannedKnowledge doc : result.knowledge()) {
-            registrations.add(new ToolRegistry.ExternalToolRegistration(
+            pending.add(new PendingRegistration(
                     doc.capabilityPath(),
                     new KnowledgeDocumentTool(
                             doc.file(),
@@ -208,9 +216,12 @@ public class ExtensionProviderService
                             doc.capabilityPath(),
                             doc.contentVersion(),
                             objectMapper
-                    )
+                    ),
+                    "knowledge",
+                    doc.file()
             ));
         }
+        List<ShadowedCapability> shadowed = new ArrayList<>();
         for (ExtensionScanner.ScannedSkill skill : result.skills()) {
             if (skill.definition().disabledForModel()) {
                 // disable-model-invocation：遵循作者声明，不暴露给模型（§5.1）
@@ -220,7 +231,7 @@ public class ExtensionProviderService
                 );
                 continue;
             }
-            registrations.add(new ToolRegistry.ExternalToolRegistration(
+            pending.add(new PendingRegistration(
                     skill.capabilityPath(),
                     new SkillTool(
                             skill.file(),
@@ -230,33 +241,107 @@ public class ExtensionProviderService
                             skill.capabilityPath(),
                             skill.contentVersion(),
                             objectMapper
-                    )
+                    ),
+                    "skill",
+                    skill.file()
+            ));
+        }
+
+        // docs/32 §3：逐件冲突裁决——冲突件不注册、记 shadowed-by，
+        // 同根其余件不受影响；无冲突时行为与整根换入完全一致。
+        String provider = providerKey(root);
+        List<ToolRegistry.ExternalToolRegistration> registrations =
+                new ArrayList<>();
+        List<ResidentProcessTool> acceptedResident = new ArrayList<>();
+        Set<String> ownNames = new java.util.HashSet<>();
+        Set<String> ownIdentities = new java.util.HashSet<>();
+        for (PendingRegistration item : pending) {
+            var manifest = item.tool().manifest();
+            String name = manifest.name();
+            String identity = manifest.id() + "@" + manifest.version();
+            String winner = null;
+            if (!ownNames.add(name) || !ownIdentities.add(identity)) {
+                winner = provider; // 同根重名：扫描排序在先者胜
+            } else {
+                String existing = toolRegistry.providerOf(name);
+                if (existing == null) {
+                    existing = toolRegistry.providerOfIdentity(identity);
+                }
+                if (existing != null && !existing.equals(provider)) {
+                    winner = existing; // 内核（local-java）或在先根恒胜
+                }
+            }
+            if (winner != null) {
+                shadowed.add(new ShadowedCapability(
+                        root.toString(),
+                        name,
+                        item.capabilityPath(),
+                        item.kind(),
+                        manifest.description(),
+                        item.file().toString(),
+                        winner
+                ));
+                log.info(
+                        "extension capability {} shadowed by {}",
+                        item.capabilityPath(), winner
+                );
+                continue;
+            }
+            if (item.tool() instanceof ResidentProcessTool resident) {
+                acceptedResident.add(resident);
+            }
+            registrations.add(new ToolRegistry.ExternalToolRegistration(
+                    item.capabilityPath(),
+                    item.tool()
             ));
         }
         try {
             toolRegistry.replaceExternal(
-                    providerKey(root),
+                    provider,
                     registrations,
                     objectMapper
             );
             List<ResidentProcessTool> previous =
-                    residentToolsByRoot.put(root, residentTools);
+                    residentToolsByRoot.put(root, acceptedResident);
             retireAll(previous);
+            shadowedByRoot.put(root, List.copyOf(shadowed));
+            Map<String, String> files = new java.util.LinkedHashMap<>();
+            for (PendingRegistration item : pending) {
+                boolean accepted = registrations.stream().anyMatch(
+                        registration -> registration.capabilityPath()
+                                .equals(item.capabilityPath()));
+                if (accepted) {
+                    files.put(item.capabilityPath(), item.file().toString());
+                }
+            }
+            filesByRoot.put(root, Map.copyOf(files));
             log.info(
-                    "extension root {} registered: {} tools, {} directories",
+                    "extension root {} registered: {} tools, {} directories,"
+                            + " {} shadowed",
                     root,
                     registrations.size(),
-                    result.directories().size()
+                    result.directories().size(),
+                    shadowed.size()
             );
         } catch (RuntimeException exception) {
-            // 与内核或其他根冲突：整根拒绝（fail-closed），已有绑定保持。
-            retireAll(residentTools);
+            // 兜底 fail-closed：预裁决之外的冲突（理论不出现）仍整根拒绝。
+            retireAll(acceptedResident);
+            shadowedByRoot.remove(root);
             log.error(
                     "extension root {} rejected as a whole: {}",
                     root,
                     exception.getMessage()
             );
         }
+    }
+
+    /** 待裁决的一件注册：工具实例 + 管理页投影所需的来源信息。 */
+    private record PendingRegistration(
+            String capabilityPath,
+            Tool tool,
+            String kind,
+            Path file
+    ) {
     }
 
     /**
@@ -310,8 +395,28 @@ public class ExtensionProviderService
         directoryRegistry.removeRoot(root);
         toolRegistry.unregisterExternal(providerKey(root));
         retireAll(residentToolsByRoot.remove(root));
+        shadowedByRoot.remove(root);
+        filesByRoot.remove(root);
         mcpServers.disableDeclaredByRoot(originKey(root));
         log.info("extension root {} unregistered", root);
+    }
+
+    /** 全部被遮蔽件的扁平视图（docs/32 §3；管理页只读消费）。 */
+    public List<ShadowedCapability> shadowed() {
+        return shadowedByRoot.values().stream()
+                .flatMap(List::stream)
+                .toList();
+    }
+
+    /** 已注册件的来源文件绝对路径；非拓展件返回 null。 */
+    public String fileOf(String capabilityPath) {
+        for (Map<String, String> files : filesByRoot.values()) {
+            String file = files.get(capabilityPath);
+            if (file != null) {
+                return file;
+            }
+        }
+        return null;
     }
 
     /**

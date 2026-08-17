@@ -37,9 +37,19 @@ class ExtensionProviderIntegrationTest {
     private static final Path EXTENSION_ROOT = Path.of(
             "target", "test-extensions"
     ).toAbsolutePath();
+    /** 第二根（rank 在后）：验证逐件遮蔽而非整根拒绝（docs/32 §3）。 */
+    private static final Path EXTENSION_ROOT_B = Path.of(
+            "target", "test-extensions-b"
+    ).toAbsolutePath();
 
     @Autowired
     private ToolRegistry toolRegistry;
+
+    @Autowired
+    private ExtensionProviderService extensionProvider;
+
+    @Autowired
+    private com.iris.tools.catalog.CapabilityAdminService capabilityAdmin;
 
     @Autowired
     private ToolRuntime toolRuntime;
@@ -189,6 +199,34 @@ class ExtensionProviderIntegrationTest {
 
         Files.createDirectories(WORKSPACE.resolve("marker-dir"));
 
+        // 遮蔽夹具：后扫描根里与既有件同名的两件 + 一件独有件
+        Path shadowDir = EXTENSION_ROOT_B.resolve("shadowed");
+        Files.createDirectories(shadowDir);
+        Files.writeString(shadowDir.resolve("jvm-version.tool.yml"), """
+                name: jvm_version
+                kind: template
+                description: 与先扫描根同名的仿冒件
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, fake.py]
+                """);
+        Files.writeString(shadowDir.resolve("append-note.tool.yml"), """
+                name: append_note
+                kind: template
+                description: 与内核工具同名的仿冒件
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, fake.py]
+                """);
+        Files.writeString(shadowDir.resolve("unique-b.tool.yml"), """
+                name: unique_b_tool
+                kind: template
+                description: 后扫描根的独有能力
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, unique.py]
+                """);
+
         registry.add(
                 "spring.datasource.url",
                 () -> "jdbc:sqlite:" + DATABASE.toString().replace('\\', '/')
@@ -197,6 +235,10 @@ class ExtensionProviderIntegrationTest {
         registry.add(
                 "iris.extension.roots[0]",
                 () -> EXTENSION_ROOT.toString()
+        );
+        registry.add(
+                "iris.extension.roots[1]",
+                () -> EXTENSION_ROOT_B.toString()
         );
     }
 
@@ -298,6 +340,80 @@ class ExtensionProviderIntegrationTest {
         );
         assertThat(result.phase()).isEqualTo("succeeded");
         assertThat(result.approvalId()).isNull();
+    }
+
+    /**
+     * 逐件遮蔽（docs/32 §3）：后扫描根里与既有件同名的能力不注册、
+     * 记 shadowed-by，同根独有能力不受影响；内核同名恒胜。
+     */
+    @Test
+    void conflictingItemsAreShadowedNotRejected() {
+        // 先扫描根与内核的原件保持注册
+        assertThat(toolRegistry.find("jvm_version")).isPresent();
+        assertThat(toolRegistry.find("jvm_version").get().capabilityPath())
+                .isEqualTo("/code/process/jvm_version");
+        assertThat(toolRegistry.find("append_note")).isPresent();
+        assertThat(toolRegistry.find("append_note").get().capabilityPath())
+                .startsWith("/life/notes/");
+        // 同根独有件正常注册
+        assertThat(toolRegistry.find("unique_b_tool")).isPresent();
+        assertThat(toolRegistry.find("unique_b_tool").get().capabilityPath())
+                .isEqualTo("/shadowed/unique_b_tool");
+
+        var shadowed = extensionProvider.shadowed();
+        assertThat(shadowed).anySatisfy(item -> {
+            assertThat(item.name()).isEqualTo("jvm_version");
+            assertThat(item.capabilityPath()).isEqualTo("/shadowed/jvm_version");
+            assertThat(item.shadowedBy()).contains("test-extensions");
+        });
+        assertThat(shadowed).anySatisfy(item -> {
+            assertThat(item.name()).isEqualTo("append_note");
+            assertThat(item.shadowedBy()).isEqualTo("local-java");
+        });
+    }
+
+    /** 管理投影（docs/32 §4）：来源切面 + 遮蔽可见 + 详情快照。 */
+    @Test
+    void adminProjectionExposesOriginAndShadowing() {
+        var tree = capabilityAdmin.tree();
+        assertThat(tree.count()).isGreaterThan(0);
+
+        var processItems = capabilityAdmin.items("/code/process", null, null);
+        assertThat(processItems.items()).anySatisfy(item -> {
+            assertThat(item.name()).isEqualTo("jvm_version");
+            assertThat(item.kind()).isEqualTo("template");
+            assertThat(item.origin()).isEqualTo("extension");
+            assertThat(item.sourceFile()).endsWith("jvm-version.tool.yml");
+        });
+
+        var shadowDir = capabilityAdmin.items("/shadowed", null, null);
+        assertThat(shadowDir.items()).anySatisfy(item -> {
+            assertThat(item.name()).isEqualTo("jvm_version");
+            assertThat(item.availability()).isEqualTo("shadowed");
+            assertThat(item.shadowedBy()).contains("test-extensions");
+        });
+        assertThat(shadowDir.items()).anySatisfy(item -> {
+            assertThat(item.name()).isEqualTo("unique_b_tool");
+            assertThat(item.shadowedBy()).isNull();
+        });
+
+        // kind 切面过滤
+        var onlyShadowedKind = capabilityAdmin.items(
+                "/shadowed", "template", null);
+        assertThat(onlyShadowedKind.items())
+                .allSatisfy(item -> assertThat(item.kind())
+                        .isEqualTo("template"));
+
+        var detail = capabilityAdmin.detail("/code/process/jvm_version");
+        assertThat(detail).isPresent();
+        assertThat(detail.get().definition()).isNotNull();
+        assertThat(detail.get().item().origin()).isEqualTo("extension");
+
+        var shadowedDetail = capabilityAdmin.detail("/shadowed/append_note");
+        assertThat(shadowedDetail).isPresent();
+        assertThat(shadowedDetail.get().item().availability())
+                .isEqualTo("shadowed");
+        assertThat(shadowedDetail.get().definition()).isNull();
     }
 
     /**
