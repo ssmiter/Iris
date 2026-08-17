@@ -1,7 +1,8 @@
 # 33 · 后台执行：定时调度与运行可视化
 
-> 状态：设计中。回答"后台执行如何可管理、可视化"。实现顺序：M6a 后端
-> cron → M6b 子 agent 前端投影 → M6c cron 管理 UI + Pipeline 运行记录。
+> 状态：M6a 已落地（cron 后端）。回答"后台执行如何可管理、可视化"。
+> 实现顺序：M6a 后端 cron → M6b 子 agent 前端投影 → M6c cron 管理
+> UI + Pipeline 运行记录。
 
 ## 1. 问题：三类后台执行，三种不可见
 
@@ -100,10 +101,12 @@ Pipeline 已可寻址（kind=pipeline 在树里），缺运行记录：
 
 ## 7. 里程碑
 
-- **M6a**：cron 后端。`cron_task` / `cron_execution` 表（schema.sql），
-  `CronScheduleLauncher` 唤醒器，到点创建会话+root Run，启动补扫；
-  `/system/schedule` 四个模型工具（docs/03 登记）；管理 REST
-  （list/create/update/delete/run-now/executions）。
+- **M6a（已落地）**：cron 后端。`cron_task` / `cron_execution` 表
+  （schema.sql），`CronScheduleLauncher` 唤醒器（启动补扫 + 24h 兜底
+  重扫 + 变更事件重排；`claimFire` 先推进再执行，崩溃最多漏一棒），
+  到点创建会话+root Run；`/system/schedule` 四个模型工具（docs/03
+  已登记）；管理 REST `/api/v1/schedules`（docs/08 §8.8）。
+  CronScheduleIntegrationTest 覆盖 CRUD/认领/手动触发/目录投影。
 - **M6b**：子 agent 前端投影。嵌套节点 + 运行中胶囊 + 完整视图复用
   时间线组件；纯前端，零新 API。
 - **M6c**：cron 进能力树（kind=schedule 投影 + 管理子视图）+

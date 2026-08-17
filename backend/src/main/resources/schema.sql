@@ -1308,3 +1308,37 @@ CREATE TABLE IF NOT EXISTS tool_observation_retention_decision (
     FOREIGN KEY (execution_id)
         REFERENCES tool_execution(execution_id)
 );
+
+-- Cron schedule truth (docs/33 §2)。这两张表是持久真相；进程内定时器
+-- 只是唤醒器，重启后按 next_fire_at 补扫。启用任务的 next_fire_at
+-- 恒非空；触发时先把 next_fire_at 推进到下一棒再执行，进程崩溃最多
+-- 漏掉当前这一棒，不会重复触发同一棒。
+CREATE TABLE IF NOT EXISTS cron_task (
+    task_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    expression TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    next_fire_at TEXT,
+    last_fire_at TEXT,
+    fire_count INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cron_execution (
+    execution_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    trigger_kind TEXT NOT NULL,
+    fired_at TEXT NOT NULL,
+    conversation_id TEXT,
+    run_id TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    FOREIGN KEY (task_id) REFERENCES cron_task(task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_execution_task
+    ON cron_execution(task_id, fired_at);

@@ -1134,6 +1134,30 @@ GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/qu
 - 全部只读；写路径回到各 kind 自己的真相源（docs/32 §1）：Skill 用
   `/api/v1/skills`，MCP 连接器用 `/api/v1/mcp/servers`，文件真相对象改文件。
 
+### 8.8 定时任务（schedule）
+
+定时任务（[docs/33](33-background-execution-visibility.md)）的管理端点。持久真相是
+`cron_task` / `cron_execution` 两张表；进程内唤醒器只负责到点苏醒，重启后按
+`next_fire_at` 补扫。
+
+```http
+GET    /api/v1/schedules
+POST   /api/v1/schedules                     { name, expression, prompt, enabled? }
+PATCH  /api/v1/schedules/{taskId}            { expectedVersion, name?, expression?, prompt?, enabled? }
+DELETE /api/v1/schedules/{taskId}?expectedVersion=<n>
+POST   /api/v1/schedules/{taskId}/run
+GET    /api/v1/schedules/{taskId}/executions?limit=20
+```
+
+- `expression` 是六位 cron（秒 分 时 日 月 周），系统本地时区；非法表达式返回
+  `invalid_schedule`（422）。写操作带 `expectedVersion` 乐观校验，过期返回
+  `stale_version`（409）。
+- 到点行为：为 `prompt` 创建新会话 + root Run（默认标题，标题 Pipeline 自动命名），
+  执行记录（`trigger_kind` = schedule | manual、`conversationId`、`runId`、status）
+  落 `cron_execution`；手动 `run` 不影响既有排程。
+- 模型侧等价物是 `/system/schedule` 下的四个工具（§3 域清单），走标准 Tool Runtime
+  审批；任务读取走能力目录投影，不单独开放模型读接口。
+
 ## 9. Workspace 与 Artifact 读取
 
 ### 9.1 列目录
