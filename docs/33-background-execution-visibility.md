@@ -1,6 +1,6 @@
 # 33 · 后台执行：定时调度与运行可视化
 
-> 状态：M6a 已落地（cron 后端）。回答"后台执行如何可管理、可视化"。
+> 状态：M6a 已落地（cron 后端），M6b 已落地（子 agent 前端投影）。回答"后台执行如何可管理、可视化"。
 > 实现顺序：M6a 后端 cron → M6b 子 agent 前端投影 → M6c cron 管理
 > UI + Pipeline 运行记录。
 
@@ -107,7 +107,12 @@ Pipeline 已可寻址（kind=pipeline 在树里），缺运行记录：
   到点创建会话+root Run；`/system/schedule` 四个模型工具（docs/03
   已登记）；管理 REST `/api/v1/schedules`（docs/08 §8.8）。
   CronScheduleIntegrationTest 覆盖 CRUD/认领/手动触发/目录投影。
-- **M6b**：子 agent 前端投影。嵌套节点 + 运行中胶囊 + 完整视图复用
-  时间线组件；纯前端，零新 API。
+- **M6b（已落地）**：子 agent 前端投影。`ChildRunView.tsx` 三件套——
+  嵌套节点（FlowNode 'run' 节点展开为 ChildRunCard：阶段徽标/轮数/耗时/
+  progressSummary + "查看完整运行"）、运行中胶囊（ComposerDock 上方
+  ChildRunCapsules，仅非终态子 Run，执行中呼吸点、挂起静止、终态消失）、
+  完整视图（ChildRunDialog = Modal + RunSection，展开状态对话框局部，
+  打开时继承全局已播种节点）。卡片直接订阅 store 绕过 FlowNode 的 memo
+  比较器；纯前端，零新 API。
 - **M6c**：cron 进能力树（kind=schedule 投影 + 管理子视图）+
   Pipeline 最近运行区块。docs/08、docs/31、docs/03 同步。

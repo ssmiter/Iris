@@ -38,6 +38,7 @@ import {
 } from '@/stores/conversationStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { ComposerDock } from './composer'
+import { ChildRunCapsules } from './ChildRunView'
 import { ConversationTimeline } from './ConversationTimeline'
 import { PendingApprovalStack } from './PendingApprovalStack'
 import { TaskBlackboard } from './TaskBlackboard'
@@ -606,6 +607,7 @@ export function ConversationApp() {
 
   const composer = (
     <div className="relative">
+      <ChildRunCapsules onAttentionAction={handleAttentionAction} />
       <PendingApprovalStack
         nodes={waitingApprovals}
         onDecide={handleAttentionAction}

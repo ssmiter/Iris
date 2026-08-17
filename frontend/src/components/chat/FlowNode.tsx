@@ -19,6 +19,7 @@ import type {
 import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { ArtifactCard } from './ArtifactCard'
+import { ChildRunCard } from './ChildRunView'
 import { ClampText } from './ClampText'
 import { ToolResultText } from './ToolResultText'
 
@@ -261,13 +262,13 @@ function NodeBody({
         </p>
       )
     case 'run':
+      // 子 agent Run 摘要卡：直接订阅 store，自身随运行事件重渲染（M6b）
       return (
-        <div className="space-y-1">
-          <p>{node.progressSummary}</p>
-          <p className="font-mono text-caption text-ink-muted">
-            child run · {node.childRunId}
-          </p>
-        </div>
+        <ChildRunCard
+          childRunId={node.childRunId}
+          fallbackSummary={node.progressSummary}
+          onAttentionAction={onAttentionAction}
+        />
       )
   }
 }
