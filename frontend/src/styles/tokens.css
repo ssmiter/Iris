@@ -53,6 +53,13 @@
   --color-info: 61 110 170;
   --color-info-soft: 235 242 251;
   --color-info-foreground: 43 82 130;
+  /* 能力种类语义色（docs/32 §5）：紫=knowledge，青=kernel_skill。 */
+  --color-violet: 96 102 196;
+  --color-violet-soft: 240 241 252;
+  --color-violet-foreground: 70 76 148;
+  --color-teal: 20 125 115;
+  --color-teal-soft: 224 242 239;
+  --color-teal-foreground: 15 90 82;
 
   /* Component-level defaults. */
   --control-height-sm: 2rem;
@@ -123,6 +130,12 @@
   --color-info: 141 184 234;
   --color-info-soft: 39 57 79;
   --color-info-foreground: 190 218 249;
+  --color-violet: 176 180 248;
+  --color-violet-soft: 52 54 92;
+  --color-violet-foreground: 205 208 252;
+  --color-teal: 110 200 185;
+  --color-teal-soft: 28 52 50;
+  --color-teal-foreground: 150 225 210;
 
   --shadow-hairline: 0 1px 0 rgb(255 255 255 / 0.04);
   --shadow-raised: 0 10px 28px rgb(0 0 0 / 0.24);

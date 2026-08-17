@@ -1121,8 +1121,9 @@ GET /api/v1/capability-admin/items?path=/industry/mes&kind=process&query=库存
 GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/query_mes_material_inventory
 ```
 
-- `tree`：目录树（path/name/title/count/children），计数覆盖注册表 + Pipeline + 目录
-  投影源，标题来自 `_directory.yml`。
+- `tree`：目录树（path/name/title/count/stats/children），计数覆盖注册表 + Pipeline + 目录
+  投影源，标题来自 `_directory.yml`；`stats` 是 `_directory.yml` 声明口径的实时值，
+  未声明则为空表。
 - `items`：某目录下的对象清单。字段在 discovery card（§8.1）之外增加管理切面：
   `origin`（kernel | extension | mcp | skill_store）、`sourceRoot`（拓展根 / MCP
   serverId）、`sourceFile`（来源文件绝对路径，"揭示所在目录"用）、`shadowedBy`

@@ -339,6 +339,63 @@ export const capabilityManagementApi = {
     ),
 }
 
+export interface CapabilityTreeNode {
+  path: string
+  name: string
+  title: string
+  count: number
+  stats: Record<string, unknown>
+  children: CapabilityTreeNode[]
+}
+
+export interface CapabilityAdminItem {
+  id: string | null
+  version: string | null
+  kind: string
+  name: string
+  path: string
+  description: string | null
+  riskLevel: string | null
+  availability: string | null
+  availabilityReason: string | null
+  origin: 'kernel' | 'extension' | 'mcp' | 'skill_store' | 'pipeline' | string
+  sourceRoot: string | null
+  sourceFile: string | null
+  shadowedBy: string | null
+}
+
+export interface CapabilityDirectoryCard {
+  path: string
+  title: string
+  description: string
+  capabilityCount: number
+  stats: Record<string, unknown>
+}
+
+export interface CapabilityAdminListing {
+  path: string
+  directories: CapabilityDirectoryCard[]
+  items: CapabilityAdminItem[]
+}
+
+export interface CapabilityAdminDetail {
+  item: CapabilityAdminItem
+  definition: unknown | null
+}
+
+/** 统一能力管理页的只读投影（docs/32 §4、docs/08 §8.7） */
+export const capabilityAdminApi = {
+  tree: () => requestJson<CapabilityTreeNode>('/api/v1/capability-admin/tree'),
+  items: (path: string) =>
+    requestJson<CapabilityAdminListing>(
+      `/api/v1/capability-admin/items?path=${encodeURIComponent(path)}`,
+    ),
+  detail: (path: string) =>
+    requestJson<CapabilityAdminDetail>(
+      `/api/v1/capability-admin/items/detail?path=${encodeURIComponent(path)}`,
+    ),
+}
+
 export interface ArtifactPreviewView {
   artifactId: string
   artifactRef: string

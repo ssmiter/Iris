@@ -1,6 +1,6 @@
 # 32 · 统一能力管理页
 
-> 状态：已定稿待实现（M5）。回答"能力是什么、管理页管什么、不管什
+> 状态：已落地（M5a 后端 + M5b 前端）。回答"能力是什么、管理页管什么、不管什
 > 么"。实现顺序：M5a 后端（shadowed-by + 管理查询 API）→ M5b 前端
 > （CapabilityCenter 重构为统一页）。
 
@@ -101,14 +101,20 @@ CapabilityCenter 从"三标签弹窗"重构为"目录树统一页"（仍是 Moda
 
 - 目录树为脊柱，kind 徽标是语义色切面（kernel 灰 / process 蓝 /
   skill 绿 / knowledge 紫 / mcp 橙 / kernel_skill 青）；风险四档沿用
-  对话内工具卡片的既有色。
+  对话内工具卡片的既有色。实现上紫/青是新增的语义 token（violet /
+  teal，tokens.css + Badge tone）；`kernel_skill` 由后端
+  `kind=skill + origin=skill_store` 呈现（kind 是"技能"，来源徽标
+  区分技能库与 SKILL.md 文件技能）。
 - 详情卡内展开（不跳页不抽屉）：文件真相对象显示来源文件路径 +
-  "在文件夹中显示"；DB 真相对象内嵌现有编辑器（Skill/MCP/记忆）。
-- shadowed 件灰显 + "被 X 遮蔽"徽标，点击定位到胜出件。
+  复制路径（浏览器无法调起资源管理器，复制是诚实的等价物）；DB 真相
+  对象内嵌现有编辑器（Skill 编辑器在详情内打开；MCP 连接器与记忆
+  从页头入口或详情的"管理连接"进入子视图）。
+- shadowed 件灰显 + "被 X 遮蔽"徽标。`shadowed_by` 是胜出者的
+  provider key 而非能力路径，无法精确跳转，故实现为标注而非定位链接。
 - 内置（rank 50）与内核件不出现删除/停用按钮（内置不可删；它们的
   真相在发行物里）。
-- 动画只用于注意力锚定：树展开与卡内展开用既有 duration-fast 过渡，
-  无其他动效。
+- Modal 仍是入口但升到 `xl`（max-w-5xl，Modal 新增尺寸档）；树展开
+  与卡内展开用既有 duration-fast 过渡，无其他动效。
 
 ## 6. 边界（本期不做）
 
@@ -120,6 +126,10 @@ CapabilityCenter 从"三标签弹窗"重构为"目录树统一页"（仍是 Moda
 ## 7. 里程碑
 
 - **M5a（已落地）**：逐件 shadowed-by 裁决 + 管理查询 API（§3、§4）+
-  ExtensionProviderIntegrationTest 覆盖遮蔽场景。
-- **M5b**：CapabilityCenter 重构为目录树统一页（§5），旧三标签的
-  编辑器作为详情内编辑保留；irisApi 增加 capabilityAdminApi。
+  ExtensionProviderIntegrationTest 覆盖遮蔽场景。树节点带
+  `stats`（`_directory.yml` 声明口径的实时值，与 DirectoryCard 同源）。
+- **M5b（已落地）**：CapabilityCenter 重构为目录树统一页（§5）。
+  `CapabilityTreeView`（树 + 清单 + 卡内详情 + 本地 kind/文本过滤）
+  为默认视图；MCP 连接器（`McpConsole`）与记忆（`MemoryConsole`）
+  收进页头入口的子视图，编辑器原样保留；irisApi 增加
+  `capabilityAdminApi`（tree / items / detail，只读）。

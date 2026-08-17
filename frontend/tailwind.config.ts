@@ -52,6 +52,16 @@ export default {
           soft: color('info-soft'),
           foreground: color('info-foreground'),
         },
+        violet: {
+          DEFAULT: color('violet'),
+          soft: color('violet-soft'),
+          foreground: color('violet-foreground'),
+        },
+        teal: {
+          DEFAULT: color('teal'),
+          soft: color('teal-soft'),
+          foreground: color('teal-foreground'),
+        },
       },
       fontFamily: {
         sans: [

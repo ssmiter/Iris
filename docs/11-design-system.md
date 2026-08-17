@@ -352,13 +352,16 @@ padding: none | sm | md | lg
 ### 10.4 Badge
 
 ```text
-tone: neutral | info | success | warning | danger
+tone: neutral | info | success | warning | danger | violet | teal
 appearance: soft | outline
 ```
 
 - 可选 dot/icon，但始终保留文字；
 - 不用于长句；
-- 状态文案由业务层提供，Badge 不推断状态。
+- 状态文案由业务层提供，Badge 不推断状态；
+- violet / teal 是能力种类语义色（docs/32 §5：knowledge 紫、
+  kernel_skill 青），对应 tokens.css 的 `--color-violet*` /
+  `--color-teal*` 三件套，不做状态含义。
 
 ### 10.5 Modal
 
@@ -367,7 +370,7 @@ appearance: soft | outline
 - controlled open state；
 - focus trap、Esc、overlay click 和焦点归还；
 - `aria-labelledby / describedby`；
-- `sm / md / lg` 三种宽度；
+- `sm / md / lg / xl` 四种宽度（xl 为管理页双栏布局预留，如统一能力页）；
 - body 可滚动，header/footer 稳定；
 - danger confirmation 是 Modal 的组合，不是 Modal 内置逻辑。
 

@@ -12,6 +12,8 @@ const badgeVariants = cva(
         success: '',
         warning: '',
         danger: '',
+        violet: '',
+        teal: '',
       },
       appearance: {
         soft: '',
@@ -69,6 +71,26 @@ const badgeVariants = cva(
         appearance: 'outline',
         className: 'border-danger/40 text-danger',
       },
+      {
+        tone: 'violet',
+        appearance: 'soft',
+        className: 'border-transparent bg-violet-soft text-violet-foreground',
+      },
+      {
+        tone: 'violet',
+        appearance: 'outline',
+        className: 'border-violet/40 text-violet',
+      },
+      {
+        tone: 'teal',
+        appearance: 'soft',
+        className: 'border-transparent bg-teal-soft text-teal-foreground',
+      },
+      {
+        tone: 'teal',
+        appearance: 'outline',
+        className: 'border-teal/40 text-teal',
+      },
     ],
     defaultVariants: {
       tone: 'neutral',
@@ -89,6 +111,8 @@ const dotTone: Record<NonNullable<BadgeProps['tone']>, string> = {
   success: 'bg-success',
   warning: 'bg-warning',
   danger: 'bg-danger',
+  violet: 'bg-violet',
+  teal: 'bg-teal',
 }
 
 export function Badge({

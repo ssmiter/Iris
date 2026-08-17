@@ -36,6 +36,7 @@ public class CapabilityAdminService {
     private final PipelineDefinitionRegistry pipelines;
     private final List<CapabilityCatalogSource> extensionSources;
     private final ExtensionProviderService extensions;
+    private final DirectoryStatsService directoryStats;
     private final ObjectMapper objectMapper;
 
     public CapabilityAdminService(
@@ -45,6 +46,7 @@ public class CapabilityAdminService {
             PipelineDefinitionRegistry pipelines,
             List<CapabilityCatalogSource> extensionSources,
             ExtensionProviderService extensions,
+            DirectoryStatsService directoryStats,
             ObjectMapper objectMapper
     ) {
         this.capabilities = capabilities;
@@ -53,6 +55,7 @@ public class CapabilityAdminService {
         this.pipelines = pipelines;
         this.extensionSources = List.copyOf(extensionSources);
         this.extensions = extensions;
+        this.directoryStats = directoryStats;
         this.objectMapper = objectMapper;
     }
 
@@ -61,6 +64,8 @@ public class CapabilityAdminService {
             String name,
             String title,
             int count,
+            /** `_directory.yml` 声明口径的实时值；未声明则为空表。 */
+            Map<String, Object> stats,
             List<AdminTreeNode> children
     ) {
     }
@@ -119,21 +124,25 @@ public class CapabilityAdminService {
             children.add(buildNode(candidate, counts, totalItems));
         }
         children.sort(Comparator.comparing(AdminTreeNode::path));
-        String title = directoryCatalog.find(path.isEmpty() ? "/" : path)
+        String nodePath = path.isEmpty() ? "/" : path;
+        Optional<CapabilityDirectoryCatalog.DirectoryDefinition> directory =
+                directoryCatalog.find(nodePath);
+        String title = directory
                 .map(CapabilityDirectoryCatalog.DirectoryDefinition::title)
                 .orElse("");
+        int count = path.isEmpty()
+                ? totalItems
+                : counts.getOrDefault(path, 0);
+        List<String> expose = directory
+                .map(CapabilityDirectoryCatalog.DirectoryDefinition::statsExpose)
+                .orElse(List.of());
+        Map<String, Object> stats = expose.isEmpty()
+                ? Map.of()
+                : directoryStats.stats(nodePath, count, expose);
         String name = path.isEmpty()
                 ? "/"
                 : path.substring(path.lastIndexOf('/') + 1);
-        return new AdminTreeNode(
-                path.isEmpty() ? "/" : path,
-                name,
-                title,
-                path.isEmpty()
-                        ? totalItems
-                        : counts.getOrDefault(path, 0),
-                children
-        );
+        return new AdminTreeNode(nodePath, name, title, count, stats, children);
     }
 
     public record AdminItem(

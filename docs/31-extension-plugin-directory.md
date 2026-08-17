@@ -410,8 +410,9 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   `resource` 参数围栏读取束内资源）；frontmatter 白名单校验 fail-closed；
   默认扫描序列补全五个 rank，冲突处置维持整根 fail-closed（逐件
   `shadowed-by` 标注仍随管理页落地）；
-- **M5**：统一能力管理页——逐件 `shadowed-by` 裁决（§5.2）+ 只读管理
-  查询 API + CapabilityCenter 重构为目录树统一页。设计与边界见
+- **M5（已落地）**：统一能力管理页——逐件 `shadowed-by` 裁决（§5.2）+
+  只读管理查询 API（`/api/v1/capability-admin`）+ CapabilityCenter
+  重构为目录树统一页。设计与边界见
   [docs/32](32-capability-management-page.md)；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。

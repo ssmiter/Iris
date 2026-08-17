@@ -4,7 +4,7 @@ import { type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { Button } from './Button'
 
-export type ModalSize = 'sm' | 'md' | 'lg'
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
 
 export interface ModalProps {
   trigger?: ReactNode
@@ -22,6 +22,7 @@ const sizeClass: Record<ModalSize, string> = {
   sm: 'max-w-md',
   md: 'max-w-xl',
   lg: 'max-w-3xl',
+  xl: 'max-w-5xl',
 }
 
 export function Modal({
