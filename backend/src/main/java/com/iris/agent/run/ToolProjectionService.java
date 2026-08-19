@@ -1,5 +1,7 @@
 package com.iris.agent.run;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -7,6 +9,7 @@ import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolRuntimeRepository;
 import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
 import org.slf4j.Logger;
@@ -27,8 +30,11 @@ public class ToolProjectionService {
             ToolProjectionService.class
     );
 
+    private static final int ARGUMENTS_SUMMARY_MAX_LENGTH = 160;
+
     private final JdbcClient jdbc;
     private final RunRoundRepository runs;
+    private final ToolRuntimeRepository toolFacts;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final ConversationEventAppender events;
@@ -38,6 +44,7 @@ public class ToolProjectionService {
     public ToolProjectionService(
             JdbcClient jdbc,
             RunRoundRepository runs,
+            ToolRuntimeRepository toolFacts,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
             ConversationEventAppender events,
@@ -45,6 +52,7 @@ public class ToolProjectionService {
     ) {
         this.jdbc = jdbc;
         this.runs = runs;
+        this.toolFacts = toolFacts;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.events = events;
@@ -563,6 +571,7 @@ public class ToolProjectionService {
         approvalView.put("status", approval.status());
         approvalView.put("version", approval.version());
         approvalView.put("expiresAt", approval.expiresAt());
+        attachToolArguments(approvalView, result);
         ArrayNode actions = projection.putArray("actions");
         if ("waiting".equals(status)) {
             action(actions, "approve", "批准", "primary");
@@ -1026,6 +1035,63 @@ public class ToolProjectionService {
             case "outcome_unknown" -> "结果未知，需要先核验";
             default -> "工具正在处理";
         };
+    }
+
+    private void attachToolArguments(
+            ObjectNode approvalView,
+            RuntimeResult result
+    ) {
+        ToolRuntimeRepository.SnapshotRow snapshot;
+        try {
+            snapshot = toolFacts.snapshot(result.executionId());
+        } catch (RuntimeException exception) {
+            LOGGER.warn(
+                    "Approval projection could not load operation snapshot for {}",
+                    result.executionId(),
+                    exception
+            );
+            return;
+        }
+        if (snapshot == null || snapshot.normalizedInputJson() == null) {
+            return;
+        }
+        JsonNode parameters;
+        try {
+            parameters = objectMapper.readTree(snapshot.normalizedInputJson());
+        } catch (JsonProcessingException exception) {
+            LOGGER.warn(
+                    "Approval projection could not parse normalized input for {}",
+                    result.executionId(),
+                    exception
+            );
+            return;
+        }
+        if (parameters.isNull()) {
+            return;
+        }
+        approvalView.set("parameters", parameters);
+        String summary = compactJsonSummary(parameters, ARGUMENTS_SUMMARY_MAX_LENGTH);
+        if (summary != null && !summary.isBlank()) {
+            approvalView.put("argumentsSummary", summary);
+        }
+    }
+
+    private String compactJsonSummary(JsonNode value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String compact = value.toString();
+        if (compact.length() <= maxLength) {
+            return compact;
+        }
+        int cut = Math.max(0, maxLength - 3);
+        if (cut >= compact.length()) {
+            cut = compact.length() - 3;
+        }
+        if (cut < 0) {
+            cut = 0;
+        }
+        return compact.substring(0, cut) + "...";
     }
 
     private void enrichToolProjection(
