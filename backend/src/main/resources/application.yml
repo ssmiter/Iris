@@ -27,6 +27,7 @@ iris:
   workspace: ~/Iris/workspace
   agent:
     max-parallel-read-tools: ${IRIS_MAX_PARALLEL_READ_TOOLS:4}
+    max-active-child-runs: ${IRIS_MAX_ACTIVE_CHILD_RUNS:3}
   retrieval:
     embedding:
       mode: ${IRIS_EMBEDDING_MODE:disabled}
