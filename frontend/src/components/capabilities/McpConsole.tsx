@@ -13,8 +13,12 @@ import { EditorHeading, EnableSwitch, QuietState } from './controls'
 const emptyMcp: McpServerDraft = {
   slug: '',
   displayName: '',
+  transport: 'streamable_http',
   endpoint: '',
   authorizationEnv: '',
+  command: '',
+  args: [],
+  env: [],
   enabled: true,
 }
 
@@ -146,7 +150,7 @@ export function McpConsole({
       <EditorHeading title="MCP 连接" onCancel={onBack} backLabel="返回能力树" />
       <div className="flex items-start justify-between gap-5 px-1">
         <p className="text-small leading-relaxed text-ink-muted">
-          Iris 只保存连接地址与凭据环境变量名；连通后远端工具进入同一审批和执行链路，并出现在能力树上。
+          Iris 保存连接方式与凭据环境变量名；连通后远端工具进入同一审批和执行链路，并出现在能力树上。支持 Streamable HTTP 与 stdio 本地进程。
         </p>
         <Button variant="secondary" size="sm" onClick={() => setEditing(undefined)}>
           <Plus className="h-3.5 w-3.5" />
@@ -156,7 +160,7 @@ export function McpConsole({
       {loading ? (
         <QuietState>正在读取 MCP 连接…</QuietState>
       ) : servers.length === 0 ? (
-        <QuietState>还没有 MCP 连接。首版支持 Streamable HTTP。</QuietState>
+        <QuietState>还没有 MCP 连接。支持 Streamable HTTP 与 stdio 本地进程。</QuietState>
       ) : (
         servers.map((server) => {
           const expanded = expandedServer === server.serverId
@@ -180,7 +184,7 @@ export function McpConsole({
                     <ConnectionBadge state={server.connectionState} />
                   </div>
                   <p className="ml-[1.375rem] mt-1 truncate text-small text-ink-muted">
-                    {server.toolCount} 个工具 · {server.endpoint}
+                    {server.toolCount} 个工具 · {server.transport === 'stdio' ? server.command ?? 'stdio' : server.endpoint}
                   </p>
                 </button>
                 <div className="flex items-center gap-1">
@@ -251,13 +255,21 @@ function McpEditor({
       ? {
           slug: current.slug,
           displayName: current.displayName,
+          transport: current.transport === 'stdio' ? 'stdio' : 'streamable_http',
           endpoint: current.endpoint,
           authorizationEnv: current.authorizationEnv ?? '',
+          command: current.command ?? '',
+          args: current.args ?? [],
+          env: current.env ?? [],
           enabled: current.enabled,
         }
       : emptyMcp,
   )
   const [saving, setSaving] = useState(false)
+
+  const setTransport = (transport: McpServerDraft['transport']) => {
+    setDraft((prev) => ({ ...prev, transport }))
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -281,13 +293,105 @@ function McpEditor({
         <Input label="连接标识" required value={draft.slug} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} placeholder="office_tools" />
         <Input label="显示名称" required value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} placeholder="Office 工具" />
       </div>
-      <Input label="Streamable HTTP 地址" required type="url" value={draft.endpoint} onChange={(event) => setDraft({ ...draft, endpoint: event.target.value })} placeholder="http://127.0.0.1:3000/mcp" />
-      <Input label="Bearer Token 环境变量" value={draft.authorizationEnv} onChange={(event) => setDraft({ ...draft, authorizationEnv: event.target.value })} placeholder="OFFICE_MCP_TOKEN" description="这里只保存环境变量名，Token 本身不会进入 Iris 数据库或前端。" />
+      <div className="grid gap-2">
+        <label className="text-small font-semibold text-ink">传输方式</label>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-body text-ink">
+            <input
+              type="radio"
+              name="transport"
+              value="streamable_http"
+              checked={draft.transport === 'streamable_http'}
+              onChange={() => setTransport('streamable_http')}
+              className="h-4 w-4 accent-focus"
+            />
+            Streamable HTTP
+          </label>
+          <label className="flex items-center gap-2 text-body text-ink">
+            <input
+              type="radio"
+              name="transport"
+              value="stdio"
+              checked={draft.transport === 'stdio'}
+              onChange={() => setTransport('stdio')}
+              className="h-4 w-4 accent-focus"
+            />
+            stdio（本地进程）
+          </label>
+        </div>
+      </div>
+      {draft.transport === 'streamable_http' ? (
+        <>
+          <Input label="Streamable HTTP 地址" required type="url" value={draft.endpoint} onChange={(event) => setDraft({ ...draft, endpoint: event.target.value })} placeholder="http://127.0.0.1:3000/mcp" />
+          <Input label="Bearer Token 环境变量" value={draft.authorizationEnv} onChange={(event) => setDraft({ ...draft, authorizationEnv: event.target.value })} placeholder="OFFICE_MCP_TOKEN" description="这里只保存环境变量名，Token 本身不会进入 Iris 数据库或前端。" />
+        </>
+      ) : (
+        <>
+          <Input label="命令（可执行文件）" required value={draft.command} onChange={(event) => setDraft({ ...draft, command: event.target.value })} placeholder="npx" />
+          <TextLinesField
+            label="参数（每行一个）"
+            value={draft.args}
+            onChange={(args) => setDraft({ ...draft, args })}
+            placeholder={`-y\n@modelcontextprotocol/server-filesystem\nC:\\\\Users\\\\...`}
+          />
+          <TextLinesField
+            label="环境变量名（每行一个，值从本机环境读取）"
+            value={draft.env}
+            onChange={(env) => setDraft({ ...draft, env })}
+            placeholder="FILESYSTEM_MCP_API_KEY"
+            description="只保存变量名，值不会进入 Iris 数据库或前端。"
+          />
+        </>
+      )}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>取消</Button>
         <Button type="submit" isLoading={saving} loadingLabel="正在连接">保存并检查连接</Button>
       </div>
     </form>
+  )
+}
+
+function TextLinesField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  description,
+}: {
+  label: string
+  value?: string[]
+  onChange: (lines: string[]) => void
+  placeholder?: string
+  description?: string
+}) {
+  const text = (value ?? []).join('\n')
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-small font-semibold text-ink">{label}</span>
+      <textarea
+        value={text}
+        onChange={(event) =>
+          onChange(
+            event.target.value
+              .split('\n')
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0),
+          )
+        }
+        placeholder={placeholder}
+        rows={3}
+        className={cn(
+          'min-h-[5rem] w-full rounded-sm border border-border bg-surface-raised px-3.5 py-2',
+          'text-body text-ink placeholder:text-ink-muted',
+          'shadow-hairline outline-none',
+          'transition-[border-color,background-color,box-shadow] duration-fast ease-standard',
+          'hover:border-border-strong',
+          'focus-visible:border-focus focus-visible:shadow-focus',
+          'motion-reduce:transition-none',
+        )}
+      />
+      {description && <p className="text-small text-ink-muted">{description}</p>}
+    </label>
   )
 }
 

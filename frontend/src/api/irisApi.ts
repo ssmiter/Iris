@@ -201,13 +201,20 @@ export interface McpServerView {
   createdAt: string
   updatedAt: string
   checkedAt: string | null
+  command: string | null
+  args: string[] | null
+  env: string[] | null
 }
 
 export interface McpServerDraft {
   slug: string
   displayName: string
+  transport: 'streamable_http' | 'stdio'
   endpoint: string
   authorizationEnv?: string
+  command?: string
+  args?: string[]
+  env?: string[]
   enabled: boolean
 }
 
