@@ -52,6 +52,43 @@ public final class AutoCompactionService {
                 );
     }
 
+    /**
+     * Requests a proactive compaction while the source Run is still active.
+     * This reuses the same durable compaction primitive; if the branch is still
+     * active (e.g. the current Turn has not closed) the planning step may refuse
+     * and the request is silently dropped.
+     */
+    public void requestCompaction(String activeRunId) {
+        Mono.fromRunnable(() -> requestCompactionNow(activeRunId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                        ignored -> {
+                        },
+                        error -> LOGGER.warn(
+                                "Proactive compaction request skipped for {}",
+                                activeRunId,
+                                error
+                        )
+                );
+    }
+
+    private void requestCompactionNow(String activeRunId) {
+        RunRow run = runs.findRun(activeRunId).orElse(null);
+        if (run == null
+                || !run.root()
+                || !"agentic".equals(run.kind())) {
+            return;
+        }
+        var pressure = contexts.latestPressure(activeRunId).orElse(null);
+        if (pressure == null
+                || (pressure.droppedFactCount() == 0
+                    && pressure.inputRatio() < TRIGGER_RATIO)) {
+            return;
+        }
+        commands.createAuto(run.conversationId(), run.branchId())
+                .ifPresent(created -> launcher.launch(created.runId()));
+    }
+
     private void considerNow(String completedRunId) {
         RunRow run = runs.findRun(completedRunId).orElse(null);
         if (run == null

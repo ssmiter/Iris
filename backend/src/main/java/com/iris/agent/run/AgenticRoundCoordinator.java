@@ -1,6 +1,7 @@
 package com.iris.agent.run;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.agent.model.AutoCompactionService;
 import com.iris.agent.model.ModelAttemptRepository.AttemptRow;
 import com.iris.agent.model.AnswerStreamProjector;
 import com.iris.agent.model.ModelAttemptResult;
@@ -13,6 +14,7 @@ import com.iris.agent.model.PromptTooLargeException;
 import com.iris.agent.model.ModelProtocolException;
 import com.iris.agent.model.ModelRequest;
 import com.iris.agent.model.ModelStreamAssembler;
+import com.iris.agent.model.ToolObservationService;
 import com.iris.agent.model.provider.ModelProvider;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.agent.model.provider.ModelProviderException;
@@ -21,12 +23,14 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.RunEventEmitter;
 import com.iris.conversation.infrastructure.TurnStopRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -60,6 +64,11 @@ public class AgenticRoundCoordinator {
     private final TurnStopRepository stopRequests;
     private final RunCancellationRegistry cancellations;
     private final RunFinalizationPolicy finalizationPolicy;
+    private final AutoCompactionService autoCompactions;
+    private final ToolObservationService toolObservations;
+    private final double compactionWarningRatio;
+    private final double compactionBlockingRatio;
+    private final Clock clock = Clock.systemUTC();
 
     public AgenticRoundCoordinator(
             RunRoundRepository runFacts,
@@ -74,7 +83,13 @@ public class AgenticRoundCoordinator {
             RunMailboxInjectionService mailboxInjections,
             TurnStopRepository stopRequests,
             RunCancellationRegistry cancellations,
-            RunFinalizationPolicy finalizationPolicy
+            RunFinalizationPolicy finalizationPolicy,
+            AutoCompactionService autoCompactions,
+            ToolObservationService toolObservations,
+            @Value("${iris.agent.compaction.warning-ratio:0.85}")
+            double compactionWarningRatio,
+            @Value("${iris.agent.compaction.blocking-ratio:0.95}")
+            double compactionBlockingRatio
     ) {
         this.runFacts = runFacts;
         this.contexts = contexts;
@@ -89,6 +104,10 @@ public class AgenticRoundCoordinator {
         this.stopRequests = stopRequests;
         this.cancellations = cancellations;
         this.finalizationPolicy = finalizationPolicy;
+        this.autoCompactions = autoCompactions;
+        this.toolObservations = toolObservations;
+        this.compactionWarningRatio = compactionWarningRatio;
+        this.compactionBlockingRatio = compactionBlockingRatio;
     }
 
     public Mono<RoundAdvance> advance(
@@ -150,10 +169,13 @@ public class AgenticRoundCoordinator {
                             loaded.round(),
                             contextSeed
                     );
+                    double originalRatio = contextPressureRatio(context);
+                    context = compactIfBlocking(loaded, contextSeed, context);
                     if (loaded.run().root()) {
                         lifecycleEvents.contextUsageUpdated(
                                 context,
-                                loaded.run()
+                                loaded.run(),
+                                contextPressurePhase(originalRatio)
                         );
                     }
                     AttemptRow attempt = attempts.begin(
@@ -629,10 +651,20 @@ public class AgenticRoundCoordinator {
                             .orElseThrow();
                     boolean stopRequested = run.root()
                             && stopRequests.requested(run.turnId());
+                    boolean shouldCancel = cancelled || stopRequested;
+                    if (shouldCancel) {
+                        toolObservations.recordCancelledPendingCalls(
+                                run.conversationId(),
+                                run.turnId(),
+                                run.runId(),
+                                round.roundId(),
+                                clock.instant()
+                        );
+                    }
                     RoundToolProgress progress = tools.advance(
                             round.roundId(),
                             workspaceRoot,
-                            cancelled || stopRequested
+                            shouldCancel
                     );
                     return new RoundAdvance(
                             progress.roundId(),
@@ -642,6 +674,46 @@ public class AgenticRoundCoordinator {
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private ModelContext compactIfBlocking(
+            LoadedRound loaded,
+            ContextSeed contextSeed,
+            ModelContext assembled
+    ) {
+        double ratio = contextPressureRatio(assembled);
+        if (ratio < compactionBlockingRatio) {
+            return assembled;
+        }
+        autoCompactions.requestCompaction(loaded.run().runId());
+        return contexts.assemble(
+                loaded.run(),
+                loaded.round(),
+                contextSeed.withTighterBudget(OVERFLOW_BUDGET_REDUCTION_RATIO)
+        );
+    }
+
+    private String contextPressurePhase(ModelContext context) {
+        return contextPressurePhase(contextPressureRatio(context));
+    }
+
+    private String contextPressurePhase(double ratio) {
+        if (ratio >= compactionBlockingRatio) {
+            return "blocking";
+        }
+        if (ratio >= compactionWarningRatio) {
+            return "warning";
+        }
+        return null;
+    }
+
+    private double contextPressureRatio(ModelContext context) {
+        int usable = context.maxInputTokens()
+                - context.reservedOutputTokens();
+        if (usable <= 0) {
+            return 1.0;
+        }
+        return (double) context.estimatedInputTokens() / usable;
     }
 
     private LoadedRound load(String roundId) {

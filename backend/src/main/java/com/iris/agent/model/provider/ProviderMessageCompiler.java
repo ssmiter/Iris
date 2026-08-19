@@ -11,6 +11,17 @@ import java.util.List;
 
 /**
  * Groups flat canonical facts into provider-neutral message turns.
+ *
+ * <p>Cache-control note: the upstream {@link com.iris.agent.model.ModelContextAssembler}
+ * already orders static items before dynamic items, and
+ * {@link com.iris.agent.model.ModelPromptPrefixService} captures a stable
+ * prefixHash/toolSchemaHash identity. When an Anthropic-protocol provider is
+ * wired in, its adapter should attach {@code cache_control: {"type":"ephemeral"}}
+ * here: one breakpoint at the tail of the stable system prefix, and one at the
+ * tail of the tool schema list. Anthropic allows at most 4 breakpoints, so only
+ * stable (static) content should receive them; dynamic items must remain
+ * uncached. The OpenAI-compatible path does not need and must not receive these
+ * breakpoints.</p>
  */
 @Component
 public class ProviderMessageCompiler {

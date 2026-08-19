@@ -223,7 +223,11 @@ public final class ConversationViews {
     public record ContextUsageView(
             int used,
             int limit,
-            int percent
+            int percent,
+            String phase
     ) {
+        public ContextUsageView(int used, int limit, int percent) {
+            this(used, limit, percent, null);
+        }
     }
 }

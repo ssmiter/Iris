@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.agent.model.AnswerStreamProjector;
 import com.iris.agent.model.ModelAttemptRepository;
 import com.iris.agent.model.ModelAttemptResult;
+import com.iris.agent.model.AutoCompactionService;
 import com.iris.agent.model.ModelAttemptService;
 import com.iris.agent.model.ModelContext;
 import com.iris.agent.model.ModelContextAssembler;
@@ -11,6 +12,7 @@ import com.iris.agent.model.ModelContextWindowPlanner;
 import com.iris.agent.model.ModelPromptPrefix;
 import com.iris.agent.model.ModelStreamEvent;
 import com.iris.agent.model.PromptTooLargeException;
+import com.iris.agent.model.ToolObservationService;
 import com.iris.agent.model.provider.ModelProvider;
 import com.iris.agent.model.provider.ModelProviderException;
 import com.iris.agent.model.provider.ModelProviderRegistry;
@@ -79,6 +81,10 @@ class AgenticRoundCoordinatorTest {
     private RunCancellationRegistry cancellations;
     @Mock
     private RunFinalizationPolicy finalizationPolicy;
+    @Mock
+    private AutoCompactionService autoCompactions;
+    @Mock
+    private ToolObservationService toolObservations;
 
     private AgenticRoundCoordinator coordinator() {
         return new AgenticRoundCoordinator(
@@ -94,7 +100,11 @@ class AgenticRoundCoordinatorTest {
                 mailboxInjections,
                 stopRequests,
                 cancellations,
-                finalizationPolicy
+                finalizationPolicy,
+                autoCompactions,
+                toolObservations,
+                0.85,
+                0.95
         );
     }
 
@@ -208,6 +218,32 @@ class AgenticRoundCoordinatorTest {
                 100,
                 budget.maxInputTokens(),
                 budget.reservedOutputTokens(),
+                0
+        );
+    }
+
+    private ModelContext context(
+            int estimatedInputTokens,
+            int maxInputTokens,
+            int reservedOutputTokens
+    ) {
+        ModelPromptPrefix prefix = new ModelPromptPrefix(
+                "iris.agent.adhoc",
+                1,
+                hash(),
+                hash(),
+                hash()
+        );
+        return new ModelContext(
+                "test instruction",
+                List.of(),
+                List.of(),
+                prefix,
+                hash(),
+                hash(),
+                estimatedInputTokens,
+                maxInputTokens,
+                reservedOutputTokens,
                 0
         );
     }
@@ -495,6 +531,130 @@ class AgenticRoundCoordinatorTest {
                 "test",
                 "too many requests",
                 retryAfter
+        );
+    }
+
+    @Test
+    void emitsWarningContextUsageEventWhenPressureAboveWarning() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        ModelProvider provider = provider();
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(acceptedRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        // ratio = 88 / (100 - 4) = 0.917 -> warning, below blocking
+        when(contexts.assemble(any(), any(), any()))
+                .thenReturn(context(88, 100, 4));
+        when(attempts.begin(anyString(), anyLong(), anyString(), anyString(),
+                anyString(), anyString()))
+                .thenReturn(attempt(0));
+        when(attempts.commit(anyString(), anyLong(), any(ModelAttemptResult.class)))
+                .thenReturn(completedRound());
+        when(cancellations.whenCancelled(RUN_ID))
+                .thenReturn(Mono.never());
+        when(provider.stream(any()))
+                .thenReturn(successStream());
+
+        coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                seed(),
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5));
+
+        verify(lifecycleEvents).contextUsageUpdated(
+                any(),
+                any(),
+                eq("warning")
+        );
+        verify(autoCompactions, never()).requestCompaction(anyString());
+        verify(contexts).assemble(any(), any(), any());
+    }
+
+    @Test
+    void requestsCompactionAndReassemblesWhenPressureAboveBlocking() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        ModelProvider provider = provider();
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(acceptedRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        // first ratio = 96 / (100 - 4) = 1.0 -> blocking
+        when(contexts.assemble(any(), any(), any()))
+                .thenReturn(context(96, 100, 4))
+                .thenReturn(context(70, 100, 4));
+        when(attempts.begin(anyString(), anyLong(), anyString(), anyString(),
+                anyString(), anyString()))
+                .thenReturn(attempt(0));
+        when(attempts.commit(anyString(), anyLong(), any(ModelAttemptResult.class)))
+                .thenReturn(completedRound());
+        when(cancellations.whenCancelled(RUN_ID))
+                .thenReturn(Mono.never());
+        when(provider.stream(any()))
+                .thenReturn(successStream());
+
+        coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                seed(),
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5));
+
+        verify(autoCompactions).requestCompaction(eq(RUN_ID));
+        verify(contexts, times(2)).assemble(any(), any(), any());
+        verify(lifecycleEvents).contextUsageUpdated(
+                any(),
+                any(),
+                eq("blocking")
+        );
+    }
+
+    @Test
+    void recordsPlaceholderObservationsWhenDrainingCancelledTools() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        RunRoundRepository.RoundRow awaiting = new RunRoundRepository.RoundRow(
+                ROUND_ID,
+                RUN_ID,
+                0,
+                RoundPhase.AWAITING_TOOLS,
+                1,
+                1
+        );
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(awaiting));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        when(stopRequests.requested(TURN_ID))
+                .thenReturn(true);
+        RoundToolCoordinator.RoundToolProgress progress =
+                new RoundToolCoordinator.RoundToolProgress(
+                        ROUND_ID,
+                        RoundPhase.COMPLETED,
+                        List.of(),
+                        1,
+                        false
+                );
+        when(tools.advance(ROUND_ID, WORKSPACE, true))
+                .thenReturn(progress);
+
+        AgenticRoundCoordinator.RoundAdvance advance = coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                null,
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5));
+
+        assertThat(advance).isNotNull();
+        assertThat(advance.phase()).isEqualTo(RoundPhase.COMPLETED);
+        verify(toolObservations).recordCancelledPendingCalls(
+                eq(CONVERSATION_ID),
+                eq(TURN_ID),
+                eq(RUN_ID),
+                eq(ROUND_ID),
+                any()
         );
     }
 

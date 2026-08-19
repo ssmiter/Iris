@@ -83,6 +83,10 @@ public class RunEventEmitter {
     }
 
     public void contextUsageUpdated(ModelContext context, RunRow run) {
+        contextUsageUpdated(context, run, null);
+    }
+
+    public void contextUsageUpdated(ModelContext context, RunRow run, String phase) {
         int used = context.estimatedInputTokens();
         int limit = context.maxInputTokens();
         int percent = limit > 0
@@ -94,7 +98,7 @@ public class RunEventEmitter {
                         )
                 )
                 : 0;
-        ContextUsageView usage = new ContextUsageView(used, limit, percent);
+        ContextUsageView usage = new ContextUsageView(used, limit, percent, phase);
         ObjectNode payload = objectMapper.createObjectNode();
         payload.set("contextUsage", objectMapper.valueToTree(usage));
         events.append(new EventDraft(

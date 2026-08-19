@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.model.ModelAttemptRepository.ObservationSource;
+import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
+import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolRegistry;
+import com.iris.tools.core.ToolRuntimeRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -12,7 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -30,18 +36,24 @@ public class ToolObservationService {
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final ToolResultContextProjector contextProjector;
+    private final ToolRuntimeRepository toolExecutions;
+    private final ToolRegistry toolRegistry;
     private final Clock clock = Clock.systemUTC();
 
     public ToolObservationService(
             ModelAttemptRepository repository,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
-            ToolResultContextProjector contextProjector
+            ToolResultContextProjector contextProjector,
+            ToolRuntimeRepository toolExecutions,
+            ToolRegistry toolRegistry
     ) {
         this.repository = repository;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.contextProjector = contextProjector;
+        this.toolExecutions = toolExecutions;
+        this.toolRegistry = toolRegistry;
     }
 
     public ToolObservation capture(
@@ -211,6 +223,60 @@ public class ToolObservationService {
                 ));
     }
 
+    /**
+     * 为尚未开始执行的 ToolCall 生成占位 observation。
+     * 已处于执行/核验阶段的调用保持原状，由排空流程继续完成。
+     */
+    public int recordCancelledPendingCalls(
+            String conversationId,
+            String turnId,
+            String runId,
+            String roundId,
+            Instant now
+    ) {
+        List<RoundToolCall> calls = repository.roundToolCalls(roundId);
+        int recorded = 0;
+        for (RoundToolCall call : calls) {
+            String executionId = call.executionId();
+            if (executionId == null) {
+                ToolRegistry.ToolBinding binding = toolRegistry.find(call.toolName())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "找不到工具绑定：" + call.toolName()
+                        ));
+                String syntheticId = "execution_" + UUID.randomUUID()
+                        .toString()
+                        .replace("-", "");
+                String inputHash = hash(write(call.arguments()));
+                toolExecutions.insertSyntheticTerminalExecution(
+                        syntheticId,
+                        call.toolCallId(),
+                        conversationId,
+                        turnId,
+                        runId,
+                        roundId,
+                        binding,
+                        inputHash,
+                        "failed",
+                        "failed",
+                        "run_stopped",
+                        "运行已停止，该调用未执行。",
+                        now
+                );
+                capture(call.toolCallId(), syntheticId);
+                recorded++;
+                continue;
+            }
+            RuntimeResult existing = toolExecutions.findByExecutionId(executionId)
+                    .orElse(null);
+            if (existing != null
+                    && TERMINAL_PHASES.contains(existing.phase())) {
+                capture(call.toolCallId(), executionId);
+                recorded++;
+            }
+        }
+        return recorded;
+    }
+
     private String defaultMessage(String phase) {
         return switch (phase) {
             case "rejected" -> "用户拒绝了这次操作";
@@ -333,7 +399,8 @@ public class ToolObservationService {
 
     private boolean isCancellation(String errorCode) {
         return "tool_cancelled".equals(errorCode)
-                || "cancelled_before_commit".equals(errorCode);
+                || "cancelled_before_commit".equals(errorCode)
+                || "run_stopped".equals(errorCode);
     }
 
     private boolean isInvalidInput(String errorCode) {

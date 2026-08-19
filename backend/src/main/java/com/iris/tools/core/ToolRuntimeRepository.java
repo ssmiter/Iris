@@ -197,6 +197,58 @@ public class ToolRuntimeRepository {
                 .update();
     }
 
+    /**
+     * Inserts a synthetic terminal execution for a ToolCall that was never
+     * started, e.g. because the Run was stopped. No side effect has occurred.
+     */
+    public void insertSyntheticTerminalExecution(
+            String executionId,
+            String toolCallId,
+            String conversationId,
+            String turnId,
+            String runId,
+            String roundId,
+            ToolBinding binding,
+            String inputHash,
+            String phase,
+            String outcomeKind,
+            String errorCode,
+            String errorMessage,
+            Instant now
+    ) {
+        jdbc.sql("""
+                INSERT INTO tool_execution(
+                    execution_id, tool_call_id, conversation_id, turn_id, run_id,
+                    round_id, tool_id, tool_version, tool_name, capability_path,
+                    manifest_hash, input_hash, phase, version, created_at, updated_at,
+                    outcome_kind, error_code, error_message
+                ) VALUES (
+                    :executionId, :toolCallId, :conversationId, :turnId, :runId,
+                    :roundId, :toolId, :toolVersion, :toolName, :capabilityPath,
+                    :manifestHash, :inputHash, :phase, 1, :now, :now,
+                    :outcomeKind, :errorCode, :errorMessage
+                )
+                """)
+                .param("executionId", executionId)
+                .param("toolCallId", toolCallId)
+                .param("conversationId", conversationId)
+                .param("turnId", turnId)
+                .param("runId", runId)
+                .param("roundId", roundId, Types.VARCHAR)
+                .param("toolId", binding.manifest().id())
+                .param("toolVersion", binding.manifest().version())
+                .param("toolName", binding.manifest().name())
+                .param("capabilityPath", binding.capabilityPath())
+                .param("manifestHash", binding.manifestHash())
+                .param("inputHash", inputHash)
+                .param("phase", phase)
+                .param("outcomeKind", outcomeKind)
+                .param("errorCode", errorCode)
+                .param("errorMessage", errorMessage)
+                .param("now", now.toString())
+                .update();
+    }
+
     public void insertResolution(
             String toolCallId,
             String proxyToolName,

@@ -4,6 +4,7 @@ import com.iris.agent.model.ModelContextAssembler.ContextSeed;
 import com.iris.agent.model.AnswerProjectionService;
 import com.iris.agent.model.AgentContextPolicy;
 import com.iris.agent.model.ModelProtocolException;
+import com.iris.agent.model.ToolObservationService;
 import com.iris.agent.model.provider.ModelProviderException;
 import com.iris.agent.run.AgenticRoundCoordinator.RoundAdvance;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
@@ -46,6 +47,7 @@ public class AgenticRunCoordinator {
     private final ConversationLocks conversationLocks;
     private final SupplementRepository supplements;
     private final RunFinalizationPolicy finalizationPolicy;
+    private final ToolObservationService toolObservations;
     private final Clock clock = Clock.systemUTC();
 
     public AgenticRunCoordinator(
@@ -60,7 +62,8 @@ public class AgenticRunCoordinator {
             RunCancellationRegistry cancellations,
             ConversationLocks conversationLocks,
             SupplementRepository supplements,
-            RunFinalizationPolicy finalizationPolicy
+            RunFinalizationPolicy finalizationPolicy,
+            ToolObservationService toolObservations
     ) {
         this.facts = facts;
         this.states = states;
@@ -74,6 +77,7 @@ public class AgenticRunCoordinator {
         this.conversationLocks = conversationLocks;
         this.supplements = supplements;
         this.finalizationPolicy = finalizationPolicy;
+        this.toolObservations = toolObservations;
     }
 
     public Mono<RunAdvance> advance(
@@ -239,6 +243,20 @@ public class AgenticRunCoordinator {
             RoundRow latest = facts.latestRound(runId).orElse(null);
             if (latest != null
                     && latest.phase() == RoundPhase.AWAITING_TOOLS) {
+                toolObservations.recordCancelledPendingCalls(
+                        run.conversationId(),
+                        run.turnId(),
+                        run.runId(),
+                        latest.roundId(),
+                        clock.instant()
+                );
+                if (!toolRuntime.hasCommittedActivity(runId)) {
+                    return new NextRound(
+                            null,
+                            stopRun(run, latest),
+                            null
+                    );
+                }
                 return new NextRound(latest, null, null);
             }
             if (toolRuntime.hasCommittedActivity(runId)) {
