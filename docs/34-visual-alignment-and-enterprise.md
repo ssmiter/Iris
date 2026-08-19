@@ -170,5 +170,23 @@ AgentRunLauncher。
   停用，过期不补跑）；create_schedule 加 once 参数；ScheduleConsole
   加"单次"开关。工具描述纪律随 M10。
 - **M9a / M9b（排期中）**：内核可靠性三项 / 子 Run 并发额度，见 §4。
-- **M10（最后做）prompt 阶段**：技能薄清单注入（核实目录卡片注入块现状）、
-  create_schedule 等工具描述纪律、与两个参考方的 prompt 对比。
+- **M10（已落地）prompt 阶段**：三方对比收敛——
+  - **已落地**：① /system/schedule 工具描述嵌无人值守撰写纪律（自包含/
+    相对时间锚点/完成标准可判定/边界/结论摘要；once 补"过期不补跑"）；
+    ② delegate_task 任务书好坏示例 + 验收标准可客观判定；
+    ③ AgentSystemPrompt v16 增 SQL 使用边界小节（方言/参数绑定/
+    探索 SOP/聚合减往返/对象仓回读）；
+  - **已落地**：④ 技能薄清单注入（SkillRosterService 双通道采集，
+    kernel_skill DB + SkillTool 文件投影去重，按路径排序，零技能整块
+    不出现，不参与 prefixHash）；
+  - **已落地**：⑤ static/dynamic 显式边界与 section 丢弃优先级
+    （ModelContextAssembler 按 Stability 分 static/dynamic 区，static
+    在前；WindowPlanner 显式 DropPriority 表，static/required 不丢，
+    dynamic 按旧工具观察→artifact index→agent run state→history
+    summary→assistant trajectory→user message 顺序丢弃；前缀缓存收益，
+    避让技能注入的文件区）；
+  - **不做**：usagePrompt 第二提示通道——纪律直接写进 description，
+    不造平行机制；
+  - **已占优不动**：能力发现 9 条纪律、技能卡片层注入（64 条/250 字符
+    /4000 总量/按路径排序）、系统提示版本化与前缀哈希、manifest
+    元数据丰富度、易变清单不进 system。
