@@ -7,6 +7,7 @@ import {
 import {
   GitBranch,
   Paperclip,
+  Quote,
   Send,
   Square,
   Upload,
@@ -39,6 +40,9 @@ interface ComposerDockProps {
     byteCount: number
   }>
   onRemoveAttachment?: (artifactRef: string) => void
+  quotes?: Array<{ id: string; text: string }>
+  onRemoveQuote?: (id: string) => void
+  onClearQuotes?: () => void
   onSendTurn: (text: string, attachmentRefs: string[]) => void | Promise<void>
   onSendSupplement: (text: string, attachmentRefs: string[]) => void | Promise<void>
   onStop: () => void | Promise<void>
@@ -64,6 +68,9 @@ export function ComposerDock({
   onCancelSupplement,
   attachments = [],
   onRemoveAttachment,
+  quotes = [],
+  onRemoveQuote,
+  onClearQuotes,
   onSendTurn,
   onSendSupplement,
   onStop,
@@ -76,7 +83,7 @@ export function ComposerDock({
   const [isDragOver, setIsDragOver] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const dropCounter = useRef(0)
-  const canSubmit = value.trim().length > 0 && !submitting
+  const canSubmit = (value.trim().length > 0 || quotes.length > 0) && !submitting
 
   // 运行满 5s 才把 placeholder 切到「可补充」态，避免发送瞬间文案跳变
   useEffect(() => {
@@ -90,14 +97,27 @@ export function ComposerDock({
 
   const submit = async () => {
     const text = value.trim()
-    if (!text || submitting) return
+    if ((!text && quotes.length === 0) || submitting) return
+
+    const quoteBlock = quotes.length
+      ? quotes
+          .map((quote) =>
+            quote.text
+              .split('\n')
+              .map((line) => `> ${line}`)
+              .join('\n'),
+          )
+          .join('\n\n') + (text ? '\n\n' : '')
+      : ''
+    const messageText = quoteBlock + text
 
     setSubmitting(true)
     try {
       const refs = attachments.map((attachment) => attachment.artifactRef)
-      if (activeTurn) await onSendSupplement(text, refs)
-      else await onSendTurn(text, refs)
+      if (activeTurn) await onSendSupplement(messageText, refs)
+      else await onSendTurn(messageText, refs)
       onValueChange('')
+      onClearQuotes?.()
     } catch (error) {
       notify.error(
         activeTurn ? '补充消息没有送入' : '消息没有发送',
@@ -215,8 +235,25 @@ export function ComposerDock({
           items={pendingSupplements}
           onCancel={onCancelSupplement}
         />
-        {attachments.length > 0 && (
+        {(quotes.length > 0 || attachments.length > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
+            {quotes.map((quote) => (
+              <span
+                key={quote.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-primary/25 bg-primary-soft px-2 py-1 text-caption text-ink"
+              >
+                <Quote aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="truncate">{quote.text}</span>
+                <button
+                  type="button"
+                  className="rounded-sm text-ink-muted hover:text-ink"
+                  aria-label="移除引用"
+                  onClick={() => onRemoveQuote?.(quote.id)}
+                >
+                  <X aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
             {attachments.map((attachment) => (
               <span
                 key={attachment.artifactRef}

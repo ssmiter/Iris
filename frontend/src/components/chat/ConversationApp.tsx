@@ -43,10 +43,12 @@ import { ComposerDock } from './composer'
 import { ChildRunCapsules, ChildRunPanel } from './ChildRunView'
 import { ConversationTimeline } from './ConversationTimeline'
 import type { ConversationTimelineHandle } from './ConversationTimeline'
+import { HydrationSkeleton } from './HydrationSkeleton'
 import { StallProvider } from './FlowNode'
 import { PendingApprovalStack } from './PendingApprovalStack'
 import { TaskBlackboard } from './TaskBlackboard'
 import { TurnRail } from './TurnRail'
+import { useAnswerQuote } from './useAnswerQuote'
 
 function summary(view: ConversationView) {
   const turns = Object.values(view.turnsById)
@@ -98,6 +100,9 @@ export function ConversationApp() {
   const [viewerRunId, setViewerRunId] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] =
     useState<UploadedArtifact[]>([])
+  const [pendingQuotes, setPendingQuotes] = useState<
+    Array<{ id: string; text: string }>
+  >([])
   const [contextUsage, setContextUsage] = useState<ContextUsageView | null>(
     null,
   )
@@ -136,6 +141,7 @@ export function ConversationApp() {
 
   useEffect(() => {
     setPendingAttachments([])
+    setPendingQuotes([])
   }, [draftKey])
 
   const hydrateView = useCallback((view: ConversationView) => {
@@ -484,6 +490,16 @@ export function ConversationApp() {
   )
   const activeTurn = selectActiveTurn(chat)
 
+  const quotePopover = useAnswerQuote((text) => {
+    setPendingQuotes((current) => {
+      const trimmed = text.trim()
+      if (!trimmed || current.some((item) => item.text === trimmed)) {
+        return current
+      }
+      return [...current, { id: crypto.randomUUID(), text: trimmed }]
+    })
+  })
+
   // 浮动审批条只选择 approval；clarification 直接在过程链内回答，
   // 两者都由后端持久 Attention 事实驱动。
   const waitingApprovals = useMemo(
@@ -674,6 +690,13 @@ export function ConversationApp() {
           current.filter((item) => item.artifactRef !== artifactRef),
         )
       }
+      quotes={pendingQuotes}
+      onRemoveQuote={(id) =>
+        setPendingQuotes((current) =>
+          current.filter((item) => item.id !== id),
+        )
+      }
+      onClearQuotes={() => setPendingQuotes([])}
       replacementMode={
         replacementTarget
           ? {
@@ -859,9 +882,13 @@ export function ConversationApp() {
       }
       composer={composer}
     >
+      {quotePopover}
       <StallProvider>
         <TaskBlackboard tasks={Object.values(chat.tasksById)} />
-        {projection.turns.length > 0 ? (
+        {chat.connectionState === 'hydrating' &&
+        projection.turns.length === 0 ? (
+          <HydrationSkeleton />
+        ) : projection.turns.length > 0 ? (
           <ConversationTimeline
             ref={timelineRef}
             key={draftKey}
