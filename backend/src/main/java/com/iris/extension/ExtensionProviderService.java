@@ -72,6 +72,9 @@ public class ExtensionProviderService
     /** 每根被遮蔽件的运行时视图（docs/32 §3）：随重扫重算，不落库。 */
     private final ConcurrentHashMap<Path, List<ShadowedCapability>>
             shadowedByRoot = new ConcurrentHashMap<>();
+    /** 每根扫描问题的运行时视图（docs/34 M8a）：随重扫重算，不落库。 */
+    private final ConcurrentHashMap<Path, List<ExtensionScanner.ScanProblem>>
+            problemsByRoot = new ConcurrentHashMap<>();
     /** 已注册件的能力路径 → 来源文件（管理页"揭示所在目录"用），按根整体替换。 */
     private final ConcurrentHashMap<Path, Map<String, String>>
             filesByRoot = new ConcurrentHashMap<>();
@@ -152,7 +155,7 @@ public class ExtensionProviderService
     /** 扫描一个根并原子换入注册表；扫描问题 fail-closed 记录但不影响其他根。 */
     void scanAndRegister(Path root) {
         ExtensionScanner.ScanResult result = scanner.scan(root);
-        for (String problem : result.problems()) {
+        for (ExtensionScanner.ScanProblem problem : result.problems()) {
             log.warn("extension rejected: {}", problem);
         }
         directoryRegistry.replaceRoot(root, result.directories());
@@ -305,6 +308,7 @@ public class ExtensionProviderService
                     residentToolsByRoot.put(root, acceptedResident);
             retireAll(previous);
             shadowedByRoot.put(root, List.copyOf(shadowed));
+            problemsByRoot.put(root, List.copyOf(result.problems()));
             Map<String, String> files = new java.util.LinkedHashMap<>();
             for (PendingRegistration item : pending) {
                 boolean accepted = registrations.stream().anyMatch(
@@ -327,6 +331,7 @@ public class ExtensionProviderService
             // 兜底 fail-closed：预裁决之外的冲突（理论不出现）仍整根拒绝。
             retireAll(acceptedResident);
             shadowedByRoot.remove(root);
+            problemsByRoot.remove(root);
             log.error(
                     "extension root {} rejected as a whole: {}",
                     root,
@@ -396,6 +401,7 @@ public class ExtensionProviderService
         toolRegistry.unregisterExternal(providerKey(root));
         retireAll(residentToolsByRoot.remove(root));
         shadowedByRoot.remove(root);
+        problemsByRoot.remove(root);
         filesByRoot.remove(root);
         mcpServers.disableDeclaredByRoot(originKey(root));
         log.info("extension root {} unregistered", root);
@@ -406,6 +412,33 @@ public class ExtensionProviderService
         return shadowedByRoot.values().stream()
                 .flatMap(List::stream)
                 .toList();
+    }
+
+    /**
+     * 全部扫描问题的扁平视图（docs/34 M8a；管理页只读消费）。
+     * 严重度与文件来自扫描器，root 为绝对路径。
+     */
+    public List<ScanProblem> problems() {
+        return problemsByRoot.entrySet().stream()
+                .flatMap(entry -> entry.getValue().stream()
+                        .map(problem -> new ScanProblem(
+                                entry.getKey().toString(),
+                                problem.file() == null
+                                        ? null
+                                        : problem.file().toString(),
+                                problem.description(),
+                                problem.severity().name().toLowerCase()
+                        )))
+                .toList();
+    }
+
+    /** 扫描问题的运行时视图，随重扫重算，不落库。 */
+    public record ScanProblem(
+            String root,
+            String file,
+            String description,
+            String severity
+    ) {
     }
 
     /** 已注册件的来源文件绝对路径；非拓展件返回 null。 */

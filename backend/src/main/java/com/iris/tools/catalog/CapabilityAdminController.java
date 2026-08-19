@@ -9,6 +9,8 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.util.List;
+
 /**
  * 统一能力管理页的只读查询 API（docs/32 §4）。与模型发现原语
  * （/system/capabilities 工具）完全分离：这里的投影进前端管理页，
@@ -49,6 +51,12 @@ public class CapabilityAdminController {
                                 HttpStatus.NOT_FOUND,
                                 "能力不存在或已不可用: " + path
                         )))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @GetMapping("/problems")
+    public Mono<List<CapabilityAdminService.AdminProblem>> problems() {
+        return Mono.fromCallable(admin::problems)
                 .subscribeOn(Schedulers.boundedElastic());
     }
 }
