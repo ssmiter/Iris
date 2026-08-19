@@ -426,6 +426,85 @@ public class ModelAttemptService {
         );
     }
 
+    /**
+     * Records a context-overflow failure when assembly itself overflows before
+     * any attempt has begun. Creates a failed attempt for diagnostics (using a
+     * sentinel context hash because no context was produced) and transitions
+     * the Round from ACCEPTED to FAILED.
+     */
+    public RoundRow failAcceptedRoundForOverflow(
+            String roundId,
+            String providerProfile,
+            String modelId,
+            String category,
+            FailureDiagnostic diagnostic
+    ) {
+        requireText(category, "category");
+        requireText(providerProfile, "providerProfile");
+        requireText(modelId, "modelId");
+        return withLock(roundId, () ->
+                transactions.execute(status -> {
+                    RoundRow round = runs.findRound(roundId).orElseThrow(
+                            () -> new IllegalStateException("Round not found")
+                    );
+                    if (round.phase() != RoundPhase.ACCEPTED) {
+                        throw new IllegalStateException(
+                                "Round is not in accepted phase: " + round.phase()
+                        );
+                    }
+                    RunRow run = runs.findRun(round.runId()).orElseThrow();
+                    Instant now = clock.instant();
+                    String attemptId = id("attempt");
+                    String sentinelHash = "overflow_assembly_" + attemptId;
+                    attempts.insertAttempt(
+                            attemptId,
+                            run.conversationId(),
+                            run.turnId(),
+                            run.runId(),
+                            roundId,
+                            attempts.nextAttemptIndex(roundId),
+                            providerProfile,
+                            modelId,
+                            sentinelHash,
+                            sentinelHash,
+                            now
+                    );
+                    if (!attempts.failAttempt(
+                            attemptId,
+                            1,
+                            category,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Assembly overflow attempt failure conflicted"
+                        );
+                    }
+                    persistFailureDetail(
+                            attemptId,
+                            category,
+                            diagnostic,
+                            now
+                    );
+                    RunStateMachine.requireTransition(
+                            RoundPhase.ACCEPTED,
+                            RoundPhase.FAILED
+                    );
+                    if (!attempts.transitionRound(
+                            round.roundId(),
+                            RoundPhase.ACCEPTED,
+                            RoundPhase.FAILED,
+                            round.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Round overflow failure transition conflicted"
+                        );
+                    }
+                    return runs.findRound(round.roundId()).orElseThrow();
+                })
+        );
+    }
+
     public RoundRow cancel(String attemptId) {
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         return withLock(initial.roundId(), () ->

@@ -211,6 +211,14 @@ public class AgenticRoundCoordinator {
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(error -> handleAssembleOverflow(
+                        provider,
+                        loaded,
+                        contextSeed,
+                        workspaceRoot,
+                        cancelled,
+                        error
+                ))
                 .flatMap(started -> consume(
                         provider,
                         started,
@@ -365,6 +373,32 @@ public class AgenticRoundCoordinator {
         return failAttempt(started.attempt(), cause);
     }
 
+    private Mono<RoundAdvance> handleAssembleOverflow(
+            ModelProvider provider,
+            LoadedRound loaded,
+            ContextSeed contextSeed,
+            Path workspaceRoot,
+            boolean cancelled,
+            Throwable error
+    ) {
+        Throwable cause = Exceptions.unwrap(error);
+        if (!isPromptTooLarge(cause)) {
+            return Mono.error(propagate(cause));
+        }
+        if (contextSeed.contextOverflowRecoveries()
+                < MAX_CONTEXT_OVERFLOW_RECOVERIES) {
+            return recoverContextOverflow(
+                    provider,
+                    loaded,
+                    contextSeed,
+                    workspaceRoot,
+                    cancelled,
+                    cause
+            );
+        }
+        return failRoundForOverflow(provider, loaded, cause);
+    }
+
     private Mono<RoundAdvance> retryAttempt(
             ModelProvider provider,
             StartedAttempt failed,
@@ -449,6 +483,28 @@ public class AgenticRoundCoordinator {
                 ));
     }
 
+    /**
+     * Recovery when context assembly itself overflows: no attempt has begun yet,
+     * so the Round is still ACCEPTED and we only need to re-stream with a
+     * tighter budget. Shares the same recovery counter as the provider path.
+     */
+    private Mono<RoundAdvance> recoverContextOverflow(
+            ModelProvider provider,
+            LoadedRound loaded,
+            ContextSeed contextSeed,
+            Path workspaceRoot,
+            boolean cancelled,
+            Throwable error
+    ) {
+        return streamModel(
+                loaded,
+                provider.profileId(),
+                contextSeed.withTighterBudget(OVERFLOW_BUDGET_REDUCTION_RATIO),
+                workspaceRoot,
+                cancelled
+        );
+    }
+
     private Mono<RoundAdvance> failAttempt(
             AttemptRow attempt,
             Throwable error
@@ -460,6 +516,25 @@ public class AgenticRoundCoordinator {
                             FailureDiagnostic.from(error)
                     );
                     lifecycleEvents.roundUpdated(attempt.roundId());
+                    throw propagate(error);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private Mono<RoundAdvance> failRoundForOverflow(
+            ModelProvider provider,
+            LoadedRound loaded,
+            Throwable error
+    ) {
+        return Mono.<RoundAdvance>fromCallable(() -> {
+                    RoundRow round = attempts.failAcceptedRoundForOverflow(
+                            loaded.round().roundId(),
+                            provider.profileId(),
+                            provider.modelId(),
+                            category(error),
+                            FailureDiagnostic.from(error)
+                    );
+                    lifecycleEvents.roundUpdated(round.roundId());
                     throw propagate(error);
                 })
                 .subscribeOn(Schedulers.boundedElastic());

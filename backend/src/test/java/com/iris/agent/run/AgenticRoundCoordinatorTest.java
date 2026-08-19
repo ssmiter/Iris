@@ -223,6 +223,93 @@ class AgenticRoundCoordinatorTest {
         );
     }
 
+    private RunRoundRepository.RoundRow failedRound() {
+        return new RunRoundRepository.RoundRow(
+                ROUND_ID,
+                RUN_ID,
+                0,
+                RoundPhase.FAILED,
+                0,
+                2
+        );
+    }
+
+    @Test
+    void recoversFromAssemblePromptTooLargeWithTighterBudget() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        ModelProvider provider = provider();
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(acceptedRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        when(contexts.assemble(any(), any(), any()))
+                .thenThrow(new PromptTooLargeException("too large"))
+                .thenReturn(context(ModelContextWindowPlanner.ContextBudget.defaults()));
+        when(attempts.begin(anyString(), anyLong(), anyString(), anyString(),
+                anyString(), anyString()))
+                .thenReturn(attempt(0));
+        when(attempts.commit(anyString(), anyLong(), any(ModelAttemptResult.class)))
+                .thenReturn(completedRound());
+        when(cancellations.whenCancelled(RUN_ID))
+                .thenReturn(Mono.never());
+        when(provider.stream(any()))
+                .thenReturn(successStream());
+
+        AgenticRoundCoordinator.RoundAdvance advance = coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                seed(),
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5));
+
+        assertThat(advance).isNotNull();
+        assertThat(advance.phase()).isEqualTo(RoundPhase.COMPLETED);
+
+        verify(contexts, times(2)).assemble(any(), any(), any());
+        verify(attempts).begin(anyString(), anyLong(), anyString(),
+                anyString(), anyString(), anyString());
+        verify(attempts, never()).failAndResetForOverflow(anyString(), anyString(),
+                any());
+    }
+
+    @Test
+    void failsRoundAfterMaxAssemblePromptTooLargeRecoveries() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        ModelProvider provider = provider();
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(acceptedRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        when(contexts.assemble(any(), any(), any()))
+                .thenThrow(new PromptTooLargeException("too large"));
+        when(attempts.failAcceptedRoundForOverflow(
+                anyString(), anyString(), anyString(), anyString(), any()
+        )).thenReturn(failedRound());
+        when(cancellations.whenCancelled(RUN_ID))
+                .thenReturn(Mono.never());
+
+        assertThatThrownBy(() -> coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                seed(),
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5)))
+                .isInstanceOf(PromptTooLargeException.class);
+
+        verify(contexts, times(3)).assemble(any(), any(), any());
+        verify(attempts).failAcceptedRoundForOverflow(
+                eq(ROUND_ID),
+                eq(PROFILE),
+                eq(MODEL_ID),
+                eq("protocol:prompt_too_large"),
+                any()
+        );
+        verify(attempts, never()).begin(anyString(), anyLong(), anyString(),
+                anyString(), anyString(), anyString());
+    }
+
     @Test
     void recoversFromPromptTooLargeWithTighterBudget() {
         AgenticRoundCoordinator coordinator = coordinator();
