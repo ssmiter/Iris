@@ -1,6 +1,7 @@
 package com.iris.conversation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
 import com.iris.agent.model.ModelAttemptService;
 import com.iris.agent.model.ModelContextAssembler;
 import com.iris.agent.model.ModelContextAssembler.ContextSeed;
@@ -17,6 +18,7 @@ import com.iris.agent.run.RoundPhase;
 import com.iris.agent.run.RunPhase;
 import com.iris.agent.run.RunRoundService;
 import com.iris.agent.run.RunRoundRepository;
+import com.iris.agent.run.ToolProjectionService;
 import com.iris.conversation.application.ConversationCommandService;
 import com.iris.conversation.application.ConversationEventStreamService;
 import com.iris.conversation.application.ConversationQueryService;
@@ -75,6 +77,9 @@ class ConversationFlowIntegrationTest {
 
     @Autowired
     private ToolRuntime toolRuntime;
+
+    @Autowired
+    private ToolProjectionService projections;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -390,6 +395,109 @@ class ConversationFlowIntegrationTest {
 
     private static String uniqueKey(String prefix) {
         return prefix + "-" + UUID.randomUUID();
+    }
+
+    @Test
+    void approvalProjectionIncludesToolArguments() throws Exception {
+        var created = commands.createConversation(
+                uniqueKey("create"),
+                new CreateConversationRequest("审批参数预览测试")
+        );
+        var accepted = commands.acceptTurn(
+                created.conversationId(),
+                uniqueKey("turn"),
+                new CreateTurnRequest(
+                        created.rootBranchId(),
+                        uniqueKey("client"),
+                        new TurnInput("请追加一条笔记", List.of()),
+                        new Entrypoint("agentic")
+                )
+        );
+        var round = runRoundService.openRound(accepted.rootRunId());
+
+        ConversationView before = queries.view(
+                created.conversationId(),
+                null,
+                null,
+                50
+        ).block(Duration.ofSeconds(5));
+        assertThat(before).isNotNull();
+        String cursorBefore = before.eventCursor();
+
+        ToolContext toolContext = new TestToolContext(
+                created.conversationId(),
+                accepted.turnId(),
+                accepted.rootRunId(),
+                round.roundId(),
+                WORKSPACE,
+                false
+        );
+        String toolCallId = uniqueKey("tool-call");
+        Files.createDirectories(WORKSPACE.resolve("notes"));
+        String notePath = "notes/approval-args-test-" + UUID.randomUUID() + ".md";
+        var toolInput = objectMapper.createObjectNode()
+                .put("path", notePath)
+                .put("line", "审批参数预览行");
+        var awaiting = toolRuntime.invoke(
+                new Invocation(toolCallId, "append_note"),
+                toolInput,
+                toolContext
+        );
+        assertThat(awaiting.phase()).isEqualTo("awaiting_approval");
+
+        var call = new RoundToolCall(
+                toolCallId,
+                "provider-call-" + toolCallId,
+                "append_note",
+                toolInput,
+                0,
+                awaiting.executionId()
+        );
+        projections.project(round.roundId(), call, awaiting);
+
+        ConversationView after = queries.view(
+                created.conversationId(),
+                null,
+                null,
+                50
+        ).block(Duration.ofSeconds(5));
+        assertThat(after).isNotNull();
+        assertThat(after.attentionsById()).isNotEmpty();
+        var attention = after.attentionsById().values().iterator().next();
+        assertThat(attention.path("type").asText()).isEqualTo("attention");
+        assertThat(attention.path("subtype").asText()).isEqualTo("approval");
+        var approval = attention.path("approval");
+        assertThat(approval.path("toolName").asText()).isEqualTo("append_note");
+        assertThat(approval.path("argumentsSummary").asText())
+                .contains("审批参数预览行");
+        assertThat(approval.path("parameters").path("path").asText())
+                .isEqualTo(notePath);
+        assertThat(approval.path("parameters").path("line").asText())
+                .isEqualTo("审批参数预览行");
+
+        OptionalLong cursor = eventStream.resolveStart(
+                created.conversationId(),
+                cursorBefore
+        ).block(Duration.ofSeconds(5));
+        ConversationEvent approvalEvent = eventStream.stream(
+                created.conversationId(),
+                cursor
+        )
+                .filter(event -> "attention.requested".equals(event.eventType()))
+                .next()
+                .block(Duration.ofSeconds(5));
+
+        assertThat(approvalEvent).isNotNull();
+        var eventApproval = approvalEvent
+                .payload()
+                .path("attention")
+                .path("approval");
+        assertThat(eventApproval.path("argumentsSummary").asText())
+                .contains("审批参数预览行");
+        assertThat(eventApproval.path("parameters").path("path").asText())
+                .isEqualTo(notePath);
+        assertThat(eventApproval.path("parameters").path("line").asText())
+                .isEqualTo("审批参数预览行");
     }
 
     @Test
