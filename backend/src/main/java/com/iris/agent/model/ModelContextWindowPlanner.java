@@ -13,6 +13,47 @@ import java.util.Set;
 public class ModelContextWindowPlanner {
     private static final int PROTOCOL_HEADROOM_TOKENS = 512;
 
+    /**
+     * Explicit drop-priority table for dynamic, non-required context sections.
+     *
+     * <p>Lower ordinal = dropped first. The ordering is chosen so that the
+     * easiest-to-rediscover and oldest evidence is discarded before state that
+     * is harder to regenerate or more central to the current conversation.</p>
+     */
+    private enum DropPriority {
+        /**
+         * Tool-result trajectories are the cheapest to re-discover: the source
+         * observations remain durable and the micro-compactor can re-project
+         * them on demand.
+         */
+        TOOL_OBSERVATION_TRAJECTORY,
+        /**
+         * The artifact index is only a pointer catalog. It can be replaced by
+         * a single reference projection without losing immutable bodies.
+         */
+        ARTIFACT_INDEX,
+        /**
+         * Active-run state is a projection of durable lifecycle facts. It can
+         * be refreshed, but dropping it reduces cross-run awareness.
+         */
+        AGENT_RUN_STATE,
+        /**
+         * History summaries are already lossy compression artifacts; dropping
+         * the summary does not erase the underlying branch facts.
+         */
+        HISTORY_SUMMARY,
+        /**
+         * Older assistant reasoning turns anchor the model's own prior chain
+         * of thought. Keep them when budget allows.
+         */
+        ASSISTANT_TRAJECTORY,
+        /**
+         * User messages are the conversation backbone. Drop only as a last
+         * resort among optional content.
+         */
+        USER_MESSAGE
+    }
+
     private final ModelTokenEstimator tokens;
 
     public ModelContextWindowPlanner(ModelTokenEstimator tokens) {
@@ -96,55 +137,38 @@ public class ModelContextWindowPlanner {
             );
         }
         for (int index = 0; index < groups.size(); index++) {
-            boolean required = index == latestUserIndex
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.HistorySummary.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.ContinuationDirective.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.FinalizationDirective.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.TaskWorkState.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.ArtifactContextIndex.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.AgentRunState.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.CapabilityRuntimeState.class::isInstance
-            )
-                    || groups.get(index).items().stream().anyMatch(
-                    ModelInputItem.RuntimePulse.class::isInstance
-            )
-                    || containsRequiredUser(
+            if (isRequiredGroup(
                     groups.get(index),
-                    requiredUsers
-            )
-                    || containsRequiredObservation(
-                    groups.get(index),
+                    index,
+                    latestUserIndex,
+                    requiredUsers,
                     requiredObservations
-            );
-            if (!required) {
-                continue;
+            )) {
+                int cost = tokens.estimate(groups.get(index).items());
+                if (used + cost > available) {
+                    throw new PromptTooLargeException(
+                            "Current Turn instructions and non-refetchable tool evidence exceed the input budget"
+                    );
+                }
+                included[index] = true;
+                used += cost;
             }
-            int cost = tokens.estimate(groups.get(index).items());
-            if (used + cost > available) {
-                throw new PromptTooLargeException(
-                        "Current Turn instructions, non-refetchable tool evidence and compact summary exceed the input budget"
-                );
-            }
-            included[index] = true;
-            used += cost;
         }
-        for (int index = groups.size() - 1; index >= 0; index--) {
-            if (included[index]) {
-                continue;
+
+        List<Integer> candidateIndices = new ArrayList<>();
+        for (int index = 0; index < groups.size(); index++) {
+            if (!included[index]) {
+                candidateIndices.add(index);
             }
+        }
+        candidateIndices.sort(java.util.Comparator
+                .comparingInt(
+                        (Integer index) -> dropPriority(
+                                groups.get(index)
+                        ).ordinal()
+                )
+                .thenComparingInt(index -> index));
+        for (int index : candidateIndices) {
             AtomicGroup group = groups.get(index);
             int cost = tokens.estimate(group.items());
             if (used + cost <= available) {
@@ -190,6 +214,69 @@ public class ModelContextWindowPlanner {
                         result.observationId()
                 )
         );
+    }
+
+    private boolean isRequiredGroup(
+            AtomicGroup group,
+            int groupIndex,
+            int latestUserIndex,
+            Set<String> requiredUserFactIds,
+            Set<String> requiredObservationIds
+    ) {
+        if (group.items().stream().anyMatch(
+                item -> item.stability() == ModelInputItem.Stability.STATIC
+        )) {
+            return true;
+        }
+        if (groupIndex == latestUserIndex) {
+            return true;
+        }
+        if (containsRequiredUser(group, requiredUserFactIds)) {
+            return true;
+        }
+        if (containsRequiredObservation(group, requiredObservationIds)) {
+            return true;
+        }
+        return group.items().stream().anyMatch(item ->
+                item instanceof ModelInputItem.ContinuationDirective
+                        || item instanceof ModelInputItem.FinalizationDirective
+                        || item instanceof ModelInputItem.TaskWorkState
+                        || item instanceof ModelInputItem.CapabilityRuntimeState
+                        || item instanceof ModelInputItem.RuntimePulse
+        );
+    }
+
+    private DropPriority dropPriority(AtomicGroup group) {
+        List<ModelInputItem> items = group.items();
+        if (items.stream().anyMatch(
+                ModelInputItem.ToolResult.class::isInstance
+        )) {
+            return DropPriority.TOOL_OBSERVATION_TRAJECTORY;
+        }
+        if (items.stream().anyMatch(
+                ModelInputItem.HistorySummary.class::isInstance
+        )) {
+            return DropPriority.HISTORY_SUMMARY;
+        }
+        if (items.stream().anyMatch(
+                ModelInputItem.ArtifactContextIndex.class::isInstance
+        )) {
+            return DropPriority.ARTIFACT_INDEX;
+        }
+        if (items.stream().anyMatch(
+                ModelInputItem.AgentRunState.class::isInstance
+        )) {
+            return DropPriority.AGENT_RUN_STATE;
+        }
+        if (items.stream().anyMatch(item ->
+                item instanceof ModelInputItem.AssistantText
+                        || item instanceof ModelInputItem.AssistantProviderState
+                        || item instanceof ModelInputItem.AssistantToolCall
+                        || item instanceof ModelInputItem.ContinuationDirective
+        )) {
+            return DropPriority.ASSISTANT_TRAJECTORY;
+        }
+        return DropPriority.USER_MESSAGE;
     }
 
     private List<AtomicGroup> atomicGroups(List<ModelInputItem> facts) {

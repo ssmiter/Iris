@@ -99,6 +99,23 @@ public class ProviderMessageCompiler {
                                 Role.USER,
                                 new TextPart(directive.text())
                         );
+                case ModelInputItem.SkillDirectoryRoster roster ->
+                        append(
+                                messages,
+                                Role.SYSTEM,
+                                new TextPart(
+                                        """
+                                        Available skill roster follows. It is a
+                                        bounded one-level index of kind=skill
+                                        capabilities. Read a skill definition only
+                                        when its applicability matches the current
+                                        task.
+                                        <skill_directory_roster>
+                                        %s
+                                        </skill_directory_roster>
+                                        """.formatted(xmlText(roster.content())).strip()
+                                )
+                        );
                 case ModelInputItem.AssistantToolCall call ->
                         append(messages, Role.ASSISTANT, new ToolCallPart(
                                 call.toolCallId(),

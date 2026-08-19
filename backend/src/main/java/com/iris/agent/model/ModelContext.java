@@ -21,4 +21,27 @@ public record ModelContext(
             throw new IllegalArgumentException("promptPrefix is required");
         }
     }
+
+    /**
+     * Session-stable items that are byte-for-byte identical within a Run.
+     * These are kept at the front of {@link #items()} for prefix-cache
+     * friendliness and are never dropped by the window planner.
+     */
+    public List<ModelInputItem> staticItems() {
+        return items.stream()
+                .filter(item -> item.stability()
+                        == ModelInputItem.Stability.STATIC)
+                .toList();
+    }
+
+    /**
+     * Round-varying items. These are subject to the window planner's
+     * explicit drop-priority table when the context budget is tight.
+     */
+    public List<ModelInputItem> dynamicItems() {
+        return items.stream()
+                .filter(item -> item.stability()
+                        == ModelInputItem.Stability.DYNAMIC)
+                .toList();
+    }
 }

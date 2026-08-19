@@ -48,6 +48,7 @@ public class ModelContextAssembler {
     private final ModelPromptPrefixService promptPrefixes;
     private final AgentRunContextRepository runContexts;
     private final RunMailboxRepository mailbox;
+    private final SkillRosterService skillRoster;
     private final Clock clock = Clock.systemUTC();
 
     public ModelContextAssembler(
@@ -65,7 +66,8 @@ public class ModelContextAssembler {
             RunFinalizationPolicy finalizationPolicy,
             ModelPromptPrefixService promptPrefixes,
             AgentRunContextRepository runContexts,
-            RunMailboxRepository mailbox
+            RunMailboxRepository mailbox,
+            SkillRosterService skillRoster
     ) {
         this.facts = facts;
         this.tools = tools;
@@ -82,6 +84,7 @@ public class ModelContextAssembler {
         this.promptPrefixes = promptPrefixes;
         this.runContexts = runContexts;
         this.mailbox = mailbox;
+        this.skillRoster = skillRoster;
     }
 
     public ModelContext assemble(
@@ -146,7 +149,7 @@ public class ModelContextAssembler {
         var isolatedContext = runContexts.find(run.runId())
                 .filter(AgentRunContextRepository.RunContext::isolated)
                 .orElse(null);
-        List<ModelInputItem> allItems = new ArrayList<>(
+        List<ModelInputItem> dynamicItems = new ArrayList<>(
                 isolatedContext == null
                         ? facts.branchFactsBeforeRound(
                                 run.conversationId(),
@@ -159,7 +162,7 @@ public class ModelContextAssembler {
                                 isolatedContext.task()
                         )
         );
-        allItems.addAll(mailbox.injectedBeforeOrAt(
+        dynamicItems.addAll(mailbox.injectedBeforeOrAt(
                 run.runId(),
                 round.index()
         ));
@@ -170,21 +173,21 @@ public class ModelContextAssembler {
                     8
             );
             if (!artifactIndex.isEmpty()) {
-            var index = objectMapper.createArrayNode();
-            artifactIndex.forEach(artifact -> index.addObject()
-                    .put("artifactRef", artifact.reference())
-                    .put("title", artifact.title())
-                    .put("kind", artifact.kind())
-                    .put("mediaType", artifact.mediaType())
-                    .put("byteCount", artifact.byteCount())
-                    .put("contentHash", artifact.contentHash()));
-            allItems.add(new ModelInputItem.ArtifactContextIndex(
-                    index.toString()
-            ));
+                var index = objectMapper.createArrayNode();
+                artifactIndex.forEach(artifact -> index.addObject()
+                        .put("artifactRef", artifact.reference())
+                        .put("title", artifact.title())
+                        .put("kind", artifact.kind())
+                        .put("mediaType", artifact.mediaType())
+                        .put("byteCount", artifact.byteCount())
+                        .put("contentHash", artifact.contentHash()));
+                dynamicItems.add(new ModelInputItem.ArtifactContextIndex(
+                        index.toString()
+                ));
             }
         }
         if (!capabilityLimits.isEmpty()) {
-            allItems.add(new ModelInputItem.CapabilityRuntimeState(
+            dynamicItems.add(new ModelInputItem.CapabilityRuntimeState(
                     capabilityLimits
             ));
         }
@@ -196,7 +199,7 @@ public class ModelContextAssembler {
                     12
             );
             if (!activeAgents.isEmpty()) {
-                allItems.add(new ModelInputItem.AgentRunState(
+                dynamicItems.add(new ModelInputItem.AgentRunState(
                         activeAgents.stream()
                                 .map(active -> new ModelInputItem.AgentRunStatus(
                                         active.runId(),
@@ -216,7 +219,7 @@ public class ModelContextAssembler {
                     run.branchId()
             ).forEach(task -> {
                 taskLedger.linkContextRun(run.runId(), task);
-                allItems.add(new ModelInputItem.TaskWorkState(
+                dynamicItems.add(new ModelInputItem.TaskWorkState(
                         task.taskId(),
                         task.stateVersion(),
                         taskLedger.toJson(task).toString()
@@ -225,7 +228,7 @@ public class ModelContextAssembler {
             RunFinalizationPolicy.Decision finalization =
                     finalizationPolicy.evaluate(run.runId());
             if (finalization.continueRun()) {
-                allItems.add(new ModelInputItem.FinalizationDirective(
+                dynamicItems.add(new ModelInputItem.FinalizationDirective(
                         finalization.taskId(),
                         finalization.stateVersion(),
                         finalization.instruction()
@@ -233,7 +236,7 @@ public class ModelContextAssembler {
             }
         }
         RunBudget runtimeBudget = runs.runBudget(run.runId());
-        allItems.add(new ModelInputItem.RuntimePulse(
+        dynamicItems.add(new ModelInputItem.RuntimePulse(
                 run.runId(),
                 round.index(),
                 runtimeBudget.toolCallsUsed(),
@@ -264,6 +267,20 @@ public class ModelContextAssembler {
                         ))
                         .toList()
         ));
+
+        List<ModelInputItem> staticItems = new ArrayList<>();
+        if (isolatedContext == null) {
+            var skillRosterItem = skillRoster.build();
+            if (skillRosterItem != null) {
+                staticItems.add(skillRosterItem);
+            }
+        }
+
+        List<ModelInputItem> allItems = new ArrayList<>(
+                staticItems.size() + dynamicItems.size()
+        );
+        allItems.addAll(staticItems);
+        allItems.addAll(dynamicItems);
         String leaseHash = hash(definitions);
         ModelPromptPrefix promptPrefix = promptPrefixes.capture(
                 seed.promptDefinitionId(),

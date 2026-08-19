@@ -6,6 +6,26 @@ import com.fasterxml.jackson.databind.JsonNode;
  * Provider-neutral, ordered model context facts.
  */
 public sealed interface ModelInputItem {
+
+    /**
+     * Stability classification for prefix-cache aware window planning.
+     *
+     * <p>STATIC items are byte-for-byte stable within a Run (e.g. the skill
+     * directory roster). DYNAMIC items vary round-to-round.</p>
+     */
+    enum Stability {
+        STATIC,
+        DYNAMIC
+    }
+
+    /**
+     * Returns the stability class of this item. Defaults to DYNAMIC; only
+     * session-level stable records override this.
+     */
+    default Stability stability() {
+        return Stability.DYNAMIC;
+    }
+
     record HistorySummary(
             String boundaryId,
             String text
@@ -180,5 +200,19 @@ public sealed interface ModelInputItem {
             String payloadHash,
             JsonNode content
     ) implements ModelInputItem {
+    }
+
+    /**
+     * Bounded, one-level roster of currently available kind=skill capabilities.
+     * Injected after the stable prefix; its content changes produce a new block
+     * rather than rewriting history.
+     */
+    record SkillDirectoryRoster(
+            String content
+    ) implements ModelInputItem {
+        @Override
+        public Stability stability() {
+            return Stability.STATIC;
+        }
     }
 }
