@@ -500,8 +500,6 @@ export function ChildRunCapsules({
                 'h-1.5 w-1.5 shrink-0 rounded-full',
                 meta.tone === 'info' && 'bg-primary',
                 meta.tone === 'warning' && 'bg-warning',
-                meta.breathing &&
-                  'animate-soft-pulse motion-reduce:animate-none',
               )}
             />
             <span className="truncate">{run.purpose}</span>

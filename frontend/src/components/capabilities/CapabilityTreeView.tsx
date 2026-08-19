@@ -65,15 +65,6 @@ const RISK_META: Record<string, { label: string; tone: BadgeTone }> = {
   destructive: { label: '破坏', tone: 'danger' },
 }
 
-const ORIGIN_LABEL: Record<string, string> = {
-  kernel: '内置',
-  extension: '拓展',
-  skill_store: '技能库',
-  mcp: 'MCP',
-  pipeline: '内置',
-  schedule: '定时',
-}
-
 const STAT_LABELS: Record<string, string> = {
   tool_count: '工具数',
   success_rate_7d: '7 日成功率',
@@ -355,7 +346,7 @@ export function CapabilityTreeView({
         />
         <div className="flex items-center gap-1">
           <Button
-            variant="ghost"
+            variant="primary"
             size="sm"
             onClick={() => setEditingSkill(undefined)}
           >
@@ -565,7 +556,7 @@ function TreeNode({
           className="flex min-w-0 flex-1 items-baseline gap-1.5 py-1 pr-1.5 text-left"
           onClick={() => onSelect(node.path)}
         >
-          <span className="truncate">{node.title || node.name}</span>
+          <span className="truncate break-keep">{node.title || node.name}</span>
           <span className="shrink-0 text-caption font-normal text-ink-muted">
             {node.count}
           </span>
@@ -655,7 +646,7 @@ function CapabilityCard({
             ) : (
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
             )}
-            <span className="truncate text-body font-semibold text-ink">
+            <span className="truncate text-body font-semibold text-ink break-keep">
               {item.name}
             </span>
             <Badge tone={kind.tone}>{kind.label}</Badge>
@@ -664,13 +655,11 @@ function CapabilityCard({
                 {risk.label}
               </Badge>
             )}
-            <Badge appearance="outline">
-              {ORIGIN_LABEL[item.origin] ?? item.origin}
-            </Badge>
             {shadowed && (
-              <Badge tone="warning" showDot>
-                被遮蔽
-              </Badge>
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-warning"
+                title="已被遮蔽，未注册到运行表"
+              />
             )}
           </div>
           {item.description && (

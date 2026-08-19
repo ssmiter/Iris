@@ -1,7 +1,10 @@
-import { memo } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { AnswerNode } from '@/domain/chat/models'
 import { useChatStore } from '@/stores/chatStore'
 import { useReveal } from '@/motion/useReveal'
+import { Button } from '@/components/ui/Button'
+import { Check, Copy } from 'lucide-react'
+import { cn } from '@/lib/cn'
 import { IncrementalMarkdown } from './IncrementalMarkdown'
 
 interface AnswerBlockProps {
@@ -13,6 +16,22 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
   const streaming = node.status === 'streaming'
   const visibleContent = useReveal(node.content, streaming)
   const revealing = streaming || visibleContent !== node.content
+
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(visibleContent)
+      setCopied(true)
+    } catch {
+      // 静默失败，避免误导
+    }
+  }, [visibleContent])
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
 
   const turnStopped = useChatStore(
     (state) => node.turnId != null
@@ -34,18 +53,43 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
 
   return (
     <section
-      className="mt-2.5 min-w-0 text-body text-ink"
-      aria-label={isFinal ? 'Iris 的回答' : '阶段结论'}
+      className="group relative mt-2.5 min-w-0 text-body text-ink"
+      aria-label={isFinal ? 'Iris 的回答' : '阶段性回答'}
       aria-busy={revealing}
     >
-      {!isFinal && (
-        <div className="mb-1.5 flex items-center gap-2 text-caption text-ink-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-border-strong" />
-          阶段结论
-        </div>
+      {hasContent && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          title={copied ? '已复制' : '复制回答'}
+          className={cn(
+            'absolute -top-1 -right-1 z-10 h-8 w-8 rounded-xs p-0',
+            'opacity-0 transition-opacity duration-fast ease-standard',
+            'group-hover:opacity-100 focus-visible:opacity-100',
+            'motion-reduce:transition-none',
+            copied && 'text-success',
+          )}
+          onClick={handleCopy}
+        >
+          {copied
+            ? (
+                <Check size={16} aria-hidden="true" />
+              )
+            : (
+                <Copy size={16} aria-hidden="true" />
+              )}
+          <span className="sr-only">{copied ? '已复制' : '复制回答'}</span>
+        </Button>
       )}
       <div className="answer-prose prose prose-sm max-w-none text-ink">
-        <IncrementalMarkdown content={visibleContent} />
+        {streaming ? (
+          <div className="whitespace-pre-wrap break-words text-ink">
+            {visibleContent}
+          </div>
+        ) : (
+          <IncrementalMarkdown content={visibleContent} />
+        )}
       </div>
       {showStoppedEyebrow && (
         <div

@@ -189,7 +189,7 @@ function WaterfallTurnView({
       )}
     >
       <div className="flex justify-end">
-        <div className="group max-w-[92%] sm:max-w-[min(86%,42rem)]">
+        <div className="group max-w-[88%] sm:max-w-[min(82%,40rem)]">
           <UserAttachmentList
             references={turn.request.attachmentRefs}
           />
@@ -444,9 +444,11 @@ function sameTurnProjection(
       }
     }
 
+    const previousAnswer = answerNodeForRound(previousRound, previous.nodesById)
+    const nextAnswer = answerNodeForRound(nextRound, next.nodesById)
     if (
-      answerNodeForRound(previousRound, previous.nodesById)
-      !== answerNodeForRound(nextRound, next.nodesById)
+      previousAnswer?.nodeId !== nextAnswer?.nodeId
+      || previousAnswer?.status !== nextAnswer?.status
     ) {
       return false
     }

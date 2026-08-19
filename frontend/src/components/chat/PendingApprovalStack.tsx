@@ -12,8 +12,8 @@ import { cn } from '@/lib/cn'
  *
  * 两阶段退场：决定/后端收敛 → 原位淡化 500ms（布局纹丝不动，其余条目不补位）
  * → 收拢 350ms（余项此时平滑上移）。顺序按首次出现位置稳定，
- * 新审批追加在最靠近 composer 一侧。Tab 快速批准首项
- * （window capture 拦截，IME 组合与输入框内不生效）。
+ * 新审批追加在最远离 composer 一侧，避免新卡入场时推高已有卡片。
+ * Tab 快速批准首项（window capture 拦截，IME 组合与输入框内不生效）。
  */
 
 const FADE_MS = 500
@@ -215,12 +215,12 @@ export function PendingApprovalStack({
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 bottom-full z-10 mb-2 flex flex-col items-center px-[var(--page-gutter)]"
+      className="pointer-events-none absolute inset-x-0 bottom-full z-10 mb-2 flex flex-col-reverse items-center px-[var(--page-gutter)]"
       role="group"
       aria-label={label}
     >
       <div className="w-full max-w-conversation px-[var(--conversation-pad)]">
-        {items.map((item) => (
+        {items.map((item, index) => (
           <div
             key={item.node.attentionId}
             className={cn(
@@ -236,6 +236,7 @@ export function PendingApprovalStack({
               <div className="pb-1.5">
                 <ApprovalCard
                   item={item}
+                  isFirst={index === 0}
                   actingActionId={actingById[item.node.attentionId]}
                   paramsExpanded={expandedParamIds.has(item.node.attentionId)}
                   onToggleParams={toggleParams}
@@ -252,12 +253,14 @@ export function PendingApprovalStack({
 
 function ApprovalCard({
   item,
+  isFirst,
   actingActionId,
   paramsExpanded,
   onToggleParams,
   onDecide,
 }: {
   item: StackItem
+  isFirst: boolean
   actingActionId: string | undefined
   paramsExpanded: boolean
   onToggleParams: (attentionId: string) => void
@@ -306,45 +309,49 @@ function ApprovalCard({
           </Badge>
         )}
       </div>
+      {/* 操作行：参数 + approve/reject 紧凑排列；Tab 提示仅在首卡显示 */}
       <div
         className={cn(
           'mt-2.5 flex flex-wrap items-center gap-2 transition-opacity duration-fast motion-reduce:transition-none',
           acting && 'opacity-60',
         )}
       >
-        {paramsText && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-caption text-ink-muted"
-            onClick={() => onToggleParams(node.attentionId)}
-          >
-            参数
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                'h-3.5 w-3.5 shrink-0 transition-transform duration-fast ease-standard',
-                paramsExpanded && 'rotate-180',
-                'motion-reduce:transition-none',
-              )}
-            />
-          </Button>
-        )}
-        {node.actions.map((action) => (
-          <Button
-            key={action.id}
-            size="sm"
-            variant={action.tone}
-            disabled={acting}
-            isLoading={actingActionId === action.id}
-            onClick={() => onDecide(item, action)}
-          >
-            {action.label}
-          </Button>
-        ))}
-        {!acting && (
-          <span className="text-caption text-ink-muted">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {paramsText && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-caption text-ink-muted"
+              onClick={() => onToggleParams(node.attentionId)}
+            >
+              参数
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  'h-3.5 w-3.5 shrink-0 transition-transform duration-fast ease-standard',
+                  paramsExpanded && 'rotate-180',
+                  'motion-reduce:transition-none',
+                )}
+              />
+            </Button>
+          )}
+          {node.actions.map((action) => (
+            <Button
+              key={action.id}
+              size="sm"
+              variant={action.tone}
+              disabled={acting}
+              isLoading={actingActionId === action.id}
+              className="h-7 px-2"
+              onClick={() => onDecide(item, action)}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </div>
+        {isFirst && !acting && (
+          <span className="ml-auto text-caption text-ink-muted">
             Tab 快速批准首项
           </span>
         )}

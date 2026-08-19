@@ -416,7 +416,7 @@ export const FlowNode = memo(function FlowNode({
         <span
           className={cn(
             'w-px',
-            isFirst ? 'h-2 flex-none' : 'flex-1',
+            isFirst ? 'h-2.5 flex-none' : 'flex-1',
             reached
               ? failed
                 ? 'bg-danger/20'
@@ -428,13 +428,11 @@ export const FlowNode = memo(function FlowNode({
         />
         <span
           className={cn(
-            'flex h-5 w-5 items-center justify-center rounded-full border bg-surface',
-            // 光环：活跃节点外圈扩散；attention 等待态整体换 warning 色且更急促
-            active && node.type !== 'attention' &&
-              'border-primary text-primary animate-node-halo',
-            active && node.type === 'attention' &&
-              'border-warning text-warning animate-node-halo-warn',
-            'motion-reduce:animate-none',
+            'flex h-3 w-3 items-center justify-center rounded-full border bg-surface',
+            // 节点缩至 12px，用负 margin 让 seg 对齐圆心
+            '-my-1.5',
+            active && node.type !== 'attention' && 'border-primary text-primary',
+            active && node.type === 'attention' && 'border-warning text-warning',
             failed && 'border-danger text-danger',
             !active && !failed && reached && 'border-primary/40 text-primary',
             !active && !failed && !reached &&
@@ -442,11 +440,11 @@ export const FlowNode = memo(function FlowNode({
           )}
         >
           {active ? (
-            <span className="h-1.5 w-1.5 animate-soft-pulse rounded-full bg-current motion-reduce:animate-none" />
+            <span className="h-1.5 w-1.5 rounded-full bg-current" />
           ) : failed ? (
-            <X className="h-3 w-3" />
+            <X className="h-2 w-2" />
           ) : (
-            <Check className="h-3 w-3" />
+            <Check className="h-2 w-2" />
           )}
         </span>
         <span

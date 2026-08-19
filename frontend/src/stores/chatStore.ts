@@ -178,7 +178,7 @@ function reduceConversationEvent(
 
 export const useChatStore = create<ChatState>((set) => {
   let queuedDeltas: ConversationEvent[] = []
-  let queuedFrame: number | null = null
+  let queuedFlushTimer: number | null = null
 
   const reduceEvents = (state: ChatState, events: ConversationEvent[]) =>
     events.reduce<ChatState>(
@@ -190,7 +190,7 @@ export const useChatStore = create<ChatState>((set) => {
     )
 
   const flushQueuedDeltas = () => {
-    queuedFrame = null
+    queuedFlushTimer = null
     if (queuedDeltas.length === 0) return
     const events = queuedDeltas
     queuedDeltas = []
@@ -199,17 +199,18 @@ export const useChatStore = create<ChatState>((set) => {
 
   const clearQueuedDeltas = () => {
     queuedDeltas = []
-    if (queuedFrame !== null) {
-      window.cancelAnimationFrame(queuedFrame)
-      queuedFrame = null
+    if (queuedFlushTimer !== null) {
+      window.clearTimeout(queuedFlushTimer)
+      queuedFlushTimer = null
     }
   }
 
   const applyEvent = (event: ConversationEvent) => {
     if (event.type === 'render_node.delta') {
       queuedDeltas.push(event)
-      if (queuedFrame === null) {
-        queuedFrame = window.requestAnimationFrame(flushQueuedDeltas)
+      if (queuedFlushTimer === null) {
+        // 50ms 合批窗口：同窗口内的 delta 累积为一次 state 更新
+        queuedFlushTimer = window.setTimeout(flushQueuedDeltas, 50)
       }
       return
     }

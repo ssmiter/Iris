@@ -22,6 +22,8 @@ interface ConversationShellProps {
   headerActions?: ReactNode
   children: ReactNode
   composer: ReactNode
+  /** 存在活跃 Turn 时禁用部分 layout 动效（如 max-width transition） */
+  hasActiveTurn?: boolean
 }
 
 function BrandMark() {
@@ -40,6 +42,7 @@ export function ConversationShell({
   headerActions,
   children,
   composer,
+  hasActiveTurn = false,
 }: ConversationShellProps) {
   const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
@@ -79,10 +82,19 @@ export function ConversationShell({
     applyMotionPreference(motionPreference)
   }, [motionPreference])
 
+  // 活跃 Turn 期间在 :root 上标记 streaming，用于关闭会触发重排的 transition。
+  useEffect(() => {
+    if (hasActiveTurn) {
+      document.documentElement.dataset.streaming = 'true'
+    } else {
+      delete document.documentElement.dataset.streaming
+    }
+  }, [hasActiveTurn])
+
   useEffect(() => {
     document.documentElement.style.setProperty(
       '--conversation-max',
-      conversationWidth === 'narrow' ? '680px' : '820px',
+      `${conversationWidth}px`,
     )
   }, [conversationWidth])
 

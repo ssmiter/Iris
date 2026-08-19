@@ -4,10 +4,7 @@ import {
   useViewStateStore,
 } from '@/stores/viewStateStore'
 
-const WIDTH_OPTIONS: { value: ConversationWidth; label: string; title: string }[] = [
-  { value: 'wide', label: '宽', title: '列宽：宽（820px）' },
-  { value: 'narrow', label: '窄', title: '列宽：窄（680px）' },
-]
+const WIDTH_OPTIONS: ConversationWidth[] = [640, 760, 920]
 
 export function ConversationWidthToggle() {
   const width = useViewStateStore((state) => state.conversationWidth)
@@ -20,18 +17,18 @@ export function ConversationWidthToggle() {
       aria-label="切换对话列宽"
     >
       {WIDTH_OPTIONS.map((option) => {
-        const active = width === option.value
+        const active = width === option
         return (
           <Button
-            key={option.value}
+            key={option}
             variant={active ? 'secondary' : 'ghost'}
             size="sm"
-            className="h-6 px-1.5 font-mono text-caption"
+            className="h-6 px-1.5 font-mono text-caption tabular-nums"
             aria-pressed={active}
-            title={option.title}
-            onClick={() => setWidth(option.value)}
+            title={`列宽 ${option}px`}
+            onClick={() => setWidth(option)}
           >
-            {option.label}
+            {option}
           </Button>
         )
       })}

@@ -6,7 +6,7 @@ export const revealMotion = {
   maxCharactersPerSecond: 600,
   arrivalRateMultiplier: 1.25,
   maximumFrameDeltaMs: 100,
-  minimumPublishIntervalMs: 28,
+  minimumPublishIntervalMs: 80,
 } as const
 
 export const interactionMotion = {

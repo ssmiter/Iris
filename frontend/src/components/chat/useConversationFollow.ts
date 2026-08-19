@@ -43,7 +43,6 @@ export function useConversationFollow(
   // 末尾游标 = firstItemIndex + itemCount：向上翻页只动 firstItemIndex，
   // 预插的历史轮次不会被误算成"新轮次"。
   const endIndexRef = useRef(firstItemIndex + itemCount)
-  const followFrameRef = useRef<number | null>(null)
 
   const setScroller = useCallback((element: HTMLElement | Window | null) => {
     setScrollerElement(element instanceof HTMLElement ? element : null)
@@ -68,19 +67,8 @@ export function useConversationFollow(
   }, [resumeFollowing])
 
   const handleListHeightChange = useCallback(() => {
-    if (
-      followModeRef.current !== 'following'
-      || followFrameRef.current !== null
-    ) {
-      return
-    }
-
-    followFrameRef.current = window.requestAnimationFrame(() => {
-      followFrameRef.current = null
-      if (followModeRef.current === 'following') {
-        virtuosoRef.current?.autoscrollToBottom()
-      }
-    })
+    // 列表高度变化时的滚底完全交给 Virtuoso followOutput；
+    // 自定义 rAF 强制滚底已移除，避免与 followOutput 双滚底冲突。
   }, [])
 
   const followOutput = useCallback((isAtBottom: boolean) => (
@@ -184,12 +172,6 @@ export function useConversationFollow(
       window.removeEventListener('pointercancel', pointerFinished)
     }
   }, [reviewHistory, scroller])
-
-  useEffect(() => () => {
-    if (followFrameRef.current !== null) {
-      window.cancelAnimationFrame(followFrameRef.current)
-    }
-  }, [])
 
   return {
     virtuosoRef,

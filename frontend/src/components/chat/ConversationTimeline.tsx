@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  memo,
+  useCallback,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -40,7 +42,7 @@ export interface ConversationTimelineHandle {
 // Virtuoso 借此保持视口中的内容一个像素都不动。
 const FIRST_ITEM_INDEX_BASE = 1_000_000
 
-export const ConversationTimeline = forwardRef<
+export const ConversationTimeline = memo(forwardRef<
   ConversationTimelineHandle,
   ConversationTimelineProps
 >(function ConversationTimeline(
@@ -132,6 +134,60 @@ export const ConversationTimeline = forwardRef<
     return map
   }, [projection.compactBoundaries])
 
+  const renderItem = useCallback(
+    (index: number, turn: TurnView) => (
+      <div data-turn-idx={index - firstItemIndex}>
+        {boundariesByTurn.get(turn.turnId)?.map((boundary) => (
+          <div
+            key={boundary.boundaryId}
+            className="mx-auto flex max-w-conversation items-center gap-3 px-[var(--conversation-pad)] py-4 text-caption text-ink-muted"
+          >
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-center">
+              {boundary.trigger === 'auto'
+                ? '此前上下文已自动整理'
+                : '此前上下文已整理'}
+              {' · '}
+              {boundary.coveredCount} 个 Turn 仍保留在历史中
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+        ))}
+        <WaterfallTurn
+          turn={turn}
+          runsById={projection.runsById}
+          roundsById={projection.roundsById}
+          nodesById={projection.renderNodesById}
+          expandedRoundIds={expandedRoundIds}
+          expandedNodeIds={expandedNodeIds}
+          onToggleRound={toggleRound}
+          onToggleNode={toggleNode}
+          onRevealNewRoundNodes={revealNewRoundNodes}
+          onAttentionAction={onAttentionAction}
+          onReplaceRequest={onReplaceRequest}
+          onEditResend={onEditResend}
+          onOpenChildRun={onOpenChildRun}
+        />
+      </div>
+    ),
+    [
+      firstItemIndex,
+      boundariesByTurn,
+      expandedRoundIds,
+      expandedNodeIds,
+      toggleRound,
+      toggleNode,
+      revealNewRoundNodes,
+      onAttentionAction,
+      onReplaceRequest,
+      onEditResend,
+      onOpenChildRun,
+      projection.runsById,
+      projection.roundsById,
+      projection.renderNodesById,
+    ],
+  )
+
   return (
     <div className="relative min-h-0 flex-1">
       <Virtuoso
@@ -153,41 +209,7 @@ export const ConversationTimeline = forwardRef<
         atBottomStateChange={handleAtBottomChange}
         totalListHeightChanged={handleListHeightChange}
         followOutput={followOutput}
-        itemContent={(index, turn) => (
-          <div data-turn-idx={index - firstItemIndex}>
-            {boundariesByTurn.get(turn.turnId)?.map((boundary) => (
-              <div
-                key={boundary.boundaryId}
-                className="mx-auto flex max-w-conversation items-center gap-3 px-[var(--conversation-pad)] py-4 text-caption text-ink-muted"
-              >
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-center">
-                  {boundary.trigger === 'auto'
-                    ? '此前上下文已自动整理'
-                    : '此前上下文已整理'}
-                  {' · '}
-                  {boundary.coveredCount} 个 Turn 仍保留在历史中
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-            ))}
-            <WaterfallTurn
-              turn={turn}
-              runsById={projection.runsById}
-              roundsById={projection.roundsById}
-              nodesById={projection.renderNodesById}
-              expandedRoundIds={expandedRoundIds}
-              expandedNodeIds={expandedNodeIds}
-              onToggleRound={toggleRound}
-              onToggleNode={toggleNode}
-              onRevealNewRoundNodes={revealNewRoundNodes}
-              onAttentionAction={onAttentionAction}
-              onReplaceRequest={onReplaceRequest}
-              onEditResend={onEditResend}
-              onOpenChildRun={onOpenChildRun}
-            />
-          </div>
-        )}
+        itemContent={renderItem}
         components={{
           Footer: () => <div className="h-7" aria-hidden="true" />,
         }}
@@ -225,4 +247,20 @@ export const ConversationTimeline = forwardRef<
       )}
     </div>
   )
-})
+}), conversationTimelineComparator)
+
+function conversationTimelineComparator(
+  previous: ConversationTimelineProps,
+  next: ConversationTimelineProps,
+) {
+  return (
+    previous.projection === next.projection
+    && previous.hasEarlierTurns === next.hasEarlierTurns
+    && previous.earlierLoading === next.earlierLoading
+    && previous.onLoadEarlier === next.onLoadEarlier
+    && previous.onAttentionAction === next.onAttentionAction
+    && previous.onReplaceRequest === next.onReplaceRequest
+    && previous.onEditResend === next.onEditResend
+    && previous.onOpenChildRun === next.onOpenChildRun
+  )
+}

@@ -90,8 +90,8 @@
   --ease-flow: cubic-bezier(0.32, 0.72, 0.24, 1);
 
   /* 对话列宽：viewStateStore 在运行时通过 --conversation-max 切换，
-     当前默认宽档；窄档 680px 见 ConversationShell 同步逻辑。 */
-  --conversation-max: 820px;
+     数字系统为窄档 640px / 标准档 760px / 宽档 920px。 */
+  --conversation-max: 760px;
   --conversation-pad: 24px;
   --page-gutter: clamp(16px, 3vw, 32px);
   --composer-bottom: 16px;

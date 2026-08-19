@@ -1,7 +1,18 @@
-import { memo, useRef } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { memo, useRef, type ComponentPropsWithoutRef } from 'react'
+import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+
+import { CodeBlock } from './CodeBlock'
+
+function PrePass({ children }: ComponentPropsWithoutRef<'pre'> & ExtraProps) {
+  return <>{children}</>
+}
+
+const markdownComponents: Components = {
+  code: CodeBlock,
+  pre: PrePass,
+}
 
 interface MarkdownChunk {
   offset: number
@@ -76,7 +87,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
 }) {
   if (!content) return null
   return (
-    <ReactMarkdown remarkPlugins={markdownPlugins}>
+    <ReactMarkdown remarkPlugins={markdownPlugins} components={markdownComponents}>
       {content}
     </ReactMarkdown>
   )

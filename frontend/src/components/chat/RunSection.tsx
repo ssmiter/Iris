@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { GitBranch } from 'lucide-react'
 import type {
   AttentionAction,
@@ -25,7 +26,7 @@ interface RunSectionProps {
   onOpenChildRun?: (runId: string) => void
 }
 
-export function RunSection({
+export const RunSection = memo(function RunSection({
   run,
   roundsById,
   nodesById,
@@ -80,4 +81,60 @@ export function RunSection({
       ))}
     </div>
   )
+}, (previous, next) => {
+  if (previous.run !== next.run) return false
+  if (!sameExpandedIds(previous.expandedRoundIds, next.expandedRoundIds)) {
+    return false
+  }
+  if (!sameExpandedIds(previous.expandedNodeIds, next.expandedNodeIds)) {
+    return false
+  }
+  for (const roundId of next.run.roundIds) {
+    const previousRound = previous.roundsById[roundId]
+    const nextRound = next.roundsById[roundId]
+    if (previousRound !== nextRound) return false
+    if (!previousRound || !nextRound) continue
+
+    for (const nodeId of nextRound.processNodeIds) {
+      if (previous.nodesById[nodeId] !== next.nodesById[nodeId]) return false
+    }
+
+    const previousAnswer = answerNodeForRound(previousRound, previous.nodesById)
+    const nextAnswer = answerNodeForRound(nextRound, next.nodesById)
+    if (
+      previousAnswer?.nodeId !== nextAnswer?.nodeId
+      || previousAnswer?.status !== nextAnswer?.status
+    ) {
+      return false
+    }
+  }
+  return (
+    previous.onToggleRound === next.onToggleRound
+    && previous.onToggleNode === next.onToggleNode
+    && previous.onRevealNewRoundNodes === next.onRevealNewRoundNodes
+    && previous.onAttentionAction === next.onAttentionAction
+    && previous.onOpenChildRun === next.onOpenChildRun
+  )
+})
+
+function answerNodeForRound(
+  round: RoundView,
+  nodesById: Record<string, RenderNode>,
+) {
+  if (round.answerNodeId) return nodesById[round.answerNodeId]
+  return Object.values(nodesById).find(
+    (node) => node.type === 'answer' && node.roundId === round.roundId,
+  )
+}
+
+function sameExpandedIds(
+  a: ReadonlySet<string>,
+  b: ReadonlySet<string>,
+) {
+  if (a === b) return true
+  if (a.size !== b.size) return false
+  for (const id of a) {
+    if (!b.has(id)) return false
+  }
+  return true
 }

@@ -63,6 +63,10 @@
     transition: max-width 350ms var(--ease-standard);
   }
 
+  :root[data-streaming='true'] .max-w-conversation {
+    transition: none;
+  }
+
   [data-motion='reduce'] .max-w-conversation {
     transition: none !important;
   }
@@ -73,6 +77,8 @@
     line-height: 1.8;
     overflow-wrap: anywhere;
     text-wrap: pretty;
+    line-break: strict;
+    hanging-punctuation: allow-end;
     color: rgb(var(--color-text));
   }
 
@@ -115,11 +121,11 @@
   }
 
   .answer-prose h1 {
-    font-size: 1.3em;
+    font-size: 1.35em;
   }
 
   .answer-prose h2 {
-    font-size: 1.18em;
+    font-size: 1.22em;
   }
 
   .answer-prose h3 {
@@ -141,13 +147,14 @@
     font-weight: 650;
   }
 
-  /* 链接：默认无下划线，hover 出现 */
+  /* 链接：默认无下划线，hover / focus-visible 出现 */
   .answer-prose a {
     color: rgb(var(--color-primary));
     text-decoration: none;
   }
 
-  .answer-prose a:hover {
+  .answer-prose a:hover,
+  .answer-prose a:focus-visible {
     text-decoration: underline;
   }
 
@@ -188,7 +195,7 @@
 
   /* 引用块：左边条、不斜体、无自动引号、字色 subtle */
   .answer-prose blockquote {
-    border-left: 2px solid rgb(var(--color-border-strong));
+    border-left: 3px solid rgb(var(--color-border-strong));
     padding-left: 12px;
     margin: 10px 0;
     font-style: normal;
@@ -227,31 +234,70 @@
     vertical-align: -2px;
   }
 
-  /* 表格：1px 边框、th 底 surface-muted、取消首末列 padding 归零 */
+  /* 表格：圆角容器 + 横向滚动 + 行 hover；边框由外层容器提供，内部只留网格线 */
   .answer-prose table {
     display: block;
     max-width: 100%;
     overflow-x: auto;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 13px;
-  }
-
-  .answer-prose thead {
-    border-bottom: 1px solid rgb(var(--color-border));
+    border: 1px solid rgb(var(--color-border));
+    border-radius: var(--radius-lg);
   }
 
   .answer-prose th,
   .answer-prose td {
-    border: 1px solid rgb(var(--color-border));
+    border-right: 1px solid rgb(var(--color-border));
+    border-bottom: 1px solid rgb(var(--color-border));
     padding: 6px 10px;
     text-align: left;
     vertical-align: top;
     color: rgb(var(--color-text));
   }
 
+  .answer-prose th:first-child,
+  .answer-prose td:first-child {
+    border-left: none;
+  }
+
+  .answer-prose th:last-child,
+  .answer-prose td:last-child {
+    border-right: none;
+  }
+
+  .answer-prose thead tr:first-child th {
+    border-top: none;
+  }
+
+  .answer-prose tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .answer-prose tbody tr:hover td {
+    background: rgb(var(--color-surface-muted));
+  }
+
   .answer-prose th {
     background: rgb(var(--color-surface-muted));
     font-weight: 650;
     vertical-align: bottom;
+  }
+
+  /* 小字号中文标签字重克制：prose 内 caption/small 不撑到 650 */
+  .answer-prose .text-caption,
+  .answer-prose .text-small {
+    font-weight: 600;
+  }
+
+  /* 代码块包装器：与 pre 块同一垂直节奏，避免内部 pre 重复边距 */
+  .answer-prose .code-block {
+    margin-top: 0.6em;
+    margin-bottom: 0.6em;
+  }
+
+  .answer-prose .code-block > pre {
+    margin-top: 0;
+    margin-bottom: 0;
   }
 }

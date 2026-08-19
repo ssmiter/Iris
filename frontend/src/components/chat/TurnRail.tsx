@@ -55,8 +55,11 @@ export function TurnRail({ turns, onScrollToTurn }: TurnRailProps) {
     [turns],
   )
 
-  // 当前可视轮：IntersectionObserver 视口顶 25% 区域内最小序号
+  // 目录打开时才挂载 IntersectionObserver/MutationObserver；关闭时彻底断开，
+  // 避免后台轮次持续刷新时观测器不必要的计算。
   useEffect(() => {
+    if (!open) return
+
     const scroller = document.querySelector<HTMLElement>('.conversation-scroll')
     if (!scroller) return
 
@@ -103,7 +106,7 @@ export function TurnRail({ turns, onScrollToTurn }: TurnRailProps) {
       scroller.removeEventListener('scroll', onScroll)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [turns.length])
+  }, [open, turns.length])
 
   // 目录打开时把当前行滚到可视区中央
   useEffect(() => {

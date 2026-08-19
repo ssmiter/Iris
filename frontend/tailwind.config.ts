@@ -131,10 +131,6 @@ export default {
           from: { opacity: '1', transform: 'translate(-50%, -50%) scale(1)' },
           to: { opacity: '0', transform: 'translate(-50%, -48%) scale(.985)' },
         },
-        'soft-pulse': {
-          '0%, 100%': { opacity: '.45', transform: 'scale(.9)' },
-          '50%': { opacity: '1', transform: 'scale(1)' },
-        },
         // 瀑布流节点出生：内容淡入微升，来路线段从上方生长（ WonWork 水流感
         // 的 Iris 克制版——时长压进 deliberate token，只播一次，both 填充防闪）。
         'node-enter': {
@@ -145,22 +141,6 @@ export default {
           from: { transform: 'scaleY(0)' },
           to: { transform: 'scaleY(1)' },
         },
-        // 活跃节点光环（WonWork wf-halo）：圆点外圈 box-shadow 扩散到透明，
-        // 与 soft-pulse 内点呼吸同周期；attention 等待态用 warning 色、更急促。
-        'node-halo': {
-          '0%': { boxShadow: '0 0 0 0 rgb(var(--color-primary) / 0.3)' },
-          '100%': { boxShadow: '0 0 0 6px rgb(var(--color-primary) / 0)' },
-        },
-        'node-halo-warn': {
-          '0%': { boxShadow: '0 0 0 0 rgb(var(--color-warning) / 0.35)' },
-          '100%': { boxShadow: '0 0 0 6px rgb(var(--color-warning) / 0)' },
-        },
-        // 回合收尾微光：active→settled 时摘要行泛一层 primary 薄光后散去，
-        // "尘埃落定"的一次性信号，不循环。
-        'settle-glow': {
-          from: { backgroundColor: 'rgb(var(--color-primary) / 0.1)' },
-          to: { backgroundColor: 'transparent' },
-        },
         spin: {
           to: { transform: 'rotate(360deg)' },
         },
@@ -170,12 +150,8 @@ export default {
         'overlay-out': 'overlay-out var(--motion-fast) var(--ease-exit)',
         'dialog-in': 'dialog-in var(--motion-deliberate) var(--ease-enter)',
         'dialog-out': 'dialog-out var(--motion-normal) var(--ease-exit)',
-        'soft-pulse': 'soft-pulse 1.8s var(--ease-standard) infinite',
         'node-enter': 'node-enter var(--motion-deliberate) var(--ease-enter) both',
         'seg-grow': 'seg-grow var(--motion-deliberate) var(--ease-enter) both',
-        'node-halo': 'node-halo 1.8s var(--ease-standard) infinite',
-        'node-halo-warn': 'node-halo-warn 1.2s var(--ease-standard) infinite',
-        'settle-glow': 'settle-glow 1.4s var(--ease-standard) both',
         spin: 'spin .8s linear infinite',
       },
     },

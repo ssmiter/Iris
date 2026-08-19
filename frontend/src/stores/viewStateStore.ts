@@ -10,7 +10,13 @@ import {
 } from '@/theme/theme'
 
 type FlagMap = Record<string, true>
-export type ConversationWidth = 'wide' | 'narrow'
+/**
+ * 对话列宽档位（px），按中文阅读 measure 推导：正文 15px 全角字 ≈ 15px/字，
+ * 中文最优 28–40 字/行。760 为默认（混合内容均衡），640 贴近纯中文阅读
+ * 最优区（≈38 字/行），920 留给宽表格/代码。数字即值，不做语义化名。
+ */
+export type ConversationWidth = 640 | 760 | 920
+export const DEFAULT_CONVERSATION_WIDTH: ConversationWidth = 760
 
 export interface ViewState {
   expandedRoundIds: FlagMap
@@ -63,7 +69,7 @@ export const useViewStateStore = create<ViewState>()(
       draftsByConversationId: {},
       sidebarOpen: true,
       mobileSidebarOpen: false,
-      conversationWidth: 'wide',
+      conversationWidth: DEFAULT_CONVERSATION_WIDTH,
 
       toggleRound: (roundId, nodeIds) =>
         set((state) => {
@@ -150,17 +156,22 @@ export const useViewStateStore = create<ViewState>()(
     }),
     {
       name: 'iris.view-state.v1',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => localStorage),
       migrate: (persisted) => {
-        // v1 → v2：新增 hue/accent/motionPreference，沿用旧 theme 与草稿
-        const state = persisted as Partial<ViewState>
+        // v2 → v3：列宽从 wide/narrow 语义档改为数字档（640/760/920）
+        const state = persisted as Partial<ViewState> & {
+          conversationWidth?: ConversationWidth | 'wide' | 'narrow'
+        }
+        const width = state.conversationWidth
         return {
           ...state,
-          hue: state.hue ?? 'neutral',
-          accent: state.accent ?? 'iris',
-          motionPreference: state.motionPreference ?? 'auto',
-          conversationWidth: state.conversationWidth ?? 'wide',
+          conversationWidth:
+            width === 640 || width === 760 || width === 920
+              ? width
+              : width === 'narrow'
+                ? 640
+                : DEFAULT_CONVERSATION_WIDTH,
         }
       },
       partialize: (state) => ({

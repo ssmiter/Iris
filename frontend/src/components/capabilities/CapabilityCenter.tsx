@@ -34,7 +34,7 @@ export function CapabilityCenter() {
       }}
       size="xl"
       title="能力"
-      description="能力树上的全部可寻址对象：内核工具、过程插件、技能、知识文档与 MCP 远端工具；种类是切面，目录是脊柱。"
+      description="按目录管理全部可调用的能力。"
       trigger={
         <Button variant="ghost" size="icon" aria-label="管理能力">
           <Settings2 aria-hidden="true" className="h-4 w-4" />

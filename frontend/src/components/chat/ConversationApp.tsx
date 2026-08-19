@@ -775,6 +775,7 @@ export function ConversationApp() {
 
   return (
     <ConversationShell
+      hasActiveTurn={Boolean(activeTurn)}
       badge={
         <Badge appearance="outline">
           {chat.connectionState === 'connected'

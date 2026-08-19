@@ -209,32 +209,36 @@ export function ComposerDock({
       onDrop={handleDrop}
     >
       <div className="mx-auto w-full max-w-conversation px-[var(--conversation-pad)]">
-        {replacementMode && (
-          <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-small text-ink">
-            <span className="inline-flex min-w-0 items-center gap-2">
-              <GitBranch
-                aria-hidden="true"
-                className="h-4 w-4 shrink-0 text-primary"
-              />
-              <span className="truncate">
-                修改这条提问会保留原对话，并从这里创建新分支
-              </span>
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              aria-label="取消从这里改问"
-              onClick={replacementMode.onCancel}
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </Button>
+        {(replacementMode || pendingSupplements.length > 0) && (
+          <div className="mb-2 grid gap-2">
+            {replacementMode && (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-small text-ink">
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <GitBranch
+                    aria-hidden="true"
+                    className="h-4 w-4 shrink-0 text-primary"
+                  />
+                  <span className="truncate">
+                    修改这条提问会保留原对话，并从这里创建新分支
+                  </span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="取消从这里改问"
+                  onClick={replacementMode.onCancel}
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            <SupplementQueueTray
+              items={pendingSupplements}
+              onCancel={onCancelSupplement}
+            />
           </div>
         )}
-        <SupplementQueueTray
-          items={pendingSupplements}
-          onCancel={onCancelSupplement}
-        />
         {(quotes.length > 0 || attachments.length > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {quotes.map((quote) => (
@@ -356,8 +360,8 @@ export function ComposerDock({
           </div>
         </div>
 
-        <div className="mt-1.5 flex items-center justify-between px-1">
-          <span className="text-caption text-ink-muted">
+        <div className="mt-1.5 flex items-center justify-between px-1 text-caption text-ink-muted">
+          <span>
             {activeTurn
               ? supplementReady
                 ? '运行中，现在可以补充说明'
@@ -366,17 +370,14 @@ export function ComposerDock({
           </span>
 
           <div className="flex flex-1 items-center justify-end gap-2">
-            <ConversationWidthToggle />
+            <span className="opacity-70">
+              <ConversationWidthToggle />
+            </span>
 
             {contextUsage && (
               <button
                 type="button"
-                className={cn(
-                  'flex items-center gap-1.5 font-mono text-caption',
-                  ctxWarn
-                    ? 'text-warning-foreground'
-                    : 'text-ink-muted',
-                )}
+                className="flex items-center gap-1.5 font-mono text-caption text-ink-muted"
                 title={`上下文用量 ${contextUsage.used.toLocaleString()} / ${contextUsage.limit.toLocaleString()} tokens`}
                 onClick={() => {
                   /* 预留：点击切换百分比 / 具体数字 */

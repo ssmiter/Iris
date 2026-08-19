@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ArtifactNode,
   AttentionAction,
@@ -12,8 +12,6 @@ import { FlowNode } from './FlowNode'
 import { ProcessSummary } from './ProcessSummary'
 import { cn } from '@/lib/cn'
 
-/** 已进入 settled/stopped/failed 的 roundId 集合（会话级，防 Virtuoso 回收重放） */
-const settledRoundIds = new Set<string>()
 /** 已播过摘要行淡入的 roundId 集合（会话级） */
 const summaryFadedRoundIds = new Set<string>()
 
@@ -32,7 +30,7 @@ interface RoundSectionProps {
   onOpenChildRun?: (runId: string) => void
 }
 
-export function RoundSection({
+export const RoundSection = memo(function RoundSection({
   round,
   nodesById,
   processExpanded,
@@ -92,41 +90,19 @@ export function RoundSection({
   ).length
   const processId = `round-process-${round.roundId}`
 
-  // 收尾微光：只在 active→非 active 的跃迁瞬间触发一次（settling 相位的克制版），
-  // 水合历史时初值即 settled，不会误闪。
+  // 摘要行入场动画：只在 active→非 active 的跃迁瞬间触发一次，
+  // 水合历史时初值即 settled，不会误闪；会话级集合防重放。
   const prevPhaseRef = useRef(round.phase)
-  const [settleGlow, setSettleGlow] = useState(false)
-  // 尘埃落定：过程链区域整体淡至 0.4 透明度 + 摘要行淡入；会话级注册防重放。
-  const [settledMark, setSettledMark] = useState(round.phase !== 'active')
   const [summaryFade, setSummaryFade] = useState(false)
-  const [summaryVisible, setSummaryVisible] = useState(true)
-  useEffect(() => {
-    if (round.phase !== 'active') {
-      settledRoundIds.add(round.roundId)
-    }
-  }, [round.phase, round.roundId])
   useEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = round.phase
     if (prev !== 'active' || round.phase === 'active') return
-    setSettleGlow(true)
-    const timer = setTimeout(() => setSettleGlow(false), 1500)
-    if (!settledRoundIds.has(round.roundId)) {
-      settledRoundIds.add(round.roundId)
-      setSettledMark(true)
-    }
     if (!summaryFadedRoundIds.has(round.roundId)) {
       summaryFadedRoundIds.add(round.roundId)
       setSummaryFade(true)
     }
-    return () => clearTimeout(timer)
   }, [round.phase, round.roundId])
-
-  useEffect(() => {
-    if (!summaryFade) return
-    const raf = requestAnimationFrame(() => setSummaryVisible(true))
-    return () => cancelAnimationFrame(raf)
-  }, [summaryFade])
 
   useLayoutEffect(() => {
     if (processExpanded) onRevealNewNodes(processNodeIds)
@@ -156,9 +132,7 @@ export function RoundSection({
               'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
               'hover:!opacity-100',
               processExpanded
-                ? settledMark
-                  ? 'grid-rows-[1fr] opacity-40'
-                  : 'grid-rows-[1fr] opacity-100'
+                ? 'grid-rows-[1fr] opacity-100'
                 : 'grid-rows-[0fr] opacity-0',
               'motion-reduce:transition-none',
             )}
@@ -182,21 +156,13 @@ export function RoundSection({
             </div>
           </div>
 
-          <div
-            className={cn(
-              'transition-opacity duration-fold ease-standard',
-              !summaryVisible && 'opacity-0',
-              'motion-reduce:transition-none',
-            )}
-          >
-            <ProcessSummary
-              round={round}
-              expanded={processExpanded}
-              pendingCount={pendingCount}
-              settleGlow={settleGlow}
-              onToggle={() => onToggleProcess(processNodeIds)}
-            />
-          </div>
+          <ProcessSummary
+            round={round}
+            expanded={processExpanded}
+            pendingCount={pendingCount}
+            fadeIn={summaryFade}
+            onToggle={() => onToggleProcess(processNodeIds)}
+          />
         </>
       )}
 
@@ -208,4 +174,32 @@ export function RoundSection({
       />
     </section>
   )
+}, (previous, next) => {
+  if (previous.round !== next.round) return false
+  if (previous.processExpanded !== next.processExpanded) return false
+  if (!sameExpandedNodeIds(previous.expandedNodeIds, next.expandedNodeIds)) {
+    return false
+  }
+  for (const nodeId of next.round.processNodeIds) {
+    if (previous.nodesById[nodeId] !== next.nodesById[nodeId]) return false
+  }
+  return (
+    previous.onToggleProcess === next.onToggleProcess
+    && previous.onToggleNode === next.onToggleNode
+    && previous.onRevealNewNodes === next.onRevealNewNodes
+    && previous.onAttentionAction === next.onAttentionAction
+    && previous.onOpenChildRun === next.onOpenChildRun
+  )
+})
+
+function sameExpandedNodeIds(
+  a: ReadonlySet<string>,
+  b: ReadonlySet<string>,
+) {
+  if (a === b) return true
+  if (a.size !== b.size) return false
+  for (const id of a) {
+    if (!b.has(id)) return false
+  }
+  return true
 }
