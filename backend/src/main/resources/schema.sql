@@ -732,6 +732,16 @@ CREATE TABLE IF NOT EXISTS tool_render_link (
     FOREIGN KEY (node_id) REFERENCES render_node_projection(node_id)
 );
 
+-- Link from a child/pipeline Run back to the `run` render node that represents it
+-- inside the parent timeline. Kept separate from tool_render_link because a Run
+-- can outlive its originating tool card and may be referenced by future updates.
+CREATE TABLE IF NOT EXISTS child_run_render_link (
+    child_run_id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (child_run_id) REFERENCES agent_run(run_id),
+    FOREIGN KEY (node_id) REFERENCES render_node_projection(node_id)
+);
+
 CREATE TABLE IF NOT EXISTS approval_attention_link (
     approval_id TEXT PRIMARY KEY,
     attention_id TEXT NOT NULL UNIQUE,

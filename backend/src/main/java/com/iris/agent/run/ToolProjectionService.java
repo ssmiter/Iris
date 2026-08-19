@@ -472,13 +472,18 @@ public class ToolProjectionService {
                 result
         );
 
+        String nodeType = projection.path("type").asText("tool");
+        String nodeStatus = projection.path("status").asText(
+                visibleToolStatus(result.phase())
+        );
+
         if (existing == null) {
             insertNode(
                     nodeId,
                     run,
                     round,
-                    "tool",
-                    visibleToolStatus(result.phase()),
+                    nodeType,
+                    nodeStatus,
                     ordinal,
                     version,
                     projection,
@@ -491,15 +496,33 @@ public class ToolProjectionService {
                     .param("toolCallId", call.toolCallId())
                     .param("nodeId", nodeId)
                     .update();
+            upsertChildRunLink(nodeId, projection);
         } else {
             updateNode(
                     nodeId,
-                    visibleToolStatus(result.phase()),
+                    nodeType,
+                    nodeStatus,
                     version,
                     projection,
                     now
             );
+            upsertChildRunLink(nodeId, projection);
         }
+    }
+
+    private void upsertChildRunLink(String nodeId, ObjectNode projection) {
+        String childRunId = projection.path("childRunId").asText(null);
+        if (childRunId == null || childRunId.isBlank()) {
+            return;
+        }
+        jdbc.sql("""
+                INSERT INTO child_run_render_link(child_run_id, node_id)
+                VALUES (:childRunId, :nodeId)
+                ON CONFLICT(child_run_id) DO UPDATE SET node_id = excluded.node_id
+                """)
+                .param("childRunId", childRunId)
+                .param("nodeId", nodeId)
+                .update();
     }
 
     private void projectAttention(
@@ -629,7 +652,7 @@ public class ToolProjectionService {
                     .param("nodeId", nodeId)
                     .update();
         } else {
-            updateNode(nodeId, status, version, projection, now);
+            updateNode(nodeId, "attention", status, version, projection, now);
             jdbc.sql("""
                     UPDATE attention_projection
                     SET status = :status, projection_json = :projection,
@@ -793,7 +816,7 @@ public class ToolProjectionService {
                     .param("nodeId", nodeId)
                     .update();
         } else {
-            updateNode(nodeId, status, version, projection, now);
+            updateNode(nodeId, "attention", status, version, projection, now);
             updateAttentionProjection(
                     attentionId,
                     status,
@@ -945,6 +968,7 @@ public class ToolProjectionService {
 
     private void updateNode(
             String nodeId,
+            String type,
             String status,
             int version,
             ObjectNode projection,
@@ -952,11 +976,12 @@ public class ToolProjectionService {
     ) {
         int updated = jdbc.sql("""
                 UPDATE render_node_projection
-                SET node_status = :status, version = :version,
+                SET node_type = :type, node_status = :status, version = :version,
                     renderer_key = :rendererKey,
                     projection_json = :projection, updated_at = :now
                 WHERE node_id = :nodeId AND version = :expectedVersion
                 """)
+                .param("type", type)
                 .param("status", status)
                 .param("version", version)
                 .param(

@@ -100,6 +100,7 @@ class AgenticRoundCoordinatorTest {
     private ModelProvider provider() {
         ModelProvider provider = mock(ModelProvider.class);
         when(provider.profileId()).thenReturn(PROFILE);
+        when(provider.providerKind()).thenReturn("test");
         when(provider.modelId()).thenReturn(MODEL_ID);
         when(provider.timeout()).thenReturn(Duration.ofSeconds(30));
         when(providers.require(PROFILE)).thenReturn(provider);

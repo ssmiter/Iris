@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.model.ModelContext;
+import com.iris.agent.run.ChildRunNodeProjectionService;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
@@ -25,17 +26,20 @@ public class RunEventEmitter {
     private final ConversationEventAppender events;
     private final RunRoundRepository facts;
     private final ObjectMapper objectMapper;
+    private final ChildRunNodeProjectionService childRunNodes;
 
     public RunEventEmitter(
             ConversationQueryRepository views,
             ConversationEventAppender events,
             RunRoundRepository facts,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ChildRunNodeProjectionService childRunNodes
     ) {
         this.views = views;
         this.events = events;
         this.facts = facts;
         this.objectMapper = objectMapper;
+        this.childRunNodes = childRunNodes;
     }
 
     public void roundStarted(String roundId) {
@@ -148,6 +152,7 @@ public class RunEventEmitter {
                 run.runId(),
                 payload("run", objectMapper.valueToTree(run))
         ));
+        childRunNodes.updateForRun(runId);
     }
 
     private ObjectNode payload(String field, JsonNode view) {

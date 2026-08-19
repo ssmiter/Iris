@@ -146,6 +146,7 @@ class RoundToolCoordinatorTest {
                 null,
                 null,
                 1,
+                Instant.now(),
                 Instant.now()
         );
     }
@@ -182,8 +183,8 @@ class RoundToolCoordinatorTest {
         when(modelFacts.roundToolCalls(ROUND_ID)).thenReturn(calls);
         for (RoundToolCall call : calls) {
             when(toolRuntime.schedulingConcurrency(
-                    new Invocation(call.toolCallId(), call.toolName()),
-                    call.arguments(),
+                    eq(new Invocation(call.toolCallId(), call.toolName())),
+                    eq(call.arguments()),
                     any(ToolContext.class)
             )).thenReturn(ConcurrencySemantics.SERIAL);
         }
