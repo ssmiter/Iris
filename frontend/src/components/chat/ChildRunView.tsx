@@ -74,7 +74,7 @@ function runStatsText(run: RunView) {
 /** 已发送补充的会话级留痕：关面板再开不丢，直到页面刷新。 */
 const sentLog = new Map<
   string,
-  Array<{ text: string; at: number; state: 'queued' | 'delivered' }>
+  Array<{ text: string; at: number; state: 'queued' | 'injected' }>
 >()
 
 function KillButton({ runId, active }: { runId: string; active: boolean }) {
@@ -411,6 +411,7 @@ export function ChildRunCard({
   }
 
   const meta = phaseMeta[run.phase]
+  const summary = run.progressSummary || fallbackSummary
 
   return (
     <div className="space-y-2">
@@ -422,7 +423,7 @@ export function ChildRunCard({
           {runStatsText(run)}
         </span>
       </div>
-      {run.progressSummary && <p>{run.progressSummary}</p>}
+      {summary && <p>{summary}</p>}
       {run.failure && (
         <p className="text-small text-danger">{run.failure.userMessage}</p>
       )}
