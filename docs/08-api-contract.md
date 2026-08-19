@@ -617,6 +617,33 @@ GET /api/v1/runs/{runId}
 
 Pipeline 重启从 terminal Step 与 child facts 重建 ready-set。若冻结依赖 unavailable，Run 以 `suspended` + blocker/FailureView 投影；不得自动迁移 Definition/Manifest，也不得直接切 Agentic。Pipeline → Agentic handoff 只有在全部 earlier/sibling activity 终止、Resource Claim 已释放或转移、且没有执行中/验证中/未知写动作时才能创建 child Run；child 继承权限上限但不继承 Approval。
 
+### 5.7 子 Run 消息与停止（左缘面板通道）
+
+docs/34 M7d 左缘子 agent 面板的管理通道，复用既有持久事实，不造第二套状态机：
+
+```http
+POST /api/v1/runs/{runId}/messages
+Idempotency-Key: runmsg-opaque
+
+{ "text": "补充：优先看华东仓的数据" }
+```
+
+`202` 返回 `{ messageId, runId, phase: "queued", text }`。消息落
+`run_mailbox_message`（source 标记为用户指令），在目标 Run 的下一 Round
+边界注入——与 `message_agent` 工具同一生命周期（queued → injected），
+不插入正在流式生成的请求（docs/28 §6）。
+
+```http
+POST /api/v1/runs/{runId}/stop
+Idempotency-Key: runstop-opaque
+
+{ "reason": "user_requested" }
+```
+
+`202` 返回 `{ runId, phase: "cancellation_requested", accepted, message }`。
+内部走 `AgentRunLauncher.requestStop`——与 `cancel_agent_run` 工具、
+Turn 级停止同一条取消链；已提交写动作仍走 verify/reconcile。
+
 ## 6. Branch 与 Compact
 
 ### 6.1 读模型

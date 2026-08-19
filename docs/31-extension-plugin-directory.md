@@ -419,5 +419,13 @@ memory、knowledge、MCP 适配、Pipeline 定义。
   （嵌套节点/运行中胶囊/复用时间线的完整视图）、定时任务作为第七种
   叶子 kind=schedule 进能力树、Pipeline 详情附最近运行。设计与边界见
   [docs/33](33-background-execution-visibility.md)；
+- **M7（落地中）**：对话视觉与交互对齐（对比 WonWork 逐项裁决）——
+  过程链信息密度、输入区、对话细节、左缘子 agent 面板、排版渲染、
+  操控型细节。设计与三档裁决见
+  [docs/34](34-visual-alignment-and-enterprise.md)；
+- **M8（落地中）**：企业级功能补缺——拓展扫描 problems 进管理页、
+  MCP 管理页 stdio 连接器与断线重连一次、cron 单次任务（docs/34 §3）；
+- **M9（落地中）**：agent 内核可靠性——反应式上下文溢出恢复、Round 级
+  聚合结果预算、重试强化、子 Run 并发额度（docs/34 §4）；
 - 每步外移前该工具定义快照已固化在 `capability_definition`（现有机制），历史会话
   寻址零影响。
