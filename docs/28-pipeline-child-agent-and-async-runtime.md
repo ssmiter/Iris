@@ -96,6 +96,12 @@ Tool Registry 在应用启动时只建立 Definition 与实现绑定，不能为
 
 未终态的 child 也不能在压缩后“消失”。每次根 Agent 组装上下文时，Harness 都从持久 Run 图投影一个有界的 `agent_run_state`，只列出当前分支仍在运行或挂起的 child id、阶段、工作模式和任务摘要。它用于防止重复委派和支持补充/取消，不注入 transcript，也不要求模型轮询进度。
 
+**并发额度（docs/34 M9b）**：后台 delegate 不能被模型一次扇出打爆。每个 root Run
+的活跃子 Run 上限为 `iris.agent.max-active-child-runs`（默认 3）；超额时子 Run
+照常持久化为 `accepted`（已受理、待启动），不占额度；子 Run 终态后由 Launcher
+按创建顺序补启动，进程重启恢复同样应用额度。delegate_task 在排队时明确告知模型
+“前面还有 N 个”，而不是失败——排队是 durable 语义，不是错误。
+
 ## 6. Mailbox：异步通信的持久事实
 
 进程内回调只能用于唤醒，不能承载真相。每条消息先写 `run_mailbox_message`：
@@ -157,6 +163,16 @@ WonWork 的 APS 写任务进一步说明了一种可复用但不应硬编码成�
 - Launcher 捕获逃出 Agentic Coordinator 的大故障。有限自恢复后仍失败时，必须把 Run
   终结为带用户说明和恢复建议的 durable Failure，让 child Result、Pipeline、Mailbox、
   Task Activity 与 SSE 继续正常汇合；禁止只写日志并留下永久 `running` 的假象。
+- **反应式上下文溢出恢复（docs/34 M9a）**：provider 拒绝（prompt_too_large / 413）
+  不再终结 Run——失败当前 attempt、Round 回退 ACCEPTED、以更紧预算（×0.85）重开
+  attempt；连续 2 次仍溢出才进入常规失败路径。压缩只改变当前视野，不丢历史。
+- **Round 级聚合结果预算（docs/34 M9a）**：当轮工具结果总量超
+  `iris.agent.round-tool-result-budget-tokens`（默认 24000）时，最旧/最大的结果
+  在回注前就地投影为 `tool-result://` 引用，完整 payload 仍持久化可回读。
+- **重试强化（docs/34 M9a）**：每 Round attempt 上限 3→5；provider `Retry-After`
+  容忍按 Run 类型分化——root 交互 Run 10s（人在等），后台/子 Run 60s（真实限流
+  窗口）。模型 fallback 降级暂不做：ModelProviderRegistry 无多 profile 抽象，
+  不为此发明新层。
 
 ## 11. 近期实现顺序
 

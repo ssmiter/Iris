@@ -9,6 +9,9 @@ import type { VirtuosoHandle } from 'react-virtuoso'
 
 type FollowMode = 'following' | 'reviewing'
 
+/** 轮次较少时用 smooth 回到最新；超长列表 smooth 性价比低，回退瞬跳。 */
+const SMOOTH_SCROLL_TURN_THRESHOLD = 50
+
 interface ConversationFollow {
   virtuosoRef: RefObject<VirtuosoHandle>
   setScroller: (element: HTMLElement | Window | null) => void
@@ -91,7 +94,7 @@ export function useConversationFollow(
     virtuosoRef.current?.scrollToIndex({
       index: firstItemIndex + Math.max(0, itemCount - 1),
       align: 'end',
-      behavior: 'auto',
+      behavior: itemCount <= SMOOTH_SCROLL_TURN_THRESHOLD ? 'smooth' : 'auto',
     })
   }, [firstItemIndex, itemCount, resumeFollowing])
 

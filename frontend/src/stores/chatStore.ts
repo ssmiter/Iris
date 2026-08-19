@@ -38,6 +38,8 @@ export interface ChatState {
   pendingSupplements: PendingSupplement[]
   /** 视野之外还有更早的 Turn（后端分页水位线） */
   hasEarlierTurns: boolean
+  /** 本会话最后一次收到 SSE 事件的时间（ISO，用于停滞检测） */
+  lastEventAt: string | null
 
   hydrateProjection: (projection: ConversationProjection) => void
   hydrateView: (view: ConversationView) => void
@@ -72,6 +74,7 @@ function reduceConversationEvent(
   const payload = event.envelope.payload
   const next: Partial<ChatState> = {
     eventCursor: event.envelope.eventId,
+    lastEventAt: event.envelope.occurredAt,
   }
 
   if (event.type === 'turn.accepted' || event.type === 'turn.updated') {
@@ -228,6 +231,7 @@ export const useChatStore = create<ChatState>((set) => {
   projectionVersion: 1,
   pendingSupplements: [],
   hasEarlierTurns: false,
+  lastEventAt: null,
 
   hydrateProjection: (projection) => {
     clearQueuedDeltas()
@@ -240,6 +244,7 @@ export const useChatStore = create<ChatState>((set) => {
       roundsById: projection.roundsById,
       renderNodesById: projection.renderNodesById,
       connectionState: 'connected',
+      lastEventAt: new Date().toISOString(),
     })
   },
 
@@ -265,6 +270,7 @@ export const useChatStore = create<ChatState>((set) => {
           state: 'pending' as const,
         })),
       connectionState: 'connecting',
+      lastEventAt: new Date().toISOString(),
     })
   },
 
@@ -405,6 +411,7 @@ export const useChatStore = create<ChatState>((set) => {
       eventCursor: null,
       pendingSupplements: [],
       hasEarlierTurns: false,
+      lastEventAt: null,
     })
   },
   }

@@ -22,6 +22,7 @@ interface RunSectionProps {
     node: AttentionNode,
     action: AttentionAction,
   ) => void
+  onOpenChildRun?: (runId: string) => void
 }
 
 export function RunSection({
@@ -34,6 +35,7 @@ export function RunSection({
   onToggleNode,
   onRevealNewRoundNodes,
   onAttentionAction,
+  onOpenChildRun,
 }: RunSectionProps) {
   const rounds = run.roundIds
     .map((roundId) => roundsById[roundId])
@@ -73,6 +75,7 @@ export function RunSection({
             onRevealNewRoundNodes(round.roundId, nodeIds)
           }
           onAttentionAction={onAttentionAction}
+          onOpenChildRun={onOpenChildRun}
         />
       ))}
     </div>

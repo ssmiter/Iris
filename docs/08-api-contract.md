@@ -431,6 +431,22 @@ Idempotency-Key: archive-opaque
 归档产生 `conversation.updated` 事件（payload 带 `archived` 字段），
 在线窗口据此把条目移出列表；归档当前打开的会话时，前端先切走再提交。
 
+### 4.6 上下文水位（只读）
+
+```http
+GET /api/v1/conversations/{conversationId}/context-usage?branchId=<branchId>
+```
+
+```json
+{ "used": 12345, "limit": 120000, "percent": 10 }
+```
+
+当前 active/queued Turn 最近一次上下文组装的估算输入 token（`used`）、
+窗口上限（`limit`）与百分比。数据来自 `model_context_snapshot`，
+经 `conversation_turn.root_run_id` 关联；无快照时回退窗口默认值、
+`percent=0`。水合时一次性 GET 取初值，之后走 `context.usage` SSE 事件
+（§10.3），禁止轮询（docs/34 M7b）。
+
 ## 5. Turn 与运行命令
 
 ### 5.1 提交自然语言 Turn
@@ -791,6 +807,12 @@ GET /api/v1/compactions/{runId}
 
 Frontend 不需要也不应获得秘密参数。完整规范化输入保存在 Backend，UI 得到足以理解影响的安全预览。
 
+审批决策需要看到调用参数（docs/34 M7c）：`approval` 投影另带
+`parameters`（operation_snapshot 的规范化入参 JSON）与 `argumentsSummary`
+（紧凑单行摘要，截断约 160 字符，前端优先展示）。纪律不变：会含秘密的
+字段本就不该进入规范化入参（工具 manifest 的设计义务），审批卡展示的
+是"这次调用要做什么"，不是秘密本体。
+
 `status`：
 
 ```text
@@ -1119,7 +1141,12 @@ Frontend 不提交 `loadedTools[]`，也不接收完整 Catalog schema。它可�
 GET /api/v1/capability-admin/tree
 GET /api/v1/capability-admin/items?path=/industry/mes&kind=process&query=库存
 GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/query_mes_material_inventory
+GET /api/v1/capability-admin/problems
 ```
+
+- `problems`：拓展扫描问题投影（docs/34 M8a）——`root` / `file` /
+  `description` / `severity`（当前统一 error，预留 warning）。内存运行时
+  视图，随重扫整体替换，不落库；插件作者写错清单不再需要翻后端日志。
 
 - `tree`：目录树（path/name/title/count/stats/children），计数覆盖注册表 + Pipeline + 目录
   投影源，标题来自 `_directory.yml`；`stats` 是 `_directory.yml` 声明口径的实时值，
@@ -1146,12 +1173,18 @@ GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/qu
 
 ```http
 GET    /api/v1/schedules
-POST   /api/v1/schedules                     { name, expression, prompt, enabled? }
-PATCH  /api/v1/schedules/{taskId}            { expectedVersion, name?, expression?, prompt?, enabled? }
+POST   /api/v1/schedules                     { name, expression, prompt, enabled?, once? }
+PATCH  /api/v1/schedules/{taskId}            { expectedVersion, name?, expression?, prompt?, enabled?, once? }
 DELETE /api/v1/schedules/{taskId}?expectedVersion=<n>
 POST   /api/v1/schedules/{taskId}/run
 GET    /api/v1/schedules/{taskId}/executions?limit=20
 ```
+
+- `once`（docs/34 M8c）：单次任务 = 精确到点的六位 cron + `once: true`。
+  计划触发成功认领后即自动 `enabled=false`（不再排下一棒）；手动 `run`
+  不改动启用状态；启动补扫时已过期的单次任务直接停用、不补跑
+  （"5 分钟后提醒喝水"关机三天后补跑=打扰）。旧库经 SchemaColumnMigration
+  守卫迁移（PRAGMA table_info + ALTER TABLE ADD COLUMN）。
 
 - `expression` 是六位 cron（秒 分 时 日 月 周），系统本地时区；非法表达式返回
   `invalid_schedule`（422）。写操作带 `expectedVersion` 乐观校验，过期返回
@@ -1161,6 +1194,23 @@ GET    /api/v1/schedules/{taskId}/executions?limit=20
   落 `cron_execution`；手动 `run` 不影响既有排程。
 - 模型侧等价物是 `/system/schedule` 下的四个工具（§3 域清单），走标准 Tool Runtime
   审批；任务读取走能力目录投影，不单独开放模型读接口。
+
+### 8.9 MCP 连接器管理
+
+手工连接器的写路径是 `POST/PUT /api/v1/mcp/servers`（管理面，不进模型
+上下文）。definition 的传输字段（docs/34 M8b）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `transport` | `streamable_http` \| `stdio` | 默认 `streamable_http` |
+| `command` / `args` / `env` | string / string[] / string[] | stdio 必填；env 是变量名清单，值从进程环境读取 |
+
+stdio 持久化复用 `mcp_server_stdio` 表（endpoint 以 `stdio://<slug>` 占位），
+slug 冲突 fail-closed。响应 `ServerView` 回带 command/args/env。
+
+断线恢复一次：工具执行遇 `mcp_not_connected` 时先在连接层重连一次
+（同一 server 串行化，防并发风暴），成功则继续本次调用，失败才报错——
+这是连接层恢复，不是远端调用的不透明重试。
 
 ## 9. Workspace 与 Artifact 读取
 
@@ -1367,6 +1417,7 @@ data: {...}
 | `branch.created` | `{ "branch": BranchSummary, "acceptance": TurnAcceptance }` |
 | `compaction.started / completed / failed / cancelled` | `{ "compaction": CompactionView, "boundary": CompactBoundaryView? }` |
 | `task.updated` | `{ "task": TaskView }`；创建、推进或建立稳定检查点后发送完整安全 View |
+| `context.usage` | `{ "contextUsage": { used, limit, percent } }`；root Run 每次上下文组装后发射（docs/34 M7b），前端水位条据此更新，禁止轮询 |
 | `projection.invalidated` | `{ "reasonCode", "requiredProjectionVersion" }` |
 
 ToolExecution 的全部内部状态不会一比一泄漏为 UI 事件。Projector 将其变成 `tool` 或 `attention` 节点；诊断详情通过有权限的 detail endpoint 按需读取。

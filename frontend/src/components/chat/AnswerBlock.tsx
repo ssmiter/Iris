@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { AnswerNode } from '@/domain/chat/models'
-import { cn } from '@/lib/cn'
+import { useChatStore } from '@/stores/chatStore'
 import { useReveal } from '@/motion/useReveal'
 import { IncrementalMarkdown } from './IncrementalMarkdown'
 
@@ -14,6 +14,24 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
   const visibleContent = useReveal(node.content, streaming)
   const revealing = streaming || visibleContent !== node.content
 
+  const turnStopped = useChatStore(
+    (state) => node.turnId != null
+      && state.turnsById[node.turnId]?.phase === 'stopped',
+  )
+  const runCancelled = useChatStore(
+    (state) => node.runId != null
+      && state.runsById[node.runId]?.phase === 'cancelled',
+  )
+  const roundStopped = useChatStore(
+    (state) => node.roundId != null
+      && state.roundsById[node.roundId]?.phase === 'stopped',
+  )
+
+  const hasContent = visibleContent.trim().length > 0
+  const stoppedByParent = turnStopped || runCancelled || roundStopped
+  const showStoppedEyebrow = hasContent
+    && (node.status === 'stopped' || stoppedByParent)
+
   return (
     <section
       className="mt-2.5 min-w-0 text-body text-ink"
@@ -26,22 +44,20 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
           阶段结论
         </div>
       )}
-      <div
-        className={cn(
-          'answer-prose prose prose-sm max-w-none text-ink',
-          'prose-headings:text-ink prose-p:text-ink prose-strong:text-ink',
-          'prose-a:text-primary prose-code:text-ink prose-code:before:content-none prose-code:after:content-none',
-          'prose-pre:border prose-pre:border-border/70 prose-pre:bg-surface-muted',
-          revealing
-            && 'after:ml-1 after:inline-block after:h-4 after:w-0.5 after:animate-reveal-cursor after:bg-ink-muted after:align-text-bottom motion-reduce:after:animate-none',
-        )}
-      >
+      <div className="answer-prose prose prose-sm max-w-none text-ink">
         <IncrementalMarkdown content={visibleContent} />
       </div>
-      {node.status === 'stopped' && (
-        <p className="mt-3 text-small text-warning">
-          已停止，已生成的内容仍被保留。
-        </p>
+      {showStoppedEyebrow && (
+        <div
+          className="mt-2 flex items-center gap-1.5 text-caption text-warning"
+          role="status"
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-warning"
+            aria-hidden="true"
+          />
+          输出已停止
+        </div>
       )}
       {node.status === 'failed' && (
         <p className="mt-3 text-small text-danger">

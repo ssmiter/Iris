@@ -10,6 +10,7 @@ import {
 } from '@/theme/theme'
 
 type FlagMap = Record<string, true>
+export type ConversationWidth = 'wide' | 'narrow'
 
 export interface ViewState {
   expandedRoundIds: FlagMap
@@ -23,8 +24,10 @@ export interface ViewState {
   draftsByConversationId: Record<string, string>
   sidebarOpen: boolean
   mobileSidebarOpen: boolean
+  conversationWidth: ConversationWidth
 
   toggleRound: (roundId: string, nodeIds: string[]) => void
+  setConversationWidth: (width: ConversationWidth) => void
   toggleNode: (nodeId: string) => void
   seedExpandedNodes: (nodeIds: string[]) => void
   revealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
@@ -60,6 +63,7 @@ export const useViewStateStore = create<ViewState>()(
       draftsByConversationId: {},
       sidebarOpen: true,
       mobileSidebarOpen: false,
+      conversationWidth: 'wide',
 
       toggleRound: (roundId, nodeIds) =>
         set((state) => {
@@ -132,6 +136,7 @@ export const useViewStateStore = create<ViewState>()(
       setAccent: (accent) => set({ accent }),
       setMotionPreference: (motionPreference) => set({ motionPreference }),
       setPermissionMode: (permissionMode) => set({ permissionMode }),
+      setConversationWidth: (conversationWidth) => set({ conversationWidth }),
       setDraft: (conversationId, value) =>
         set((state) => ({
           draftsByConversationId: {
@@ -155,6 +160,7 @@ export const useViewStateStore = create<ViewState>()(
           hue: state.hue ?? 'neutral',
           accent: state.accent ?? 'iris',
           motionPreference: state.motionPreference ?? 'auto',
+          conversationWidth: state.conversationWidth ?? 'wide',
         }
       },
       partialize: (state) => ({
@@ -165,6 +171,7 @@ export const useViewStateStore = create<ViewState>()(
         permissionMode: state.permissionMode,
         draftsByConversationId: state.draftsByConversationId,
         sidebarOpen: state.sidebarOpen,
+        conversationWidth: state.conversationWidth,
       }),
     },
   ),

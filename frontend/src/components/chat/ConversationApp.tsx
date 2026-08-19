@@ -8,6 +8,7 @@ import {
   createSupplement,
   createTurn,
   decideApproval,
+  getContextUsage,
   getConversationView,
   IrisApiError,
   listConversations,
@@ -16,6 +17,7 @@ import {
   streamConversationEvents,
   stopTurn,
   uploadArtifact,
+  type ContextUsageView,
   type ConversationView,
   type UploadedArtifact,
 } from '@/api/irisApi'
@@ -38,10 +40,13 @@ import {
 } from '@/stores/conversationStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { ComposerDock } from './composer'
-import { ChildRunCapsules } from './ChildRunView'
+import { ChildRunCapsules, ChildRunPanel } from './ChildRunView'
 import { ConversationTimeline } from './ConversationTimeline'
+import type { ConversationTimelineHandle } from './ConversationTimeline'
+import { StallProvider } from './FlowNode'
 import { PendingApprovalStack } from './PendingApprovalStack'
 import { TaskBlackboard } from './TaskBlackboard'
+import { TurnRail } from './TurnRail'
 
 function summary(view: ConversationView) {
   const turns = Object.values(view.turnsById)
@@ -90,10 +95,15 @@ export function ConversationApp() {
   const draft = draftsByConversationId[draftKey] ?? ''
   const [replacementTarget, setReplacementTarget] =
     useState<TurnView | null>(null)
+  const [viewerRunId, setViewerRunId] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] =
     useState<UploadedArtifact[]>([])
+  const [contextUsage, setContextUsage] = useState<ContextUsageView | null>(
+    null,
+  )
   const [earlierLoading, setEarlierLoading] = useState(false)
   const earlierLoadingRef = useRef(false)
+  const timelineRef = useRef<ConversationTimelineHandle>(null)
 
   // 向上翻页：以视野内最早 Turn 为水位线取上一页，只补不覆盖；
   // 压缩线随页并入（dedup 由 addCompactBoundary 保证）。
@@ -199,8 +209,20 @@ export function ConversationApp() {
       currentConversationId,
       currentBranchId || undefined,
     )
-      .then((view) => {
-        if (!controller.signal.aborted) hydrateView(view)
+      .then(async (view) => {
+        if (controller.signal.aborted) return
+        hydrateView(view)
+        try {
+          const usage = await getContextUsage(
+            view.conversationId,
+            view.selectedBranchId,
+          )
+          if (!controller.signal.aborted) {
+            setContextUsage(usage)
+          }
+        } catch {
+          // 上下文用量不是核心路径，静默失败
+        }
       })
       .catch((error: Error) => {
         if (controller.signal.aborted) return
@@ -315,6 +337,15 @@ export function ConversationApp() {
               event.envelope.branchId &&
               event.envelope.branchId !== currentBranchId
             ) {
+              return
+            }
+            if (event.type === 'context.usage') {
+              const usage = event.envelope.payload.contextUsage as
+                | ContextUsageView
+                | undefined
+              if (usage) {
+                setContextUsage(usage)
+              }
               return
             }
             const eventTurn =
@@ -452,6 +483,7 @@ export function ConversationApp() {
     ],
   )
   const activeTurn = selectActiveTurn(chat)
+
   // 浮动审批条只选择 approval；clarification 直接在过程链内回答，
   // 两者都由后端持久 Attention 事实驱动。
   const waitingApprovals = useMemo(
@@ -478,9 +510,12 @@ export function ConversationApp() {
   const sendTurn = async (
     text: string,
     attachmentRefs: string[] = [],
+    // 内联编辑重发（M7g）显式传入分叉点，绕开 setState 未提交的时序问题；
+    // 常规替换流程走闭包里的 replacementTarget。
+    replacement: TurnView | null = replacementTarget,
   ) => {
     if (
-      replacementTarget &&
+      replacement &&
       currentConversationId &&
       currentBranchId
     ) {
@@ -493,8 +528,8 @@ export function ConversationApp() {
       )
       const created = await createBranch(
         currentConversationId,
-        replacementTarget.branchId,
-        replacementTarget.requestMessageId,
+        replacement.branchId,
+        replacement.requestMessageId,
         text,
         sourceView.version,
         attachmentRefs,
@@ -605,9 +640,22 @@ export function ConversationApp() {
     setDraft(draftKey, turn.request.text)
   }, [draftKey, setDraft])
 
+  // 内联编辑重发：稳定引用保证 WaterfallTurn 的 memo 不被函数身份破坏；
+  // 分叉点显式传参，不依赖 setReplacementTarget 的提交时序。
+  const sendTurnRef = useRef(sendTurn)
+  sendTurnRef.current = sendTurn
+  const handleEditResend = useCallback((turn: TurnView, text: string) => {
+    void sendTurnRef.current(text, [], turn)
+  }, [])
+
   const composer = (
     <div className="relative">
-      <ChildRunCapsules onAttentionAction={handleAttentionAction} />
+      <ChildRunCapsules
+        viewerRunId={viewerRunId}
+        onOpen={setViewerRunId}
+        onClose={() => setViewerRunId(null)}
+        onAttentionAction={handleAttentionAction}
+      />
       <PendingApprovalStack
         nodes={waitingApprovals}
         onDecide={handleAttentionAction}
@@ -697,6 +745,7 @@ export function ConversationApp() {
         }
       }}
       onAttachmentRequest={addAttachments}
+      contextUsage={contextUsage}
       />
     </div>
   )
@@ -714,6 +763,14 @@ export function ConversationApp() {
       }
       headerActions={
         <>
+          {projection.turns.length >= 8 && (
+            <TurnRail
+              turns={projection.turns}
+              onScrollToTurn={(index) =>
+                timelineRef.current?.scrollToTurn(index)
+              }
+            />
+          )}
           {branches.length > 1 && currentBranchId && (
             <label className="relative hidden items-center sm:flex">
               <GitBranch
@@ -802,42 +859,54 @@ export function ConversationApp() {
       }
       composer={composer}
     >
-      <TaskBlackboard tasks={Object.values(chat.tasksById)} />
-      {projection.turns.length > 0 ? (
-        <ConversationTimeline
-          key={draftKey}
-          projection={projection}
-          hasEarlierTurns={chat.hasEarlierTurns}
-          earlierLoading={earlierLoading}
-          onLoadEarlier={loadEarlierTurns}
-          onAttentionAction={handleAttentionAction}
-          onReplaceRequest={
-            activeTurn
-              ? undefined
-              : handleReplaceRequest
-          }
-        />
-      ) : (
-        <main className="grid min-h-0 flex-1 place-items-center px-6 text-center">
-          <div className="max-w-md animate-node-enter motion-reduce:animate-none">
-            {/* 空态裸标：品牌环静置于文案之上，不脉动、不循环——它锚定的是
-                "这里是 Iris"，不是"系统在等待"。 */}
-            <span
-              aria-hidden="true"
-              className="brand-spectrum mx-auto grid h-10 w-10 place-items-center rounded-full p-1 shadow-hairline"
-            >
-              <span className="h-full w-full rounded-full bg-surface-raised" />
-            </span>
-            <p className="mt-5 text-title font-semibold text-ink">
-              想先处理什么？
-            </p>
+      <StallProvider>
+        <TaskBlackboard tasks={Object.values(chat.tasksById)} />
+        {projection.turns.length > 0 ? (
+          <ConversationTimeline
+            ref={timelineRef}
+            key={draftKey}
+            projection={projection}
+            hasEarlierTurns={chat.hasEarlierTurns}
+            earlierLoading={earlierLoading}
+            onLoadEarlier={loadEarlierTurns}
+            onAttentionAction={handleAttentionAction}
+            onReplaceRequest={
+              activeTurn
+                ? undefined
+                : handleReplaceRequest
+            }
+            onEditResend={
+              activeTurn ? undefined : handleEditResend
+            }
+            onOpenChildRun={setViewerRunId}
+          />
+        ) : (
+          <main className="grid min-h-0 flex-1 place-items-center px-6 text-center">
+            <div className="max-w-md animate-node-enter motion-reduce:animate-none">
+              {/* 空态裸标：品牌环静置于文案之上，不脉动、不循环——它锚定的是
+                  "这里是 Iris"，不是"系统在等待"。 */}
+              <span
+                aria-hidden="true"
+                className="brand-spectrum mx-auto grid h-10 w-10 place-items-center rounded-full p-1 shadow-hairline"
+              >
+                <span className="h-full w-full rounded-full bg-surface-raised" />
+              </span>
+              <p className="mt-5 text-title font-semibold text-ink">
+                想先处理什么？
+              </p>
             <p className="mt-2 text-small leading-relaxed text-ink-muted">
               直接描述结果、限制和你在意的细节。Iris 会从当前能力中寻找一条可验证的路径。
             </p>
           </div>
         </main>
       )}
-      <ToastHost />
+        <ToastHost />
+        <ChildRunPanel
+          runId={viewerRunId}
+          onClose={() => setViewerRunId(null)}
+          onAttentionAction={handleAttentionAction}
+        />
+      </StallProvider>
     </ConversationShell>
   )
 }

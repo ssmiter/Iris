@@ -3,10 +3,12 @@ package com.iris.conversation.application;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.iris.agent.model.ModelContext;
 import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
+import com.iris.conversation.domain.ConversationViews.ContextUsageView;
 import com.iris.conversation.domain.ConversationViews.RoundView;
 import com.iris.conversation.domain.ConversationViews.RunView;
 import com.iris.conversation.domain.ConversationViews.TurnView;
@@ -73,6 +75,37 @@ public class RunEventEmitter {
                 turn.rootRunId(),
                 turn.rootRunId(),
                 payload("turn", objectMapper.valueToTree(turn))
+        ));
+    }
+
+    public void contextUsageUpdated(ModelContext context, RunRow run) {
+        int used = context.estimatedInputTokens();
+        int limit = context.maxInputTokens();
+        int percent = limit > 0
+                ? Math.max(
+                        1,
+                        Math.min(
+                                100,
+                                (int) Math.round((double) used / limit * 100)
+                        )
+                )
+                : 0;
+        ContextUsageView usage = new ContextUsageView(used, limit, percent);
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.set("contextUsage", objectMapper.valueToTree(usage));
+        events.append(new EventDraft(
+                "context.usage",
+                run.conversationId(),
+                run.branchId(),
+                run.turnId(),
+                run.runId(),
+                run.parentRunId(),
+                "context",
+                run.runId(),
+                run.version(),
+                run.runId(),
+                run.runId(),
+                payload
         ));
     }
 

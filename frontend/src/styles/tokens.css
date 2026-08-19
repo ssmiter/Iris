@@ -84,12 +84,13 @@
   --motion-deliberate: 280ms;
   --motion-fold: 360ms;
   --motion-attention-exit: 360ms;
-  --motion-cursor-cycle: 1400ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --ease-flow: cubic-bezier(0.32, 0.72, 0.24, 1);
 
+  /* 对话列宽：viewStateStore 在运行时通过 --conversation-max 切换，
+     当前默认宽档；窄档 680px 见 ConversationShell 同步逻辑。 */
   --conversation-max: 820px;
   --conversation-pad: 24px;
   --page-gutter: clamp(16px, 3vw, 32px);

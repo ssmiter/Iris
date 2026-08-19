@@ -161,10 +161,6 @@ export default {
           from: { backgroundColor: 'rgb(var(--color-primary) / 0.1)' },
           to: { backgroundColor: 'transparent' },
         },
-        'reveal-cursor': {
-          '0%, 100%': { opacity: '.28' },
-          '50%': { opacity: '.72' },
-        },
         spin: {
           to: { transform: 'rotate(360deg)' },
         },
@@ -180,7 +176,6 @@ export default {
         'node-halo': 'node-halo 1.8s var(--ease-standard) infinite',
         'node-halo-warn': 'node-halo-warn 1.2s var(--ease-standard) infinite',
         'settle-glow': 'settle-glow 1.4s var(--ease-standard) both',
-        'reveal-cursor': 'reveal-cursor var(--motion-cursor-cycle) var(--ease-standard) infinite',
         spin: 'spin .8s linear infinite',
       },
     },

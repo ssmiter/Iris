@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Brain,
@@ -22,6 +22,7 @@ import { ArtifactCard } from './ArtifactCard'
 import { ChildRunCard } from './ChildRunView'
 import { ClampText } from './ClampText'
 import { ToolResultText } from './ToolResultText'
+import { useChatStore } from '@/stores/chatStore'
 
 interface FlowNodeProps {
   node: RenderNode
@@ -37,6 +38,7 @@ interface FlowNodeProps {
     node: AttentionNode,
     action: AttentionAction,
   ) => void
+  onOpenChildRun?: (runId: string) => void
 }
 
 /**
@@ -45,6 +47,35 @@ interface FlowNodeProps {
  * 历史水合时回合已 settled（chainLive=false），根本不会入册。
  */
 const bornNodeIds = new Set<string>()
+
+interface StallContextValue {
+  lastEventAt: string | null
+  now: number
+}
+
+const StallContext = createContext<StallContextValue>({
+  lastEventAt: null,
+  now: Date.now(),
+})
+
+/** 会话级停滞检测：Provider 持有唯一 1s interval，仅活跃节点消费上下文。 */
+export function StallProvider({ children }: { children: ReactNode }) {
+  const lastEventAt = useChatStore((state) => state.lastEventAt)
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  return (
+    <StallContext.Provider value={{ lastEventAt, now }}>
+      {children}
+    </StallContext.Provider>
+  )
+}
+
+function useStall() {
+  return useContext(StallContext)
+}
 
 const nodeIcon = {
   thinking: Brain,
@@ -97,7 +128,7 @@ function formatMs(durationMs: number) {
   return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)}s`
 }
 
-function statusText(node: RenderNode) {
+function statusText(node: RenderNode): React.ReactNode {
   const labels: Record<string, string> = {
     queued: '排队中',
     accepted: '已接受',
@@ -128,6 +159,34 @@ function statusText(node: RenderNode) {
     && node.durationMs != null
   ) {
     return `${base} · ${formatMs(node.durationMs)}`
+  }
+  // tool 节点 meta：状态 · mono 耗时 · 摘要首行摘录
+  if (node.type === 'tool') {
+    const duration =
+      node.durationMs != null && node.durationMs > 0
+        ? `${(node.durationMs / 1000).toFixed(1)}s`
+        : null
+    const excerpt =
+      node.status !== 'running' && node.summary
+        ? node.summary.split('\n')[0].slice(0, 40)
+        : null
+    return (
+      <>
+        {base}
+        {duration && (
+          <>
+            {' · '}
+            <span className="font-mono tabular-nums">{duration}</span>
+          </>
+        )}
+        {excerpt && (
+          <>
+            {' · '}
+            <span className="truncate">{excerpt}</span>
+          </>
+        )}
+      </>
+    )
   }
   return base
 }
@@ -211,11 +270,52 @@ function AttentionBody({
   )
 }
 
+/**
+ * 工具入参单行摘要：紧凑 JSON，120 字截断，可点击展开（无动画）。
+ * WonWork ArgsLine 的 Iris 等价物，使用 surface-muted + mono 字体。
+ */
+function ArgsLine({ args }: { args: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const truncated = args.length > 120
+  const display = truncated && !expanded ? `${args.slice(0, 120)}…` : args
+  return (
+    <div
+      className={cn(
+        'rounded-xs bg-surface-muted px-3 py-2 font-mono text-caption text-ink-subtle',
+        truncated && 'cursor-pointer',
+      )}
+      title={truncated ? (expanded ? '点击收起' : '点击展开') : undefined}
+      onClick={truncated ? () => setExpanded((v) => !v) : undefined}
+    >
+      <span className="break-all">{display}</span>
+      {truncated && (
+        <span className="ml-1.5 text-ink-muted">
+          {expanded ? '▴' : '▾'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** 停滞横幅：会话级 SSE watchdog，30s 无新进展时静态提示。 */
+function StallBanner() {
+  const { lastEventAt, now } = useStall()
+  if (!lastEventAt) return null
+  const elapsed = Math.floor((now - new Date(lastEventAt).getTime()) / 1000)
+  if (elapsed < 30) return null
+  return (
+    <div className="mt-2 rounded-xs border border-warning/30 bg-warning-soft px-3 py-2 text-caption text-warning-foreground">
+      仍在执行，已 {elapsed}s 无新进展
+    </div>
+  )
+}
+
 function NodeBody({
   node,
   expanded,
   onAttentionAction,
-}: Pick<FlowNodeProps, 'node' | 'expanded' | 'onAttentionAction'>) {
+  onOpenChildRun,
+}: Pick<FlowNodeProps, 'node' | 'expanded' | 'onAttentionAction' | 'onOpenChildRun'>) {
   switch (node.type) {
     case 'thinking':
       return (
@@ -232,20 +332,27 @@ function NodeBody({
       )
     case 'tool':
       return (
-        <ClampText>
-          <div className="space-y-2">
-            <p>{node.summary}</p>
-            {node.evidenceSummary &&
-              node.evidenceSummary !== node.summary && (
-              <p className="rounded-xs bg-surface-muted px-3 py-2 text-small">
-                {node.evidenceSummary}
-              </p>
-              )}
-            {node.resultRef && (
-              <ToolResultText resultRef={node.resultRef} expanded={expanded} />
-            )}
-          </div>
-        </ClampText>
+        <div className="space-y-2">
+          {node.args && <ArgsLine args={node.args} />}
+          <ClampText>
+            <div className="space-y-2">
+              <p>{node.summary}</p>
+              {node.evidenceSummary &&
+                node.evidenceSummary !== node.summary && (
+                <p className="rounded-xs bg-surface-muted px-3 py-2 text-small">
+                  {node.evidenceSummary}
+                </p>
+                )}
+            </div>
+          </ClampText>
+          {node.resultRef && (
+            <ToolResultText
+              resultRef={node.resultRef}
+              expanded={expanded}
+              className="max-h-40 overflow-auto"
+            />
+          )}
+        </div>
       )
     case 'attention':
       return (
@@ -268,6 +375,7 @@ function NodeBody({
           childRunId={node.childRunId}
           fallbackSummary={node.progressSummary}
           onAttentionAction={onAttentionAction}
+          onOpen={onOpenChildRun}
         />
       )
   }
@@ -281,6 +389,7 @@ export const FlowNode = memo(function FlowNode({
   isLast,
   chainLive,
   onAttentionAction,
+  onOpenChildRun,
 }: FlowNodeProps) {
   const Icon = nodeIcon[node.type]
   const active = isActive(node)
@@ -387,7 +496,7 @@ export const FlowNode = memo(function FlowNode({
           </span>
           <span
             className={cn(
-              'shrink-0 text-caption text-ink-muted',
+              'min-w-0 max-w-[55%] inline-block truncate text-caption text-ink-muted',
               active && 'text-ink-subtle',
               failed && 'text-danger',
             )}
@@ -419,7 +528,9 @@ export const FlowNode = memo(function FlowNode({
                 node={node}
                 expanded={expanded}
                 onAttentionAction={onAttentionAction}
+                onOpenChildRun={onOpenChildRun}
               />
+              {chainLive && isActive(node) && <StallBanner />}
             </div>
           </div>
         </div>

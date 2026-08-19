@@ -47,6 +47,9 @@ cron_execution   每次触发一行：task_id / fired_at /
   `create_schedule` / `set_schedule_enabled` / `delete_schedule` /
   `run_schedule_now` 均为写操作，走标准审批；读取不造工具——schedule
   作为目录叶子被 `list_capabilities` / `read_capability` 发现。
+- **单次任务（docs/34 M8c）**：`once=true` + 精确到点的六位 cron 表达
+  "明早 8 点提醒一次"。计划触发认领后自动停用；启动补扫时已过期的单次
+  任务直接停用、不补跑。旧库经 `SchemaColumnMigration` 守卫迁移。
 
 ## 3. Cron 是能力树的第七种叶子
 

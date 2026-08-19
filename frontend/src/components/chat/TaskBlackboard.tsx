@@ -99,7 +99,7 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
       aria-label="当前任务状态"
       className="relative z-10 shrink-0 bg-canvas/92 backdrop-blur-md"
     >
-      <div className="mx-auto w-full max-w-[var(--conversation-max)] px-[var(--conversation-pad)] pt-2">
+      <div className="max-w-conversation mx-auto w-full px-[var(--conversation-pad)] pt-2">
         <button
           type="button"
           aria-expanded={expanded}

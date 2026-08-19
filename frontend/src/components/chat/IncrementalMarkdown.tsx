@@ -1,6 +1,7 @@
 import { memo, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 
 interface MarkdownChunk {
   offset: number
@@ -13,7 +14,7 @@ interface MarkdownCache {
   chunks: MarkdownChunk[]
 }
 
-const markdownPlugins = [remarkGfm]
+const markdownPlugins = [remarkGfm, remarkBreaks]
 const listMarker = /^(?:[-+*]|\d+[.)])\s/
 
 function canSealAtBlankLine(before: string, after: string) {

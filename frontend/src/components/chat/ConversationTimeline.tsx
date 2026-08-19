@@ -1,4 +1,9 @@
-import { useMemo, useRef } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from 'react'
 import { ArrowDown } from 'lucide-react'
 import { Virtuoso } from 'react-virtuoso'
 import type {
@@ -22,20 +27,35 @@ interface ConversationTimelineProps {
     action: AttentionAction,
   ) => void
   onReplaceRequest?: (turn: TurnView) => void
+  onEditResend?: (turn: TurnView, text: string) => void
+  onOpenChildRun?: (runId: string) => void
+}
+
+export interface ConversationTimelineHandle {
+  /** 平滑滚动到指定 Turn（按当前投影数组下标） */
+  scrollToTurn: (turnIndex: number) => void
 }
 
 // firstItemIndex 的锚定基数：向上翻页时按预插数量递减，
 // Virtuoso 借此保持视口中的内容一个像素都不动。
 const FIRST_ITEM_INDEX_BASE = 1_000_000
 
-export function ConversationTimeline({
-  projection,
-  hasEarlierTurns = false,
-  earlierLoading = false,
-  onLoadEarlier,
-  onAttentionAction,
-  onReplaceRequest,
-}: ConversationTimelineProps) {
+export const ConversationTimeline = forwardRef<
+  ConversationTimelineHandle,
+  ConversationTimelineProps
+>(function ConversationTimeline(
+  {
+    projection,
+    hasEarlierTurns = false,
+    earlierLoading = false,
+    onLoadEarlier,
+    onAttentionAction,
+    onReplaceRequest,
+    onEditResend,
+    onOpenChildRun,
+  },
+  ref,
+) {
   const firstItemIndexRef = useRef(FIRST_ITEM_INDEX_BASE)
   const firstTurnIdRef = useRef<string | undefined>(
     projection.turns[0]?.turnId,
@@ -86,6 +106,20 @@ export function ConversationTimeline({
     [expandedNodeFlags],
   )
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToTurn: (turnIndex) => {
+        virtuosoRef.current?.scrollToIndex({
+          index: firstItemIndexRef.current + turnIndex,
+          align: 'start',
+          behavior: 'smooth',
+        })
+      },
+    }),
+    [],
+  )
+
   const boundariesByTurn = useMemo(() => {
     const map = new Map<
       string,
@@ -119,8 +153,8 @@ export function ConversationTimeline({
         atBottomStateChange={handleAtBottomChange}
         totalListHeightChanged={handleListHeightChange}
         followOutput={followOutput}
-        itemContent={(_, turn) => (
-          <div>
+        itemContent={(index, turn) => (
+          <div data-turn-idx={index - firstItemIndex}>
             {boundariesByTurn.get(turn.turnId)?.map((boundary) => (
               <div
                 key={boundary.boundaryId}
@@ -149,6 +183,8 @@ export function ConversationTimeline({
               onRevealNewRoundNodes={revealNewRoundNodes}
               onAttentionAction={onAttentionAction}
               onReplaceRequest={onReplaceRequest}
+              onEditResend={onEditResend}
+              onOpenChildRun={onOpenChildRun}
             />
           </div>
         )}
@@ -189,4 +225,4 @@ export function ConversationTimeline({
       )}
     </div>
   )
-}
+})

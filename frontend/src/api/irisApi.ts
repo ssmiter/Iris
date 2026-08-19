@@ -43,6 +43,12 @@ export interface ConversationView {
   hasEarlierTurns: boolean
 }
 
+export interface ContextUsageView {
+  used: number
+  limit: number
+  percent: number
+}
+
 export interface ConversationEventEnvelope {
   schemaVersion: number
   eventId: string
@@ -564,6 +570,42 @@ async function requestJson<T>(
   return response.json() as Promise<T>
 }
 
+export interface RunMessageView {
+  messageId: string
+  runId: string
+  phase: 'queued' | 'injected'
+  text: string
+}
+
+export interface StopRunView {
+  runId: string
+  phase: string
+  accepted: boolean
+  message: string
+}
+
+export function sendRunMessage(runId: string, text: string) {
+  return requestJson<RunMessageView>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ text }),
+    },
+  )
+}
+
+export function stopRun(runId: string, reason = 'user_requested') {
+  return requestJson<StopRunView>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/stop`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ reason }),
+    },
+  )
+}
+
 export function getArtifactPreview(
   previewRef: string,
   signal?: AbortSignal,
@@ -615,6 +657,16 @@ export function getConversationView(
   if (beforeTurnId) query.set('beforeTurnId', beforeTurnId)
   return requestJson(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}/view?${query}`,
+  )
+}
+
+export function getContextUsage(
+  conversationId: string,
+  branchId: string,
+): Promise<ContextUsageView> {
+  const query = new URLSearchParams({ branchId })
+  return requestJson(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/context-usage?${query}`,
   )
 }
 

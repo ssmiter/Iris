@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -447,6 +448,14 @@ public class ToolProjectionService {
             if (!result.message().equals(summary)) {
                 projection.put("evidenceSummary", result.message());
             }
+        }
+        long durationMs = Duration.between(
+                result.createdAt(),
+                result.updatedAt()
+        ).toMillis();
+        projection.put("durationMs", Math.max(0, durationMs));
+        if (call.arguments() != null && !call.arguments().isNull()) {
+            projection.put("args", compactJson(call.arguments()));
         }
         enrichToolProjection(
                 projection,
@@ -1026,6 +1035,14 @@ public class ToolProjectionService {
             case "outcome_unknown" -> "结果未知，需要先核验";
             default -> "工具正在处理";
         };
+    }
+
+    private String compactJson(com.fasterxml.jackson.databind.JsonNode node) {
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            return node.toString();
+        }
     }
 
     private void enrichToolProjection(

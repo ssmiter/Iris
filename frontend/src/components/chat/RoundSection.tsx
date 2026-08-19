@@ -12,6 +12,11 @@ import { FlowNode } from './FlowNode'
 import { ProcessSummary } from './ProcessSummary'
 import { cn } from '@/lib/cn'
 
+/** 已进入 settled/stopped/failed 的 roundId 集合（会话级，防 Virtuoso 回收重放） */
+const settledRoundIds = new Set<string>()
+/** 已播过摘要行淡入的 roundId 集合（会话级） */
+const summaryFadedRoundIds = new Set<string>()
+
 interface RoundSectionProps {
   round: RoundView
   nodesById: Record<string, RenderNode>
@@ -24,6 +29,7 @@ interface RoundSectionProps {
     node: AttentionNode,
     action: AttentionAction,
   ) => void
+  onOpenChildRun?: (runId: string) => void
 }
 
 export function RoundSection({
@@ -35,6 +41,7 @@ export function RoundSection({
   onToggleNode,
   onRevealNewNodes,
   onAttentionAction,
+  onOpenChildRun,
 }: RoundSectionProps) {
   const processNodes = useMemo(
     () => round.processNodeIds
@@ -89,14 +96,37 @@ export function RoundSection({
   // 水合历史时初值即 settled，不会误闪。
   const prevPhaseRef = useRef(round.phase)
   const [settleGlow, setSettleGlow] = useState(false)
+  // 尘埃落定：过程链区域整体淡至 0.4 透明度 + 摘要行淡入；会话级注册防重放。
+  const [settledMark, setSettledMark] = useState(round.phase !== 'active')
+  const [summaryFade, setSummaryFade] = useState(false)
+  const [summaryVisible, setSummaryVisible] = useState(true)
+  useEffect(() => {
+    if (round.phase !== 'active') {
+      settledRoundIds.add(round.roundId)
+    }
+  }, [round.phase, round.roundId])
   useEffect(() => {
     const prev = prevPhaseRef.current
     prevPhaseRef.current = round.phase
     if (prev !== 'active' || round.phase === 'active') return
     setSettleGlow(true)
     const timer = setTimeout(() => setSettleGlow(false), 1500)
+    if (!settledRoundIds.has(round.roundId)) {
+      settledRoundIds.add(round.roundId)
+      setSettledMark(true)
+    }
+    if (!summaryFadedRoundIds.has(round.roundId)) {
+      summaryFadedRoundIds.add(round.roundId)
+      setSummaryFade(true)
+    }
     return () => clearTimeout(timer)
-  }, [round.phase])
+  }, [round.phase, round.roundId])
+
+  useEffect(() => {
+    if (!summaryFade) return
+    const raf = requestAnimationFrame(() => setSummaryVisible(true))
+    return () => cancelAnimationFrame(raf)
+  }, [summaryFade])
 
   useLayoutEffect(() => {
     if (processExpanded) onRevealNewNodes(processNodeIds)
@@ -124,8 +154,11 @@ export function RoundSection({
             id={processId}
             className={cn(
               'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
+              'hover:!opacity-100',
               processExpanded
-                ? 'grid-rows-[1fr] opacity-100'
+                ? settledMark
+                  ? 'grid-rows-[1fr] opacity-40'
+                  : 'grid-rows-[1fr] opacity-100'
                 : 'grid-rows-[0fr] opacity-0',
               'motion-reduce:transition-none',
             )}
@@ -142,19 +175,28 @@ export function RoundSection({
                     isLast={index === chainNodes.length - 1}
                     chainLive={round.phase === 'active' && processExpanded}
                     onAttentionAction={onAttentionAction}
+                    onOpenChildRun={onOpenChildRun}
                   />
                 ))}
               </div>
             </div>
           </div>
 
-          <ProcessSummary
-            round={round}
-            expanded={processExpanded}
-            pendingCount={pendingCount}
-            settleGlow={settleGlow}
-            onToggle={() => onToggleProcess(processNodeIds)}
-          />
+          <div
+            className={cn(
+              'transition-opacity duration-fold ease-standard',
+              !summaryVisible && 'opacity-0',
+              'motion-reduce:transition-none',
+            )}
+          >
+            <ProcessSummary
+              round={round}
+              expanded={processExpanded}
+              pendingCount={pendingCount}
+              settleGlow={settleGlow}
+              onToggle={() => onToggleProcess(processNodeIds)}
+            />
+          </div>
         </>
       )}
 

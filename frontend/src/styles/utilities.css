@@ -25,18 +25,33 @@
   }
 
   .scrollbar-subtle {
-    scrollbar-color: rgb(var(--color-border-strong)) transparent;
+    scrollbar-color: rgb(var(--color-text-muted) / 0.26) transparent;
     scrollbar-width: thin;
   }
 
   .scrollbar-subtle::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .scrollbar-subtle::-webkit-scrollbar-thumb {
+    background: rgb(var(--color-text-muted) / 0.26);
+    border: 3px solid transparent;
     border-radius: 999px;
-    background: rgb(var(--color-border-strong));
+    background-clip: padding-box;
+    min-height: 44px;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--color-text-muted) / 0.5);
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb:active {
+    background: rgb(var(--color-text-muted) / 0.62);
   }
 
   .conversation-scroll {
@@ -44,12 +59,21 @@
     scrollbar-gutter: stable both-edges;
   }
 
+  .max-w-conversation {
+    transition: max-width 350ms var(--ease-standard);
+  }
+
+  [data-motion='reduce'] .max-w-conversation {
+    transition: none !important;
+  }
+
   .answer-prose {
     /* 与 text-body 同字号：摘要行/正文同一文字轴、同一字号，天然一体 */
     font-size: 0.9375rem;
-    line-height: 1.7;
+    line-height: 1.8;
     overflow-wrap: anywhere;
     text-wrap: pretty;
+    color: rgb(var(--color-text));
   }
 
   .answer-prose > :first-child {
@@ -60,9 +84,14 @@
     margin-bottom: 0;
   }
 
+  /* 段落节奏：p/ul/ol 底部间距压到 8px，其余块级元素保持 0.6em */
   .answer-prose p,
   .answer-prose ul,
-  .answer-prose ol,
+  .answer-prose ol {
+    margin-top: 0.6em;
+    margin-bottom: 0.533em; /* 8px at 15px base */
+  }
+
   .answer-prose pre,
   .answer-prose table,
   .answer-prose blockquote {
@@ -71,13 +100,158 @@
   }
 
   .answer-prose li {
-    margin-top: 0.16em;
-    margin-bottom: 0.16em;
+    margin-bottom: 2px;
   }
 
+  /* 标题阶梯：相对 15px 正文的克制比例 */
+  .answer-prose h1,
+  .answer-prose h2,
+  .answer-prose h3,
+  .answer-prose h4 {
+    color: rgb(var(--color-text));
+    font-weight: 650;
+    line-height: 1.4;
+    margin: 14px 0 8px;
+  }
+
+  .answer-prose h1 {
+    font-size: 1.3em;
+  }
+
+  .answer-prose h2 {
+    font-size: 1.18em;
+  }
+
+  .answer-prose h3 {
+    font-size: 1.08em;
+  }
+
+  .answer-prose h4 {
+    font-size: 1em;
+  }
+
+  .answer-prose h5,
+  .answer-prose h6 {
+    color: rgb(var(--color-text));
+    font-weight: 650;
+  }
+
+  .answer-prose strong {
+    color: rgb(var(--color-text));
+    font-weight: 650;
+  }
+
+  /* 链接：默认无下划线，hover 出现 */
+  .answer-prose a {
+    color: rgb(var(--color-primary));
+    text-decoration: none;
+  }
+
+  .answer-prose a:hover {
+    text-decoration: underline;
+  }
+
+  /* 行内代码：surface-muted 底、圆角、压缩字号、字重回 normal */
+  .answer-prose :not(pre) > code {
+    background: rgb(var(--color-surface-muted));
+    border-radius: 5px;
+    padding: 1px 5px;
+    font-size: 0.86em;
+    font-weight: normal;
+    color: rgb(var(--color-text));
+  }
+
+  .answer-prose code::before,
+  .answer-prose code::after {
+    content: none;
+  }
+
+  /* 代码块：保留 surface-muted 底与边框，调整圆角/内边距/字号/行高 */
+  .answer-prose pre {
+    background: rgb(var(--color-surface-muted));
+    border: 1px solid rgb(var(--color-border) / 0.7);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: rgb(var(--color-text));
+  }
+
+  .answer-prose pre code {
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+  }
+
+  /* 引用块：左边条、不斜体、无自动引号、字色 subtle */
+  .answer-prose blockquote {
+    border-left: 2px solid rgb(var(--color-border-strong));
+    padding-left: 12px;
+    margin: 10px 0;
+    font-style: normal;
+    color: rgb(var(--color-text-subtle));
+  }
+
+  .answer-prose blockquote p::before,
+  .answer-prose blockquote p::after {
+    content: none;
+  }
+
+  /* 分割线：收紧垂直间距，边框走 token */
+  .answer-prose hr {
+    margin: 12px 0;
+    border-color: rgb(var(--color-border));
+  }
+
+  /* 列表：统一缩进、marker 走 muted token */
+  .answer-prose ul,
+  .answer-prose ol {
+    padding-left: 20px;
+  }
+
+  .answer-prose li::marker {
+    color: rgb(var(--color-text-muted));
+  }
+
+  /* GFM 任务列表：去圆点、checkbox 对齐微调 */
+  .answer-prose ul:has(> li > input[type='checkbox']) {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .answer-prose li > input[type='checkbox'] {
+    margin-right: 6px;
+    vertical-align: -2px;
+  }
+
+  /* 表格：1px 边框、th 底 surface-muted、取消首末列 padding 归零 */
   .answer-prose table {
     display: block;
     max-width: 100%;
     overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .answer-prose thead {
+    border-bottom: 1px solid rgb(var(--color-border));
+  }
+
+  .answer-prose th,
+  .answer-prose td {
+    border: 1px solid rgb(var(--color-border));
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+    color: rgb(var(--color-text));
+  }
+
+  .answer-prose th {
+    background: rgb(var(--color-surface-muted));
+    font-weight: 650;
+    vertical-align: bottom;
   }
 }

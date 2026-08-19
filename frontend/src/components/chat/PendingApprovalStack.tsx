@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import type { AttentionAction, AttentionNode } from '@/domain/chat/models'
 import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
@@ -73,6 +74,9 @@ export function PendingApprovalStack({
 }: PendingApprovalStackProps) {
   const [items, setItems] = useState<StackItem[]>([])
   const [actingById, setActingById] = useState<Record<string, string>>({})
+  const [expandedParamIds, setExpandedParamIds] = useState<Set<string>>(
+    new Set(),
+  )
   // 顺序稳定：attentionId → 首次出现序号，重排与重挂载都不改位次
   const seqByIdRef = useRef(new Map<string, number>())
   const nextSeqRef = useRef(0)
@@ -198,6 +202,15 @@ export function PendingApprovalStack({
     [items],
   )
 
+  const toggleParams = useCallback((attentionId: string) => {
+    setExpandedParamIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(attentionId)) next.delete(attentionId)
+      else next.add(attentionId)
+      return next
+    })
+  }, [])
+
   if (!visible) return null
 
   return (
@@ -224,6 +237,8 @@ export function PendingApprovalStack({
                 <ApprovalCard
                   item={item}
                   actingActionId={actingById[item.node.attentionId]}
+                  paramsExpanded={expandedParamIds.has(item.node.attentionId)}
+                  onToggleParams={toggleParams}
                   onDecide={decide}
                 />
               </div>
@@ -238,10 +253,14 @@ export function PendingApprovalStack({
 function ApprovalCard({
   item,
   actingActionId,
+  paramsExpanded,
+  onToggleParams,
   onDecide,
 }: {
   item: StackItem
   actingActionId: string | undefined
+  paramsExpanded: boolean
+  onToggleParams: (attentionId: string) => void
   onDecide: (item: StackItem, action: AttentionAction) => void
 }) {
   const { node } = item
@@ -250,6 +269,18 @@ function ApprovalCard({
   // 仅挂载期间计时，足够传达紧迫感而不至秒级跳动。
   const now = useNow(30_000)
   const expiry = expiryText(node.approval?.expiresAt, now)
+
+  const paramsText = useMemo(() => {
+    const summary = node.approval?.argumentsSummary
+    if (summary) return summary
+    const params = node.approval?.parameters
+    if (params == null) return ''
+    try {
+      return JSON.stringify(params, null, 2)
+    } catch {
+      return String(params)
+    }
+  }, [node.approval])
 
   return (
     <div className="pointer-events-auto animate-node-enter rounded-md border border-warning/30 bg-surface-raised px-3.5 py-3 shadow-floating motion-reduce:animate-none">
@@ -281,6 +312,25 @@ function ApprovalCard({
           acting && 'opacity-60',
         )}
       >
+        {paramsText && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-caption text-ink-muted"
+            onClick={() => onToggleParams(node.attentionId)}
+          >
+            参数
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                'h-3.5 w-3.5 shrink-0 transition-transform duration-fast ease-standard',
+                paramsExpanded && 'rotate-180',
+                'motion-reduce:transition-none',
+              )}
+            />
+          </Button>
+        )}
         {node.actions.map((action) => (
           <Button
             key={action.id}
@@ -299,6 +349,25 @@ function ApprovalCard({
           </span>
         )}
       </div>
+      {paramsText && (
+        <div
+          className={cn(
+            'grid transition-[grid-template-rows,opacity] duration-fold ease-flow motion-reduce:transition-none',
+            paramsExpanded
+              ? 'grid-rows-[1fr] opacity-100'
+              : 'grid-rows-[0fr] opacity-0',
+          )}
+        >
+          <div className="overflow-hidden">
+            <pre
+              className="mt-2 max-h-56 overflow-auto rounded-sm border border-border/60 bg-surface-muted p-2.5 font-mono text-caption text-ink-subtle"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {paramsText}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

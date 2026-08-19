@@ -13,12 +13,14 @@ import com.iris.conversation.domain.ConversationCommands.CreateBranchRequest;
 import com.iris.conversation.domain.ConversationCommands.CreateBranchResponse;
 import com.iris.conversation.domain.ConversationCommands.CreateTurnRequest;
 import com.iris.conversation.domain.ConversationCommands.TurnAcceptance;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
+import com.iris.conversation.domain.ConversationViews.ArchiveConversationResponse;
+import com.iris.conversation.domain.ConversationViews.ContextUsageView;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
 import com.iris.conversation.domain.ConversationViews.RenameConversationResponse;
-import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
-import com.iris.conversation.domain.ConversationViews.ArchiveConversationResponse;
+import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
 import com.iris.agent.run.AgentRunLauncher;
 import com.iris.agent.model.CompactionLauncher;
 import com.iris.agent.model.CompactionRepository;
@@ -96,6 +98,21 @@ public class ConversationController {
             @RequestParam(value = "limit", defaultValue = "50") int limit
     ) {
         return queries.view(conversationId, branchId, beforeTurnId, limit);
+    }
+
+    @GetMapping("/conversations/{conversationId}/context-usage")
+    public Mono<ContextUsageView> contextUsage(
+            @PathVariable String conversationId,
+            @RequestParam("branchId") String branchId
+    ) {
+        return queries.contextUsage(conversationId, branchId)
+                .map(usage -> usage.limit() > 0
+                        ? usage
+                        : new ContextUsageView(
+                                usage.used(),
+                                ContextBudget.defaults().maxInputTokens(),
+                                0
+                        ));
     }
 
     @PatchMapping("/conversations/{conversationId}")

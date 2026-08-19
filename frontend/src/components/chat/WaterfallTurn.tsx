@@ -1,5 +1,5 @@
-import { memo, useState } from 'react'
-import { AlertTriangle, Clock3, GitBranch } from 'lucide-react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { AlertTriangle, Clock3, GitBranch, Pencil } from 'lucide-react'
 import type {
   AttentionAction,
   AttentionNode,
@@ -29,6 +29,8 @@ interface WaterfallTurnProps {
     action: AttentionAction,
   ) => void
   onReplaceRequest?: (turn: TurnView) => void
+  onEditResend?: (turn: TurnView, text: string) => void
+  onOpenChildRun?: (runId: string) => void
 }
 
 const phaseLabel: Record<TurnView['phase'], string> = {
@@ -62,6 +64,11 @@ function visiblePhaseLabel(turn: TurnView, run?: RunView) {
     }
   }
   return phaseLabel[turn.phase]
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 function formatElapsed(turn: TurnView) {
@@ -100,12 +107,22 @@ function WaterfallTurnView({
   onRevealNewRoundNodes,
   onAttentionAction,
   onReplaceRequest,
+  onEditResend,
+  onOpenChildRun,
 }: WaterfallTurnProps) {
   const rootRun = runsById[turn.rootRunId]
   const hasPendingAttention = turn.pendingAttentionIds.length > 0
   const closureNeedsAttention =
     rootRun?.closure?.executionStatus === 'uncertain' ||
     rootRun?.closure?.taskOutcome === 'blocked'
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(turn.request.text)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const composingRef = useRef(false)
+  const canEdit =
+    Boolean(onReplaceRequest) &&
+    turn.phase !== 'queued' &&
+    turn.phase !== 'active'
   // 入场动画只在挂载瞬间判定一次：新 Turn（queued/active）才播。
   const [born] = useState(() => {
     const fresh = turn.phase === 'queued' || turn.phase === 'active'
@@ -117,6 +134,52 @@ function WaterfallTurnView({
     }
     return true
   })
+
+  const resize = useCallback(() => {
+    const element = textareaRef.current
+    if (!element) return
+    element.style.height = 'auto'
+    const lineHeight = Number.parseFloat(
+      window.getComputedStyle(element).lineHeight,
+    )
+    const maxHeight = lineHeight * 8
+    element.style.height = `${Math.min(element.scrollHeight, maxHeight)}px`
+    element.style.overflowY =
+      element.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!editing) return
+    resize()
+  }, [editing, draft, resize])
+
+  useEffect(() => {
+    if (!editing) return
+    textareaRef.current?.focus()
+  }, [editing])
+
+  const handleCommit = useCallback(() => {
+    const text = draft.trim()
+    setEditing(false)
+    if (!text || text === turn.request.text) return
+    if (onEditResend) {
+      onEditResend(turn, text)
+    } else {
+      // 回退：通过「从这里改问」的 replacement 路径把编辑后的文本塞进 composer，
+      // 用户仍需在 composer 里按一次发送。完整的一键重发需要高层提供 onEditResend。
+      onReplaceRequest?.({ ...turn, request: { ...turn.request, text } })
+    }
+  }, [draft, onEditResend, onReplaceRequest, turn])
+
+  const handleCancel = useCallback(() => {
+    setEditing(false)
+    setDraft(turn.request.text)
+  }, [turn.request.text])
+
+  const handleEnterEdit = useCallback(() => {
+    setDraft(turn.request.text)
+    setEditing(true)
+  }, [turn.request.text])
 
   return (
     <article
@@ -130,24 +193,94 @@ function WaterfallTurnView({
           <UserAttachmentList
             references={turn.request.attachmentRefs}
           />
-          <div className="rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
-            {turn.request.text}
-          </div>
-          {onReplaceRequest &&
-            turn.phase !== 'queued' &&
-            turn.phase !== 'active' && (
-              <div className="mt-1 flex justify-end">
+          {editing ? (
+            <div className="animate-node-enter motion-reduce:animate-none">
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                rows={Math.min(8, Math.max(2, draft.split('\n').length))}
+                className={cn(
+                  'w-full resize-none rounded-lg rounded-br-xs border border-primary/30',
+                  'bg-surface-raised px-4 py-3 text-body text-ink outline-none',
+                  'transition-[border-color,box-shadow] duration-fast ease-standard',
+                  'focus:border-primary/60 focus:shadow-focus motion-reduce:transition-none',
+                )}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    handleCancel()
+                    return
+                  }
+                  if (
+                    e.key === 'Enter' &&
+                    (e.ctrlKey || e.metaKey) &&
+                    !composingRef.current &&
+                    !e.nativeEvent.isComposing
+                  ) {
+                    e.preventDefault()
+                    handleCommit()
+                  }
+                }}
+                onCompositionStart={() => {
+                  composingRef.current = true
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false
+                }}
+              />
+              <div className="mt-1.5 flex items-center justify-end gap-2">
+                <span className="text-caption text-ink-muted">
+                  Esc 取消 · Ctrl+Enter 重发
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2 text-caption opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                  onClick={() => onReplaceRequest(turn)}
+                  className="h-7 px-2 text-caption"
+                  onClick={handleCancel}
                 >
-                  <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
-                  从这里改问
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="h-7 px-2 text-caption"
+                  disabled={!draft.trim()}
+                  onClick={handleCommit}
+                >
+                  重发
                 </Button>
               </div>
-            )}
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
+                {turn.request.text}
+              </div>
+              {canEdit && (
+                <div className="mt-1 flex justify-end gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-caption opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={handleEnterEdit}
+                  >
+                    <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+                    编辑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-caption opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={() => onReplaceRequest!(turn)}
+                  >
+                    <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+                    从这里改问
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -170,6 +303,7 @@ function WaterfallTurnView({
             onToggleNode={onToggleNode}
             onRevealNewRoundNodes={onRevealNewRoundNodes}
             onAttentionAction={onAttentionAction}
+            onOpenChildRun={onOpenChildRun}
           />
         ) : (
           <div className="rounded-md bg-danger-soft p-3 text-small text-danger-foreground">
@@ -235,7 +369,11 @@ function WaterfallTurnView({
           >
             {visiblePhaseLabel(turn, rootRun)}
           </span>
-          <span>{turn.stats.roundCount} 轮</span>
+          {' · '}
+          <span className="font-mono tabular-nums">
+            {formatTime(turn.stats.startedAt)}
+          </span>
+          <span>· {turn.stats.roundCount} 轮</span>
           <span>· {turn.stats.toolCallCount} 个工具</span>
           {turn.stats.childRunCount > 0 && (
             <span>· {turn.stats.childRunCount} 个子运行</span>
@@ -273,6 +411,8 @@ function sameTurnProjection(
     || previous.onRevealNewRoundNodes !== next.onRevealNewRoundNodes
     || previous.onAttentionAction !== next.onAttentionAction
     || previous.onReplaceRequest !== next.onReplaceRequest
+    || previous.onEditResend !== next.onEditResend
+    || previous.onOpenChildRun !== next.onOpenChildRun
   ) {
     return false
   }

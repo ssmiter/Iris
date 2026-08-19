@@ -164,6 +164,10 @@ export interface ToolNode extends RenderNodeBase {
   summary: string
   resultRef?: string
   evidenceSummary?: string
+  /** 工具执行耗时（ms），终态与运行中均可投影 */
+  durationMs?: number
+  /** 工具入参紧凑 JSON 字符串，用于节点内联详情 */
+  args?: string
 }
 
 export interface AttentionAction {
@@ -201,6 +205,10 @@ export interface AttentionNode extends RenderNodeBase {
     operationSnapshotHash: string
     riskLevel: 'read_only' | 'standard' | 'elevated' | 'destructive'
     impactStatement: string
+    /** 工具调用入参（JSON 对象），用于审批卡展开预览。后端可选字段。 */
+    parameters?: unknown
+    /** 入参预渲染摘要（优先于 parameters）。后端可选字段。 */
+    argumentsSummary?: string
     status: 'waiting' | 'approved' | 'rejected' | 'expired' | 'invalidated'
     version: number
     expiresAt: string

@@ -57,6 +57,9 @@ export function ConversationShell({
   const motionPreference = useViewStateStore(
     (state) => state.motionPreference,
   )
+  const conversationWidth = useViewStateStore(
+    (state) => state.conversationWidth,
+  )
   const setSidebarOpen = useViewStateStore((state) => state.setSidebarOpen)
   const setMobileSidebarOpen = useViewStateStore(
     (state) => state.setMobileSidebarOpen,
@@ -75,6 +78,13 @@ export function ConversationShell({
   useEffect(() => {
     applyMotionPreference(motionPreference)
   }, [motionPreference])
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      '--conversation-max',
+      conversationWidth === 'narrow' ? '680px' : '820px',
+    )
+  }, [conversationWidth])
 
   // Ctrl/Cmd+K 全局打开搜索浮层（输入框内同样生效，与浏览器习惯一致）
   useEffect(() => {

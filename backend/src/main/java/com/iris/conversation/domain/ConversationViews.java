@@ -219,4 +219,11 @@ public final class ConversationViews {
             String eventCursor
     ) {
     }
+
+    public record ContextUsageView(
+            int used,
+            int limit,
+            int percent
+    ) {
+    }
 }

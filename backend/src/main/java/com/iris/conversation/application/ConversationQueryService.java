@@ -1,6 +1,7 @@
 package com.iris.conversation.application;
 
 import com.iris.conversation.domain.ApiProblemException;
+import com.iris.conversation.domain.ConversationViews.ContextUsageView;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.infrastructure.ConversationQueryRepository;
@@ -49,6 +50,17 @@ public final class ConversationQueryService {
                                 beforeTurnId,
                                 safeLimit
                         ))
+                ))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    public Mono<ContextUsageView> contextUsage(
+            String conversationId,
+            String branchId
+    ) {
+        return Mono.fromCallable(() -> readTransactions.execute(status ->
+                        repository.contextUsage(conversationId, branchId)
+                                .orElse(new ContextUsageView(0, 0, 0))
                 ))
                 .subscribeOn(Schedulers.boundedElastic());
     }

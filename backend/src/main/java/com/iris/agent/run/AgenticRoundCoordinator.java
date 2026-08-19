@@ -145,6 +145,12 @@ public class AgenticRoundCoordinator {
                             loaded.round(),
                             contextSeed
                     );
+                    if (loaded.run().root()) {
+                        lifecycleEvents.contextUsageUpdated(
+                                context,
+                                loaded.run()
+                        );
+                    }
                     AttemptRow attempt = attempts.begin(
                             loaded.round().roundId(),
                             loaded.round().version(),

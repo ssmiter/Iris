@@ -9,6 +9,7 @@ import com.iris.conversation.domain.ConversationViews.BranchSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
+import com.iris.conversation.domain.ConversationViews.ContextUsageView;
 import com.iris.conversation.domain.ConversationViews.FailureView;
 import com.iris.conversation.domain.ConversationViews.ForkAnchor;
 import com.iris.conversation.domain.ConversationViews.RequestView;
@@ -238,6 +239,47 @@ public class ConversationQueryRepository {
                 latestEventId(conversationId),
                 hasEarlierTurns(conversationId, branchId, oldestSequence)
         );
+    }
+
+    public Optional<ContextUsageView> contextUsage(
+            String conversationId,
+            String branchId
+    ) {
+        return jdbc.sql("""
+                SELECT snapshot.estimated_input_tokens, snapshot.max_input_tokens
+                FROM model_context_snapshot snapshot
+                JOIN conversation_turn turn
+                  ON turn.root_run_id = snapshot.run_id
+                WHERE turn.conversation_id = :conversationId
+                  AND turn.branch_id = :branchId
+                  AND turn.phase IN ('active', 'queued')
+                ORDER BY turn.started_at DESC,
+                         snapshot.created_at DESC,
+                         snapshot.context_hash DESC
+                LIMIT 1
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .query((rs, rowNum) -> {
+                    int used = rs.getInt("estimated_input_tokens");
+                    int limit = rs.getInt("max_input_tokens");
+                    return new ContextUsageView(
+                            used,
+                            limit,
+                            limit > 0
+                                    ? Math.max(
+                                            1,
+                                            Math.min(
+                                                    100,
+                                                    (int) Math.round(
+                                                            (double) used / limit * 100
+                                                    )
+                                            )
+                                    )
+                                    : 0
+                    );
+                })
+                .optional();
     }
 
     private CursorPosition resolveConversationCursor(String conversationId) {

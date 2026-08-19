@@ -43,6 +43,7 @@ public final class ToolExecutionViews {
             String errorCode,
             String message,
             long version,
+            Instant createdAt,
             Instant updatedAt
     ) {
         public boolean terminal() {

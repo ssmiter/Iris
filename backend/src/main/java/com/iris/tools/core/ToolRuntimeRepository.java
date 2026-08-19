@@ -759,6 +759,7 @@ public class ToolRuntimeRepository {
                 rs.getString("error_code"),
                 rs.getString("error_message"),
                 rs.getLong("version"),
+                Instant.parse(rs.getString("created_at")),
                 Instant.parse(rs.getString("updated_at"))
         );
     }
