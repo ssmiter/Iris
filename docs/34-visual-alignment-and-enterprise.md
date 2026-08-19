@@ -1,7 +1,7 @@
 # 34 · 对话视觉对齐与企业级能力补强
 
-> 状态：M7a/M7b/M7c 视觉对齐落地中；M7d 左侧子 agent 面板已定稿；
-> M8 企业级功能与 M9 内核改进已收敛、排期中。
+> 状态：M7/M8/M9 全部落地（76 测试，唯一失败为历史遗留附件用例）。
+> 剩 M10（prompt 阶段，最后做）。
 > 方法：与 WonWork（对话质感参照）和 claude-code（原生 agent 内核参照）
 > 逐项对比，每条差距三档裁决——值得对齐 / 克制化对齐 / 不对齐。
 
@@ -143,19 +143,24 @@ AgentRunLauncher。
 
 ## 5. 里程碑
 
-- **M7a（落地中）过程链信息密度**：A1 工具耗时+摘要、A2 停滞横幅、A3 参数/结果内联。
-- **M7b（落地中）输入区**：A4 上下文水位、A5 权限弹层+Shift+Tab、A6 placeholder 延迟、A7 拖拽上传。
-- **M7c（落地中）对话细节**：A8 时间戳、A9 删 reveal-cursor、A10 审批参数预览、A11 TurnRail、A12 滚动条三态、B1 settling 单次淡化。
-- **M7d（已定稿）左侧子 agent 浮层面板**：A13。左缘圆角浮层，复用
-  RunSection 渲染子 Run 完整过程；头部终止（两键确认）、底部补充输入
-  （用户→子 Run 消息走后端 mailbox，缺 UI 通道则加最小端点）；
-  替换 M6b 居中 Modal，胶囊条保留为入口；veil 无遮罩、点外/Esc 关闭。
-  排期在 M7a-c 之后（同文件区）。
-- **M7e（已定稿）体验补齐**：B2 smooth 滚动兜底、B3 列宽两档、
-  B4 水合静态骨架、B5 选中引用浮条、A17"输出已停止"眉标。
-  排在 M7d/M7f 之后（文件区避让）。
-- **M7f（落地中）排版渲染对齐**：A14，见 §2。
-- **M7g（落地中）操控型细节**：A15 内联编辑、A16 远跳校正，见 §2。
+- **M7a（已落地）过程链信息密度**：A1 工具耗时+摘要、A2 停滞横幅、A3 参数/结果内联。
+- **M7b（已落地）输入区**：A4 上下文水位（SSE 推送 + 水合 GET，禁轮询）、A5 权限弹层+Shift+Tab、A6 placeholder 延迟、A7 拖拽上传。
+- **M7c（已落地）对话细节**：A8 时间戳、A9 删 reveal-cursor、A10 审批参数预览（含后端投影 parameters/argumentsSummary）、A11 TurnRail、A12 滚动条三态、B1 settling 单次淡化。
+- **M7d（已落地）左侧子 agent 浮层面板**：A13 + delegate_task 投影为
+  run 节点（DelegateTaskProjectionEnricher + ChildRunNodeProjectionService +
+  child_run_render_link），链内卡片真正可达。
+- **M7e（已落地）体验补齐**：B2 smooth 滚动兜底（≤50 轮 smooth）、
+  B3 列宽两档（820/680，持久化）、B4 水合静态骨架、B5 选中引用浮条
+  （markdown 引用块前缀，不发明后端字段）、A17"输出已停止"眉标。
+- **M7f（已落地）排版渲染对齐**：A14 全项 + 深色模式 token 化 + remark-breaks。
+- **M7g（已落地）操控型细节**：A15 内联编辑（sendTurn 显式分叉点参数）、
+  A16 远跳校正。
+- **M8a（已落地）拓展 problems 进管理页**：GET /capability-admin/problems + 告警区。
+- **M8b（已落地）MCP 管理页 stdio + 断线重连一次**。
+- **M8c（已落地）cron 单次任务**：once 语义 + SchemaColumnMigration 守卫。
+- **M9a（已落地）**：反应式溢出恢复（0.85 紧预算 ×2 上限）、聚合结果预算
+  （24000 tokens）、重试强化（5 attempts、子 Run Retry-After 60s）。
+- **M9b（已落地）**：子 Run 并发额度（accepted durable 排队，默认 3）。
 - **M8a（排期中）拓展 problems 进管理页**：ScanResult.problems 投影进
   /api/v1/capability-admin + 管理页告警区，纯投影零架构变更。
 - **M8b（排期中）MCP 管理页 stdio + 断线重连一次**：ServerDraft 加
