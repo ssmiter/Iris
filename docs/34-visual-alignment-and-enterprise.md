@@ -1,6 +1,69 @@
 # 34 · 对话视觉对齐与企业级能力补强
 
 > 状态：M7/M8/M9/M10 全部落地（90 测试，唯一失败为历史遗留附件用例）。
+> 第二轮（M11 安静感+精制、M12 内核对标 claude-code 首批）已落地
+> （96 测试，同上遗留）。
+
+## 6. 第二轮发散（2026-08-19 晚，用户体验驱动）
+
+标尺（用户原话收敛）：**内核达到 claude-code 水平，前端达到 WonWork 水平，
+最终体验为手机 app 级顺滑 + macOS 级设计；界面干净专业，无奇怪排版与异常
+位置；重心在体验，不在兜底。**
+
+### M11（已落地）安静感与精制
+
+跳动诊断（对照 WonWork 逐源定位）与修复：
+
+- **流式纯文本化**：流式期间答案渲染纯文本（同字轴容器，无块级蹦出），
+  结束一次性切换富文本；SSE delta 50ms 合批写 store；揭示发布 28→80ms。
+- **双滚底消除**：去掉自定义 rAF 强制滚底，仅留 Virtuoso followOutput。
+- **无限动画清零**：活跃节点 halo/呼吸点、子运行胶囊脉冲、settle-glow
+  全改静态色标或删除；审批卡保留单次入场但不再推高已有卡片
+  （flex-col-reverse）。
+- **memo 粒度**：RoundSection/RunSection/ConversationTimeline 包 memo，
+  answer content 比较移出 turn 投影（AnswerBlock 自订阅），TurnRail
+  观测器仅打开时挂载。
+- **宽度系统化**：列宽改数字三档 640/760/920（按中文 15px 全角字
+  28–40 字/行推导），默认 760，按钮直接显示像素值；流式期间禁用宽度
+  transition 防重排。
+- **正文渲染**：代码块语法高亮（react-syntax-highlighter PrismLight
+  按需注册 14 语言，oneLight/oneDark 双主题跟随）、语言 pill + 复制按钮、
+  答案块悬停复制、"阶段结论"眉标删除。
+- **摘要行同轴**：ProcessSummary 与正文同字号同行高（15px/1.5625rem），
+  仅靠次级字色分层；settle 瞬间播一次 node-enter（WonWork card-in 的
+  克制版），会话级去重、水合不误闪。
+- **密度去杂**：能力中心描述 51→13 字、能力卡徽标精简为 kind+risk、
+  新建 Skill 提 primary、审批卡 Tab 提示仅首卡、参数与操作并一行、
+  composer 底部 chrome 降权（text-caption + opacity-70）、Modal 中心
+  锚定修复（动画结束不再回弹出屏）、macOS 字体栈回退。
+- **中文排版**：prose 域 line-break: strict + hanging-punctuation、
+  h1/h2 阶梯略放大、引用块边线 3px、链接 focus-visible 下划线、
+  表格圆角容器+行 hover、小字号中文标签字重 650→600、标题 break-keep、
+  徽章 nowrap、用户气泡收窄至 82%、节点 dot 20→12px 且连接线对齐圆心。
+
+不做（防反悔）：流式 caret 闪烁（与 A9 冲突）；thumbs 反馈（无后端
+语义）；工具栏更多下拉（增加发现成本）；默认档改 640（混合内容会挤）。
+
+### M12（已落地首批）内核对标 claude-code
+
+逐项对比裁决：durable 状态机、commit/verify 门、结构化错误、对象仓
+持久化为已占优项不动；任意深度 swarm/worktree/MQ/hooks 已裁决不重提。
+
+- **运行中主动压缩水位**：每 Round 装配后检查水位，≥warning（0.85，
+  可配）经 context.usage 事件带 phase 提示，≥blocking（0.95，可配）
+  先触发压缩再装配；反应式 prompt_too_large 恢复保留作兜底。
+- **中断粒度**：停止时未开始执行的 ToolCall 不再排空——合成终态
+  execution + 占位 observation（"运行已停止，该调用未执行"），协议
+  配对保持完整；已开始执行的工具保留排空策略（克制化）。
+- **cache_control 断点**：探明当前仅 OpenAI-compatible 协议面，未新造
+  Anthropic provider；ProviderMessageCompiler 留接入指引注释（前缀
+  稳定结构已就位）。
+- **fallback 降级链**：已实现后被用户明示砍掉（"不要把重心放在兜底上"），
+  代码与文档全量回退，仅留此记录。
+
+排队（明日候选）：流式投机执行只读工具（durable 框架内的架构项）；
+规则化权限 allow/ask/deny + 模式（减少无意义审批，需先设计）。
+
 > 方法：与 WonWork（对话质感参照）和 claude-code（原生 agent 内核参照）
 > 逐项对比，每条差距三档裁决——值得对齐 / 克制化对齐 / 不对齐。
 

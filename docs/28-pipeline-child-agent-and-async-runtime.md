@@ -173,6 +173,21 @@ WonWork 的 APS 写任务进一步说明了一种可复用但不应硬编码成�
   容忍按 Run 类型分化——root 交互 Run 10s（人在等），后台/子 Run 60s（真实限流
   窗口）。模型 fallback 降级暂不做：ModelProviderRegistry 无多 profile 抽象，
   不为此发明新层。
+- **主动压缩水位（M9c）**：在每次模型调用装配上下文之后、发起 attempt 之前，
+  按 `estimatedInputTokens / (maxInputTokens - reservedOutputTokens)` 估算当前压力比。
+  配置项 `iris.agent.compaction.warning-ratio`（默认 0.85）与 `blocking-ratio`
+  （默认 0.95）提供两档前置防线：warning 仅通过 `context.usage` 事件把 `phase`
+  字段置为 `warning`，不阻塞运行；blocking 则先请求一次后台 Compaction Run
+  （复用 `AutoCompactionService` 原语），同时以更紧预算（×0.85）重新装配本轮
+  上下文，把 413 从用户可见错误降级为后台自愈。`prompt_too_large` 反应式恢复
+  保留为最终兜底，两者不互相替代。子 Run 与 root Run 共享同一水位检查，
+  但当前 Compaction 调度仍保持 root-only；若分支仍有 active Turn，后台整理会
+  被现有保护规则静默推迟。
+- **停止时丢弃未开始工具（M9c）**：当 Run 被取消或用户停止时，对尚未开始执行
+  （未进入 `executing`/`verifying`）的 ToolCall 不再继续推进，直接标记为
+  `failed`/`run_stopped` 并生成占位 observation，内容说明“运行已停止，该调用未执行”。
+  已开始的写工具保持原有排空策略，不得半途丢弃。占位 observation 保证
+  ToolCall/ToolExecution/ToolObservation 三元配对完整，fail-closed 语义不破。
 
 ## 11. 近期实现顺序
 
