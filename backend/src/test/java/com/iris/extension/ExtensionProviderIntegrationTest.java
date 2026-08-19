@@ -227,6 +227,18 @@ class ExtensionProviderIntegrationTest {
                   entry: [python, unique.py]
                 """);
 
+        // 扫描问题投影夹具（docs/34 M8a）：非法清单进入管理页
+        Path badManifestDir = EXTENSION_ROOT.resolve("bad-manifests");
+        Files.createDirectories(badManifestDir);
+        Files.writeString(badManifestDir.resolve("bad-name.tool.yml"), """
+                name: BadName
+                kind: template
+                description: 非法工具名
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, bad.py]
+                """);
+
         registry.add(
                 "spring.datasource.url",
                 () -> "jdbc:sqlite:" + DATABASE.toString().replace('\\', '/')
@@ -414,6 +426,25 @@ class ExtensionProviderIntegrationTest {
         assertThat(shadowedDetail.get().item().availability())
                 .isEqualTo("shadowed");
         assertThat(shadowedDetail.get().definition()).isNull();
+    }
+
+    /**
+     * 扫描问题投影（docs/34 M8a）：非法清单被管理 API 暴露为结构化问题，
+     * 包含来源根、文件路径、描述与严重度。
+     */
+    @Test
+    void adminProjectionExposesScanProblems() {
+        var problems = capabilityAdmin.problems();
+        assertThat(problems)
+                .anySatisfy(problem -> {
+                    assertThat(problem.file())
+                            .endsWith("bad-name.tool.yml");
+                    assertThat(problem.description())
+                            .contains("工具名必须是 snake_case");
+                    assertThat(problem.root())
+                            .isEqualTo(EXTENSION_ROOT.toString());
+                    assertThat(problem.severity()).isEqualTo("error");
+                });
     }
 
     /**

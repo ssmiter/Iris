@@ -394,6 +394,13 @@ export interface PipelineRunSummary {
   conversationId: string
 }
 
+export interface CapabilityAdminProblem {
+  root: string
+  file: string | null
+  description: string
+  severity: string
+}
+
 /** 统一能力管理页的只读投影（docs/32 §4、docs/08 §8.7） */
 export const capabilityAdminApi = {
   tree: () => requestJson<CapabilityTreeNode>('/api/v1/capability-admin/tree'),
@@ -405,6 +412,8 @@ export const capabilityAdminApi = {
     requestJson<CapabilityAdminDetail>(
       `/api/v1/capability-admin/items/detail?path=${encodeURIComponent(path)}`,
     ),
+  problems: () =>
+    requestJson<CapabilityAdminProblem[]>('/api/v1/capability-admin/problems'),
 }
 
 /** 定时任务管理（docs/33 §3、docs/08 §8.8）：DB 真相，能力树只投影启用件。 */

@@ -331,6 +331,26 @@ public class CapabilityAdminService {
     ) {
     }
 
+    /** 扫描问题的管理页投影（docs/34 M8a）：只读、运行时、随重扫重算。 */
+    public record AdminProblem(
+            String root,
+            String file,
+            String description,
+            String severity
+    ) {
+    }
+
+    public List<AdminProblem> problems() {
+        return extensions.problems().stream()
+                .map(problem -> new AdminProblem(
+                        problem.root(),
+                        problem.file(),
+                        problem.description(),
+                        problem.severity()
+                ))
+                .toList();
+    }
+
     public record PipelineRunSummary(
             String runId,
             String triggerKind,

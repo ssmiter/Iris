@@ -58,6 +58,25 @@ public class ExtensionScanner {
 
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
+    /** 扫描问题的严重度。 */
+    public enum Severity {
+        ERROR, WARNING
+    }
+
+    /**
+     * 扫描阶段发现的结构化问题。file 为 null 时表示根级问题。
+     */
+    public record ScanProblem(Path file, String description, Severity severity) {
+        public static ScanProblem error(Path file, String description) {
+            return new ScanProblem(file, description, Severity.ERROR);
+        }
+
+        @Override
+        public String toString() {
+            return (file == null ? "" : file + " ") + description;
+        }
+    }
+
     public ScanResult scan(Path root) {
         List<ScannedTool> tools = new ArrayList<>();
         List<ScannedDirectory> directories = new ArrayList<>();
@@ -65,7 +84,7 @@ public class ExtensionScanner {
         List<ScannedKnowledge> knowledge = new ArrayList<>();
         List<ScannedSkill> skills = new ArrayList<>();
         Map<String, Set<String>> usedKnowledgeNames = new java.util.HashMap<>();
-        List<String> problems = new ArrayList<>();
+        List<ScanProblem> problems = new ArrayList<>();
         if (root == null || !Files.isDirectory(root)) {
             return new ScanResult(root, tools, directories, mcpServers,
                     knowledge, skills, problems);
@@ -95,7 +114,8 @@ public class ExtensionScanner {
                 }
             }
         } catch (IOException | UncheckedIOException exception) {
-            problems.add("扫描拓展根失败 " + root + ": " + exception.getMessage());
+            problems.add(ScanProblem.error(root,
+                    "扫描拓展根失败: " + exception.getMessage()));
         }
         return new ScanResult(root, List.copyOf(tools),
                 List.copyOf(directories), List.copyOf(mcpServers),
@@ -118,12 +138,12 @@ public class ExtensionScanner {
             Path file,
             List<ScannedKnowledge> knowledge,
             Map<String, Set<String>> usedNames,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
         String directory = capabilityDirectory(root, file.getParent());
         if (directory == null) {
-            problems.add("目录段含非法字符，无法派生知识库路径: "
-                    + file.getParent());
+            problems.add(ScanProblem.error(file.getParent(),
+                    "目录段含非法字符，无法派生知识库路径"));
             return;
         }
         String fileName = file.getFileName().toString();
@@ -194,42 +214,48 @@ public class ExtensionScanner {
             Path file,
             String fileName,
             List<ScannedSkill> skills,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
         String content;
         try {
             content = Files.readString(file, StandardCharsets.UTF_8);
         } catch (IOException exception) {
-            problems.add("技能读取失败 " + file + ": " + exception.getMessage());
+            problems.add(ScanProblem.error(file,
+                    "技能读取失败: " + exception.getMessage()));
             return;
         }
         String[] parts = SkillDocument.split(content);
         if (parts == null) {
-            problems.add("技能缺少 --- 开合的 frontmatter " + file);
+            problems.add(ScanProblem.error(file,
+                    "技能缺少 --- 开合的 frontmatter"));
             return;
         }
         SkillDefinition definition;
         try {
             definition = yaml.readValue(parts[0], SkillDefinition.class);
         } catch (IOException exception) {
-            problems.add("技能 frontmatter 非法（含白名单外字段或类型错误）"
-                    + file + ": " + exception.getMessage());
+            problems.add(ScanProblem.error(file,
+                    "技能 frontmatter 非法（含白名单外字段或类型错误）: "
+                            + exception.getMessage()));
             return;
         }
         if (definition.name() == null
                 || !KEBAB_CASE.matcher(definition.name()).matches()) {
-            problems.add("技能 name 必须是 kebab-case " + file);
+            problems.add(ScanProblem.error(file,
+                    "技能 name 必须是 kebab-case"));
             return;
         }
         if (definition.description() == null
                 || definition.description().isBlank()) {
-            problems.add("技能缺少 description " + file);
+            problems.add(ScanProblem.error(file,
+                    "技能缺少 description"));
             return;
         }
         String name = definition.name().replace('-', '_');
         if (!SNAKE_CASE.matcher(name).matches()) {
-            problems.add("技能名转换为 snake_case 后非法（须字母开头）"
-                    + file + ": " + definition.name());
+            problems.add(ScanProblem.error(file,
+                    "技能名转换为 snake_case 后非法（须字母开头）: "
+                            + definition.name()));
             return;
         }
         Path bundleDir = null;
@@ -237,8 +263,8 @@ public class ExtensionScanner {
         if (SKILL_BUNDLE_FILE.equals(fileName)) {
             bundleDir = file.getParent();
             if (bundleDir.equals(root)) {
-                problems.add("SKILL.md 必须位于命名束目录内，不能直接挂在根上 "
-                        + file);
+                problems.add(ScanProblem.error(file,
+                        "SKILL.md 必须位于命名束目录内，不能直接挂在根上"));
                 return;
             }
             parentDir = bundleDir.getParent();
@@ -249,7 +275,8 @@ public class ExtensionScanner {
         // ToolRegistry.requireExternalPath 约束）。
         String directory = capabilityDirectory(root, parentDir);
         if (directory == null) {
-            problems.add("目录段含非法字符，无法派生技能路径: " + parentDir);
+            problems.add(ScanProblem.error(file.getParent(),
+                    "目录段含非法字符，无法派生技能路径"));
             return;
         }
         String capabilityPath =
@@ -264,7 +291,7 @@ public class ExtensionScanner {
             Path root,
             Path file,
             List<ScannedTool> tools,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
         ProcessToolDefinition definition;
         try {
@@ -273,17 +300,19 @@ public class ExtensionScanner {
                     ProcessToolDefinition.class
             );
         } catch (IOException exception) {
-            problems.add("清单解析失败 " + file + ": " + exception.getMessage());
+            problems.add(ScanProblem.error(file,
+                    "清单解析失败: " + exception.getMessage()));
             return;
         }
         String problem = validate(definition, file);
         if (problem != null) {
-            problems.add(problem);
+            problems.add(ScanProblem.error(file, problem));
             return;
         }
         String capabilityPath = capabilityPath(root, file, definition.name());
         if (capabilityPath == null) {
-            problems.add("目录段含非法字符，无法派生能力路径: " + file.getParent());
+            problems.add(ScanProblem.error(file.getParent(),
+                    "目录段含非法字符，无法派生能力路径"));
             return;
         }
         tools.add(new ScannedTool(
@@ -298,7 +327,7 @@ public class ExtensionScanner {
     private void scanMcpServer(
             Path file,
             List<ScannedMcpServer> servers,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
         McpServerDeclaration declaration;
         try {
@@ -307,13 +336,13 @@ public class ExtensionScanner {
                     McpServerDeclaration.class
             );
         } catch (IOException exception) {
-            problems.add("MCP 声明解析失败 " + file + ": "
-                    + exception.getMessage());
+            problems.add(ScanProblem.error(file,
+                    "MCP 声明解析失败: " + exception.getMessage()));
             return;
         }
         String problem = validateMcp(declaration, file);
         if (problem != null) {
-            problems.add(problem);
+            problems.add(ScanProblem.error(file, problem));
             return;
         }
         servers.add(new ScannedMcpServer(file, declaration));
@@ -323,16 +352,16 @@ public class ExtensionScanner {
     private String validateMcp(McpServerDeclaration declaration, Path file) {
         if (declaration.slug() == null
                 || !SNAKE_CASE.matcher(declaration.slug()).matches()) {
-            return "MCP slug 必须是 snake_case " + file;
+            return "MCP slug 必须是 snake_case";
         }
         if (declaration.displayName() == null
                 || declaration.displayName().isBlank()) {
-            return "MCP 声明缺少 display_name " + file;
+            return "MCP 声明缺少 display_name";
         }
         boolean stdio = "stdio".equals(declaration.transport());
         if (!stdio && !"streamable_http".equals(declaration.transport())) {
-            return "MCP transport 只能是 stdio | streamable_http "
-                    + file + ": " + declaration.transport();
+            return "MCP transport 只能是 stdio | streamable_http: "
+                    + declaration.transport();
         }
         if (stdio) {
             if (declaration.command() == null
@@ -340,18 +369,17 @@ public class ExtensionScanner {
                     || declaration.command().stream()
                             .anyMatch(element -> element == null
                                     || element.isBlank())) {
-                return "stdio MCP 声明的 command 不能为空 " + file;
+                return "stdio MCP 声明的 command 不能为空";
             }
         } else if (declaration.endpoint() == null
                 || declaration.endpoint().isBlank()) {
-            return "streamable_http MCP 声明缺少 endpoint " + file;
+            return "streamable_http MCP 声明缺少 endpoint";
         }
         if (declaration.env() != null) {
             for (String name : declaration.env()) {
                 if (name == null
                         || !ENVIRONMENT_NAME.matcher(name).matches()) {
-                    return "MCP env 只声明环境变量名（大写 snake）"
-                            + file + ": " + name;
+                    return "MCP env 只声明环境变量名（大写 snake）: " + name;
                 }
             }
         }
@@ -362,19 +390,20 @@ public class ExtensionScanner {
             Path root,
             Path file,
             List<ScannedDirectory> directories,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
         DirectoryMetadata metadata;
         try {
             metadata = yaml.readValue(file.toFile(), DirectoryMetadata.class);
         } catch (IOException exception) {
-            problems.add("目录元数据解析失败 " + file + ": "
-                    + exception.getMessage());
+            problems.add(ScanProblem.error(file,
+                    "目录元数据解析失败: " + exception.getMessage()));
             return;
         }
         String directoryPath = capabilityDirectory(root, file.getParent());
         if (directoryPath == null) {
-            problems.add("目录段含非法字符，无法派生目录路径: " + file.getParent());
+            problems.add(ScanProblem.error(file.getParent(),
+                    "目录段含非法字符，无法派生目录路径"));
             return;
         }
         directories.add(new ScannedDirectory(directoryPath, metadata));
@@ -384,28 +413,27 @@ public class ExtensionScanner {
     private String validate(ProcessToolDefinition definition, Path file) {
         if (definition.name() == null
                 || !SNAKE_CASE.matcher(definition.name()).matches()) {
-            return "工具名必须是 snake_case " + file;
+            return "工具名必须是 snake_case";
         }
         if (definition.description() == null
                 || definition.description().isBlank()) {
-            return "工具缺少一句话 description " + file;
+            return "工具缺少一句话 description";
         }
         if (definition.description().length() > 500) {
-            return "description 超过 500 字符 " + file;
+            return "description 超过 500 字符";
         }
         if (definition.inputSchema() == null
                 || !definition.inputSchema().isObject()) {
-            return "input_schema 必须是 JSON Schema 对象 " + file;
+            return "input_schema 必须是 JSON Schema 对象";
         }
         if (!"template".equals(definition.kind())
                 && !"process".equals(definition.kind())) {
-            return "未知 kind（支持 process | template）"
-                    + file + ": " + definition.kind();
+            return "未知 kind（支持 process | template）: " + definition.kind();
         }
         if (definition.runtime() == null
                 || definition.runtime().entry() == null
                 || definition.runtime().entry().isEmpty()) {
-            return "runtime.entry 不能为空 " + file;
+            return "runtime.entry 不能为空";
         }
         if ("process".equals(definition.kind())) {
             // 常驻形态的参数走 invoke 帧；spawn argv 只允许内核供给占位符。
@@ -416,7 +444,7 @@ public class ExtensionScanner {
                     if (!"pluginDir".equals(key) && !"javaBin".equals(key)) {
                         return "kind=process 的 runtime.entry 只允许内核供给"
                                 + "占位符 {pluginDir}/{javaBin}（参数经 "
-                                + "invoke 帧传递）" + file + ": {" + key + "}";
+                                + "invoke 帧传递）: {" + key + "}";
                     }
                 }
             }
@@ -425,12 +453,12 @@ public class ExtensionScanner {
                 ? null
                 : definition.approval().mode();
         if (mode != null && !"auto".equals(mode) && !"explicit".equals(mode)) {
-            return "approval.mode 只能是 auto | explicit " + file;
+            return "approval.mode 只能是 auto | explicit";
         }
         if ("explicit".equals(mode)
                 && (definition.approval().impactStatement() == null
                         || definition.approval().impactStatement().isBlank())) {
-            return "审批模式 explicit 必须提供 impact_statement 模板 " + file;
+            return "审批模式 explicit 必须提供 impact_statement 模板";
         }
         ToolManifest.SideEffect sideEffect;
         try {
@@ -441,7 +469,7 @@ public class ExtensionScanner {
         }
         if ("explicit".equals(mode)
                 && sideEffect == ToolManifest.SideEffect.NONE) {
-            return "只读工具无需 explicit 审批 " + file;
+            return "只读工具无需 explicit 审批";
         }
         return null;
     }
@@ -499,7 +527,7 @@ public class ExtensionScanner {
             List<ScannedMcpServer> mcpServers,
             List<ScannedKnowledge> knowledge,
             List<ScannedSkill> skills,
-            List<String> problems
+            List<ScanProblem> problems
     ) {
     }
 

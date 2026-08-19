@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentProps } from 'react'
 import {
+  AlertTriangle,
   Brain,
   ChevronDown,
   ChevronRight,
@@ -14,6 +15,7 @@ import {
   type CapabilityAdminDetail,
   type CapabilityAdminItem,
   type CapabilityAdminListing,
+  type CapabilityAdminProblem,
   type CapabilityTreeNode,
   type SkillView,
 } from '@/api/irisApi'
@@ -171,6 +173,7 @@ export function CapabilityTreeView({
   const [details, setDetails] = useState<Record<string, DetailState>>({})
   const [editingSkill, setEditingSkill] = useState<SkillView | undefined | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
+  const [problems, setProblems] = useState<CapabilityAdminProblem[]>([])
 
   const reloadTree = () => {
     capabilityAdminApi
@@ -208,6 +211,10 @@ export function CapabilityTreeView({
   useEffect(() => {
     reloadTree()
     reloadSkills()
+    capabilityAdminApi
+      .problems()
+      .then(setProblems)
+      .catch(() => setProblems([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -370,6 +377,10 @@ export function CapabilityTreeView({
         </div>
       </div>
 
+      {problems.length > 0 && (
+        <ProblemsBanner problems={problems} />
+      )}
+
       <div className="grid gap-5 sm:grid-cols-[13.5rem_minmax(0,1fr)]">
         <nav
           aria-label="能力目录"
@@ -460,6 +471,44 @@ export function CapabilityTreeView({
             ))
           )}
         </section>
+      </div>
+    </div>
+  )
+}
+
+function ProblemsBanner({
+  problems,
+}: {
+  problems: CapabilityAdminProblem[]
+}) {
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-warning/40 bg-warning-soft px-3 py-3"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div className="grid flex-1 gap-2">
+          <p className="text-small font-semibold text-warning-foreground">
+            拓展扫描问题（{problems.length}）
+          </p>
+          <ul className="grid gap-1.5">
+            {problems.map((problem, index) => (
+              <li
+                key={index}
+                className="text-small leading-relaxed text-warning-foreground/90"
+              >
+                {problem.file ? (
+                  <>
+                    <code className="break-all text-caption">{problem.file}</code>
+                    <span className="mx-1.5 text-ink-muted">·</span>
+                  </>
+                ) : null}
+                {problem.description}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </div>
   )
