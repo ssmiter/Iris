@@ -47,7 +47,6 @@ public class McpServerService {
     private static final Pattern ENVIRONMENT_NAME = Pattern.compile(
             "[A-Z_][A-Z0-9_]*"
     );
-    private static final String TRANSPORT = "streamable_http";
 
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
@@ -57,6 +56,7 @@ public class McpServerService {
     private final McpStdioClient stdioClient;
     private final TransactionTemplate transactions;
     private final Map<String, LiveConnection> live = new ConcurrentHashMap<>();
+    private final Map<String, Object> reconnectLocks = new ConcurrentHashMap<>();
     private final Clock clock = Clock.systemUTC();
 
     public McpServerService(
@@ -79,15 +79,22 @@ public class McpServerService {
 
     public List<ServerView> list() {
         return jdbc.sql("""
-                SELECT * FROM mcp_server
-                ORDER BY lower(display_name), slug
+                SELECT s.*, st.command_json, st.env_names_json
+                FROM mcp_server s
+                LEFT JOIN mcp_server_stdio st ON s.server_id = st.server_id
+                ORDER BY lower(s.display_name), s.slug
                 """)
                 .query(this::mapServer)
                 .list();
     }
 
     public ServerView require(String serverId) {
-        return jdbc.sql("SELECT * FROM mcp_server WHERE server_id = :id")
+        return jdbc.sql("""
+                SELECT s.*, st.command_json, st.env_names_json
+                FROM mcp_server s
+                LEFT JOIN mcp_server_stdio st ON s.server_id = st.server_id
+                WHERE s.server_id = :id
+                """)
                 .param("id", serverId)
                 .query(this::mapServer)
                 .optional()
@@ -133,13 +140,14 @@ public class McpServerService {
                 .param("id", id)
                 .param("slug", valid.slug())
                 .param("displayName", valid.displayName())
-                .param("transport", TRANSPORT)
+                .param("transport", valid.transport())
                 .param("endpoint", valid.endpoint())
                 .param("authorizationEnv", valid.authorizationEnv())
                 .param("enabled", valid.enabled() ? 1 : 0)
                 .param("state", valid.enabled() ? "pending" : "disabled")
                 .param("now", now.toString())
                 .update();
+        writeStdioConfig(id, valid);
         if (valid.enabled()) {
             refresh(id);
         }
@@ -158,6 +166,7 @@ public class McpServerService {
                 UPDATE mcp_server
                 SET slug = :slug,
                     display_name = :displayName,
+                    transport = :transport,
                     endpoint = :endpoint,
                     authorization_env = :authorizationEnv,
                     enabled = :enabled,
@@ -169,6 +178,7 @@ public class McpServerService {
                 """)
                 .param("slug", valid.slug())
                 .param("displayName", valid.displayName())
+                .param("transport", valid.transport())
                 .param("endpoint", valid.endpoint())
                 .param("authorizationEnv", valid.authorizationEnv())
                 .param("enabled", valid.enabled() ? 1 : 0)
@@ -182,6 +192,7 @@ public class McpServerService {
                     "MCP server changed; refresh before editing"
             );
         }
+        writeStdioConfig(serverId, valid);
         unload(serverId, "configuration changed");
         if (valid.enabled()) {
             refresh(serverId);
@@ -430,12 +441,13 @@ public class McpServerService {
 
     private void writeStdioConfig(
             String serverId,
-            McpServerDeclaration declaration
+            List<String> command,
+            List<String> env
     ) {
         jdbc.sql("DELETE FROM mcp_server_stdio WHERE server_id = :id")
                 .param("id", serverId)
                 .update();
-        if (!"stdio".equals(declaration.transport())) {
+        if (command == null || command.isEmpty()) {
             return;
         }
         try {
@@ -445,16 +457,61 @@ public class McpServerService {
                     ) VALUES (:id, :command, :env)
                     """)
                     .param("id", serverId)
-                    .param("command", objectMapper.writeValueAsString(
-                            declaration.command()))
+                    .param("command", objectMapper.writeValueAsString(command))
                     .param("env", objectMapper.writeValueAsString(
-                            declaration.env() == null
-                                    ? List.of() : declaration.env()))
+                            env == null ? List.of() : env))
                     .update();
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException(
                     "Unable to serialize MCP stdio launch config", exception
             );
+        }
+    }
+
+    private void writeStdioConfig(
+            String serverId,
+            McpServerDeclaration declaration
+    ) {
+        if (!"stdio".equals(declaration.transport())) {
+            jdbc.sql("DELETE FROM mcp_server_stdio WHERE server_id = :id")
+                    .param("id", serverId)
+                    .update();
+            return;
+        }
+        writeStdioConfig(serverId, declaration.command(), declaration.env());
+    }
+
+    private void writeStdioConfig(String serverId, ServerDraft draft) {
+        if (!"stdio".equals(draft.transport())) {
+            jdbc.sql("DELETE FROM mcp_server_stdio WHERE server_id = :id")
+                    .param("id", serverId)
+                    .update();
+            return;
+        }
+        List<String> command = new ArrayList<>();
+        command.add(draft.command());
+        if (draft.args() != null) {
+            command.addAll(draft.args());
+        }
+        writeStdioConfig(serverId, command, draft.env());
+    }
+
+    /**
+     * 连接层一次恢复：execute 发现不在线时尝试 refresh，成功则继续本次调用。
+     * 同一 server 的并发调用只会有一个实际重连，其余等待后复用结果。
+     * 这属于连接恢复而非远端调用重试，不违反"不透明自动重试"纪律。
+     */
+    private void reconnectOnce(String serverId) {
+        Object lock = reconnectLocks.computeIfAbsent(serverId, key -> new Object());
+        synchronized (lock) {
+            if (live.get(serverId) != null) {
+                return;
+            }
+            try {
+                refresh(serverId);
+            } catch (Exception ignored) {
+                // refresh() 已把状态与错误写入 DB；execute 会再次检查 live
+            }
         }
     }
 
@@ -846,11 +903,45 @@ public class McpServerService {
 
     private ServerView mapServer(java.sql.ResultSet rs, int row)
             throws java.sql.SQLException {
+        String transport = rs.getString("transport");
+        String command = null;
+        List<String> args = null;
+        List<String> env = null;
+        if ("stdio".equals(transport)) {
+            String commandJson = rs.getString("command_json");
+            if (commandJson != null && !commandJson.isBlank()) {
+                try {
+                    List<String> commandList = new ArrayList<>();
+                    objectMapper.readTree(commandJson).forEach(node ->
+                            commandList.add(node.asText()));
+                    if (!commandList.isEmpty()) {
+                        command = commandList.get(0);
+                        args = commandList.size() > 1
+                                ? List.copyOf(commandList.subList(
+                                        1, commandList.size()))
+                                : List.of();
+                    }
+                } catch (JsonProcessingException ignored) {
+                    // refresh() will surface malformed config as failed state
+                }
+            }
+            String envJson = rs.getString("env_names_json");
+            if (envJson != null && !envJson.isBlank()) {
+                try {
+                    List<String> envList = new ArrayList<>();
+                    objectMapper.readTree(envJson).forEach(node ->
+                            envList.add(node.asText()));
+                    env = List.copyOf(envList);
+                } catch (JsonProcessingException ignored) {
+                    // refresh() will surface malformed config
+                }
+            }
+        }
         return new ServerView(
                 rs.getString("server_id"),
                 rs.getString("slug"),
                 rs.getString("display_name"),
-                rs.getString("transport"),
+                transport,
                 rs.getString("endpoint"),
                 rs.getString("authorization_env"),
                 rs.getInt("enabled") == 1,
@@ -865,7 +956,10 @@ public class McpServerService {
                 Instant.parse(rs.getString("created_at")),
                 Instant.parse(rs.getString("updated_at")),
                 rs.getString("checked_at") == null
-                        ? null : Instant.parse(rs.getString("checked_at"))
+                        ? null : Instant.parse(rs.getString("checked_at")),
+                command,
+                args,
+                env
         );
     }
 
@@ -877,20 +971,72 @@ public class McpServerService {
             );
         }
         String displayName = bounded(draft.displayName(), "displayName", 120);
-        String endpoint = bounded(draft.endpoint(), "endpoint", 2_000);
-        URIValidator.requireHttpEndpoint(endpoint);
-        String authorizationEnv = draft.authorizationEnv() == null
-                || draft.authorizationEnv().isBlank()
-                ? null : draft.authorizationEnv().trim();
-        if (authorizationEnv != null
-                && !ENVIRONMENT_NAME.matcher(authorizationEnv).matches()) {
+        String transport = draft.transport() == null
+                ? "streamable_http"
+                : draft.transport().trim().toLowerCase(Locale.ROOT);
+        if (!"streamable_http".equals(transport)
+                && !"stdio".equals(transport)) {
             throw new IllegalArgumentException(
-                    "authorizationEnv must name an environment variable"
+                    "transport must be streamable_http | stdio"
             );
         }
+        boolean stdio = "stdio".equals(transport);
+        String endpoint;
+        String authorizationEnv = null;
+        String command = null;
+        List<String> args = List.of();
+        List<String> env = List.of();
+        if (stdio) {
+            command = draft.command() == null ? "" : draft.command().trim();
+            bounded(command, "command", 2_000);
+            if (draft.args() != null) {
+                args = draft.args().stream()
+                        .map(String::trim)
+                        .filter(element -> !element.isBlank())
+                        .toList();
+                if (args.size() > 64) {
+                    throw new IllegalArgumentException(
+                            "stdio args must contain at most 64 elements"
+                    );
+                }
+                for (String element : args) {
+                    if (element.length() > 2_000) {
+                        throw new IllegalArgumentException(
+                                "stdio args must be at most 2000 characters"
+                        );
+                    }
+                }
+            }
+            endpoint = "stdio://" + draft.slug().trim();
+            if (draft.env() != null) {
+                env = draft.env().stream()
+                        .map(String::trim)
+                        .filter(name -> !name.isBlank())
+                        .toList();
+                for (String name : env) {
+                    if (!ENVIRONMENT_NAME.matcher(name).matches()) {
+                        throw new IllegalArgumentException(
+                                "env must name environment variables: " + name
+                        );
+                    }
+                }
+            }
+        } else {
+            endpoint = bounded(draft.endpoint(), "endpoint", 2_000);
+            URIValidator.requireHttpEndpoint(endpoint);
+            authorizationEnv = draft.authorizationEnv() == null
+                    || draft.authorizationEnv().isBlank()
+                    ? null : draft.authorizationEnv().trim();
+            if (authorizationEnv != null
+                    && !ENVIRONMENT_NAME.matcher(authorizationEnv).matches()) {
+                throw new IllegalArgumentException(
+                        "authorizationEnv must name an environment variable"
+                );
+            }
+        }
         return new ServerDraft(
-                draft.slug().trim(), displayName, endpoint,
-                authorizationEnv, draft.enabled()
+                draft.slug().trim(), displayName, transport, endpoint,
+                authorizationEnv, command, args, env, draft.enabled()
         );
     }
 
@@ -1105,10 +1251,15 @@ public class McpServerService {
             }
             LiveConnection connection = live.get(serverId);
             if (connection == null) {
-                return ToolOutcome.failed(
-                        "mcp_not_connected",
-                        "MCP server is not connected; refresh it in capability management"
-                );
+                reconnectOnce(serverId);
+                connection = live.get(serverId);
+                if (connection == null) {
+                    return ToolOutcome.failed(
+                            "mcp_not_connected",
+                            "MCP server is not connected; refresh it in "
+                                    + "capability management"
+                    );
+                }
             }
             try {
                 JsonNode result = connection.stdio() != null
@@ -1211,8 +1362,12 @@ public class McpServerService {
     public record ServerDraft(
             String slug,
             String displayName,
+            String transport,
             String endpoint,
             String authorizationEnv,
+            String command,
+            List<String> args,
+            List<String> env,
             boolean enabled
     ) { }
 
@@ -1234,7 +1389,10 @@ public class McpServerService {
             int version,
             Instant createdAt,
             Instant updatedAt,
-            Instant checkedAt
+            Instant checkedAt,
+            String command,
+            List<String> args,
+            List<String> env
     ) { }
 
     public record ToolView(

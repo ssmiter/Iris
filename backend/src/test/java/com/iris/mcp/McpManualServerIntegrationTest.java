@@ -1,7 +1,6 @@
 package com.iris.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iris.extension.McpServerDeclaration;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolOutcome;
@@ -17,31 +16,30 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@code *.mcp.yml} 声明全链路（docs/31 §5.3）：拓展根扫描 → 落库（来源记到
- * mcp_server_origin）→ stdio 拉起 → 工具以 mcp__&lt;server&gt;__&lt;tool&gt;
- * 入注册表并可真实调用；与手工连接器冲突 fail-closed；根卸载即停用。
+ * 管理页手工 MCP 连接器全链路（docs/34 M8b）：支持 streamable_http 与 stdio，
+ * 可验证/持久化/调用；断线后 execute 自动重连一次，失败再返回 mcp_not_connected。
  */
 @SpringBootTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class McpDeclaredServerIntegrationTest {
+class McpManualServerIntegrationTest {
 
     private static final Path DATABASE = Path.of(
-            "target", "test-data", "mcp-declared.db"
+            "target", "test-data", "mcp-manual.db"
     ).toAbsolutePath();
     private static final Path WORKSPACE = Path.of(
-            "target", "test-mcp-workspace"
-    ).toAbsolutePath();
-    private static final Path EXTENSION_ROOT = Path.of(
-            "target", "test-mcp-extensions"
+            "target", "test-mcp-manual-workspace"
     ).toAbsolutePath();
 
     private static final String FIXTURE_SOURCE = """
@@ -150,82 +148,59 @@ class McpDeclaredServerIntegrationTest {
         Files.deleteIfExists(Path.of(DATABASE + "-shm"));
         Files.createDirectories(WORKSPACE);
 
-        Path mcpDir = EXTENSION_ROOT.resolve("mcp");
-        Files.createDirectories(mcpDir);
-        Path fixture = mcpDir.resolve("EchoMcpServer.java");
-        Files.writeString(fixture, FIXTURE_SOURCE);
-        String javaBin = Path.of(System.getProperty("java.home"), "bin",
-                isWindows() ? "java.exe" : "java").toString();
-        Files.writeString(
-                mcpDir.resolve("echo-fixture.mcp.yml"),
-                """
-                slug: echo_fixture
-                display_name: 回显测试服务器
-                transport: stdio
-                command: ["%s", "%s"]
-                enabled: true
-                """.formatted(
-                        javaBin.replace('\\', '/'),
-                        fixture.toString().replace('\\', '/')
-                )
-        );
-
         registry.add(
                 "spring.datasource.url",
                 () -> "jdbc:sqlite:" + DATABASE.toString().replace('\\', '/')
         );
         registry.add("iris.workspace", WORKSPACE::toString);
-        registry.add(
-                "iris.extension.roots[0]",
-                () -> EXTENSION_ROOT.toString()
-        );
     }
 
     @Test
     @Order(1)
-    void declaredStdioServerConnectsAndRegistersNamespacedTools()
+    void manualStdioServerConnectsAndRegistersNamespacedTools()
             throws Exception {
-        // 声明落库后即同步连接；ApplicationReadyEvent 还会异步重连一轮，
-        // 这里等它收敛到 connected，避免断言撞上 connecting 中间态。
-        McpServerService.ServerView server = null;
-        for (int attempt = 0; attempt < 150; attempt++) {
-            server = mcpServers.list().stream()
-                    .filter(view -> view.slug().equals("echo_fixture"))
-                    .findFirst()
-                    .orElse(null);
-            if (server != null
-                    && "connected".equals(server.connectionState())
-                    && toolRegistry.find("mcp__echo_fixture__echo").isPresent()) {
-                break;
-            }
-            Thread.sleep(200);
-        }
-        assertThat(server).as("声明的连接器未落库").isNotNull();
-        assertThat(server.connectionState())
-                .as("声明落库即连接: %s", server.lastError())
-                .isEqualTo("connected");
+        Path fixture = WORKSPACE.resolve("EchoMcpServer.java");
+        Files.writeString(fixture, FIXTURE_SOURCE);
+        String javaBin = Path.of(System.getProperty("java.home"), "bin",
+                isWindows() ? "java.exe" : "java").toString();
+
+        McpServerService.ServerView server = mcpServers.create(
+                new McpServerService.ServerDraft(
+                        "manual_echo", "手工回显服务器",
+                        "stdio", null, null,
+                        javaBin, List.of(fixture.toString()), List.of(),
+                        true
+                )
+        );
+
         assertThat(server.transport()).isEqualTo("stdio");
-        assertThat(server.remoteServerName()).isEqualTo("echo-fixture");
+        assertThat(server.endpoint()).isEqualTo("stdio://manual_echo");
+        assertThat(server.command()).isEqualTo(javaBin);
+        assertThat(server.args()).containsExactly(fixture.toString());
 
-        // mcp__ 命名空间（docs/31 §5.3，与 Claude Code / dsh 同形）
-        var binding = toolRegistry.find("mcp__echo_fixture__echo");
-        assertThat(binding).isPresent();
-        assertThat(binding.get().capabilityPath())
-                .isEqualTo("/connectors/mcp/echo_fixture/echo");
+        // 创建即刷新，但等异步 discovery 落库收敛
+        McpServerService.ServerView connected = awaitConnected(
+                server.serverId(), "mcp__manual_echo__echo");
+        assertThat(connected.connectionState()).isEqualTo("connected");
+        assertThat(connected.remoteServerName()).isEqualTo("echo-fixture");
 
-        // 来源记录
-        String origin = jdbc.queryForObject(
-                "SELECT extension_root FROM mcp_server_origin WHERE server_id = ?",
+        // stdio 配置持久化到既有 mcp_server_stdio 表
+        String persistedCommand = jdbc.queryForObject(
+                "SELECT command_json FROM mcp_server_stdio WHERE server_id = ?",
                 String.class, server.serverId()
         );
-        assertThat(origin).isEqualTo(
-                EXTENSION_ROOT.toAbsolutePath().normalize().toString()
+        List<String> parsedCommand = objectMapper.readValue(
+                persistedCommand, objectMapper.getTypeFactory()
+                        .constructCollectionType(List.class, String.class)
         );
+        assertThat(parsedCommand).startsWith(javaBin);
 
-        // 真实调用：经 stdio 进程回路
+        var binding = toolRegistry.find("mcp__manual_echo__echo");
+        assertThat(binding).isPresent();
+
         ToolOutcome outcome = binding.get().tool().execute(
                 new CommittedOperation(
-                        "exec-mcp-1", "snap-1", "hash-1",
+                        "exec-mcp-manual-1", "snap-1", "hash-1",
                         objectMapper.createObjectNode().put("text", "hi"),
                         List.of()
                 ),
@@ -238,53 +213,114 @@ class McpDeclaredServerIntegrationTest {
 
     @Test
     @Order(2)
-    void declarationConflictingWithManualServerIsRejectedFailClosed() {
-        McpServerService.ServerView manual = mcpServers.create(
-                new McpServerService.ServerDraft(
-                        "taken_slug", "手工连接器",
-                        "streamable_http", "http://127.0.0.1:9/mcp",
-                        null, null, null, null, false
-                )
-        );
-        String warning = mcpServers.upsertDeclared(
-                new McpServerDeclaration(
-                        "taken_slug", "声明来的同名连接器", "stdio",
-                        List.of("java", "-version"), null,
-                        null, null, true
-                ),
-                EXTENSION_ROOT.toAbsolutePath().normalize().toString(),
-                "test/taken.mcp.yml"
-        );
-        assertThat(warning).isNotNull().contains("冲突");
-        // 既有连接器原样保留
-        McpServerService.ServerView kept = mcpServers.require(manual.serverId());
-        assertThat(kept.displayName()).isEqualTo("手工连接器");
-        assertThat(kept.transport()).isEqualTo("streamable_http");
+    void duplicateSlugIsRejected() {
         assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM mcp_server_origin WHERE server_id = ?",
-                Integer.class, manual.serverId()
-        )).isZero();
+                "SELECT COUNT(*) FROM mcp_server WHERE slug = ?",
+                Integer.class, "manual_echo"
+        )).isEqualTo(1);
+
+        assertThatThrownBy(() -> mcpServers.create(new McpServerService.ServerDraft(
+                "manual_echo", "同名冲突",
+                "streamable_http", "http://127.0.0.1:9/mcp",
+                null, null, null, null, false
+        ))).isInstanceOf(org.springframework.dao.DataAccessException.class);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT display_name FROM mcp_server WHERE slug = ?",
+                String.class, "manual_echo"
+        )).isEqualTo("手工回显服务器");
     }
 
     @Test
     @Order(3)
-    void removingRootDisablesItsDeclaredServers() {
+    void executeReconnectsOnceWhenDisconnected() throws Exception {
         McpServerService.ServerView server = mcpServers.list().stream()
-                .filter(view -> view.slug().equals("echo_fixture"))
+                .filter(view -> view.slug().equals("manual_echo"))
                 .findFirst()
                 .orElseThrow();
-        mcpServers.disableDeclaredByRoot(
-                EXTENSION_ROOT.toAbsolutePath().normalize().toString()
-        );
-        McpServerService.ServerView disabled =
-                mcpServers.require(server.serverId());
-        assertThat(disabled.enabled()).isFalse();
-        assertThat(disabled.connectionState()).isEqualTo("disabled");
-        assertThat(toolRegistry.find("mcp__echo_fixture__echo")).isEmpty();
 
-        // 恢复，避免影响共享上下文里的其他测试
-        mcpServers.setEnabled(server.serverId(), disabled.version(), true);
-        assertThat(toolRegistry.find("mcp__echo_fixture__echo")).isPresent();
+        // 模拟连接丢失：直接从 live map 摘除，但不改库
+        evictLiveConnection(server.serverId());
+        assertThat(toolRegistry.find("mcp__manual_echo__echo")).isPresent();
+
+        var binding = toolRegistry.find("mcp__manual_echo__echo").orElseThrow();
+        ToolOutcome outcome = binding.tool().execute(
+                new CommittedOperation(
+                        "exec-mcp-manual-2", "snap-2", "hash-2",
+                        objectMapper.createObjectNode().put("text", "reconnect"),
+                        List.of()
+                ),
+                new TestToolContext()
+        );
+        assertThat(outcome.kind()).isEqualTo(ToolOutcome.Kind.SUCCEEDED);
+        assertThat(outcome.output().path("content").get(0)
+                .path("text").asText()).isEqualTo("pong");
+    }
+
+    @Test
+    @Order(4)
+    void executeReturnsNotConnectedAfterOneFailedReconnect() throws Exception {
+        McpServerService.ServerView server = mcpServers.list().stream()
+                .filter(view -> view.slug().equals("manual_echo"))
+                .findFirst()
+                .orElseThrow();
+
+        // 先拿到有效连接上的 tool 引用
+        ToolRegistry.ToolBinding binding = toolRegistry
+                .find("mcp__manual_echo__echo")
+                .orElseThrow();
+
+        // 把配置改成不可执行命令：update 会卸载旧连接并尝试刷新，必然失败
+        mcpServers.update(
+                server.serverId(),
+                server.version(),
+                new McpServerService.ServerDraft(
+                        server.slug(), server.displayName(),
+                        "stdio", null, null,
+                        "__nonexistent_executable_for_test__",
+                        List.of(), List.of(), true
+                )
+        );
+
+        // update 失败后 live 为空，且注册表已卸载工具；但我们仍持有旧 tool 引用
+        assertThat(toolRegistry.find("mcp__manual_echo__echo")).isEmpty();
+
+        ToolOutcome outcome = binding.tool().execute(
+                new CommittedOperation(
+                        "exec-mcp-dead", "snap-dead", "hash-dead",
+                        objectMapper.createObjectNode().put("text", "dead"),
+                        List.of()
+                ),
+                new TestToolContext()
+        );
+        assertThat(outcome.kind()).isEqualTo(ToolOutcome.Kind.FAILED);
+        assertThat(outcome.errorCode()).isEqualTo("mcp_not_connected");
+    }
+
+    private McpServerService.ServerView awaitConnected(
+            String serverId,
+            String expectedTool
+    ) throws InterruptedException {
+        for (int attempt = 0; attempt < 150; attempt++) {
+            McpServerService.ServerView view = mcpServers.require(serverId);
+            if ("connected".equals(view.connectionState())
+                    && toolRegistry.find(expectedTool).isPresent()) {
+                return view;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("MCP server did not connect: " + serverId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void evictLiveConnection(String serverId) throws Exception {
+        Field liveField = McpServerService.class.getDeclaredField("live");
+        liveField.setAccessible(true);
+        Map<String, ?> live = (Map<String, ?>) liveField.get(mcpServers);
+        Object connection = live.remove(serverId);
+        if (connection instanceof AutoCloseable closeable) {
+            closeable.close();
+        }
     }
 
     private static boolean isWindows() {
@@ -295,22 +331,22 @@ class McpDeclaredServerIntegrationTest {
     private record TestToolContext() implements ToolContext {
         @Override
         public String conversationId() {
-            return "conv-mcp-test";
+            return "conv-mcp-manual-test";
         }
 
         @Override
         public String turnId() {
-            return "turn-mcp-test";
+            return "turn-mcp-manual-test";
         }
 
         @Override
         public String runId() {
-            return "run-mcp-test";
+            return "run-mcp-manual-test";
         }
 
         @Override
         public String roundId() {
-            return "round-mcp-test";
+            return "round-mcp-manual-test";
         }
 
         @Override
