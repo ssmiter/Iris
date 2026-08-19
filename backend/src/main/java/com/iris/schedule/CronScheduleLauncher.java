@@ -55,6 +55,8 @@ public class CronScheduleLauncher implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        Instant now = clock.instant();
+        schedules.disableExpiredOnceTasks(now);
         reschedule();
     }
 

@@ -414,6 +414,7 @@ export interface ScheduleView {
   expression: string
   prompt: string
   enabled: boolean
+  once: boolean
   nextFireAt: string | null
   lastFireAt: string | null
   fireCount: number
@@ -428,6 +429,7 @@ export interface ScheduleDraft {
   expression: string
   prompt: string
   enabled: boolean
+  once: boolean
 }
 
 export interface ScheduleExecutionView {

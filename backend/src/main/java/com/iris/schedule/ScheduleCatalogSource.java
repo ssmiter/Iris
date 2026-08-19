@@ -52,6 +52,7 @@ public class ScheduleCatalogSource implements CapabilityCatalogSource {
         manifest.put("title", task.name());
         manifest.put("capabilityPath", pathOf(task.taskId()));
         manifest.put("expression", task.expression());
+        manifest.put("once", task.once());
         manifest.put("prompt", task.prompt());
         manifest.put("enabled", true);
         manifest.put("nextFireAt", task.nextFireAt() == null
