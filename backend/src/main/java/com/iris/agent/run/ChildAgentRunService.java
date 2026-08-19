@@ -114,7 +114,7 @@ public class ChildAgentRunService {
                     ) VALUES (
                         :runId, :conversationId, :branchId, :turnId,
                         :parentRunId, :rootRunId, 'agentic', :purpose,
-                        'running', 1, :now, NULL
+                        'accepted', 1, :now, NULL
                     )
                     """)
                     .param("runId", runId)

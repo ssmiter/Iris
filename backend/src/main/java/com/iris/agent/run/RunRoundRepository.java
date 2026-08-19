@@ -86,6 +86,80 @@ public class RunRoundRepository {
                 .list();
     }
 
+    public int countActiveChildRunsByRoot(String rootRunId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM agent_run
+                WHERE root_run_id = :rootRunId
+                  AND kind = 'agentic'
+                  AND parent_run_id IS NOT NULL
+                  AND phase IN ('running', 'suspended')
+                """)
+                .param("rootRunId", rootRunId)
+                .query(Integer.class)
+                .single();
+    }
+
+    public List<RunRow> findQueuedChildRunsByRoot(String rootRunId, int limit) {
+        return jdbc.sql("""
+                SELECT run_id, conversation_id, branch_id, turn_id,
+                       parent_run_id, root_run_id, kind, purpose,
+                       phase, version
+                FROM agent_run
+                WHERE root_run_id = :rootRunId
+                  AND kind = 'agentic'
+                  AND parent_run_id IS NOT NULL
+                  AND phase = 'accepted'
+                ORDER BY started_at, run_id
+                LIMIT :limit
+                """)
+                .param("rootRunId", rootRunId)
+                .param("limit", limit)
+                .query(this::mapRun)
+                .list();
+    }
+
+    public List<RunRow> findAllQueuedChildRuns() {
+        return jdbc.sql("""
+                SELECT run_id, conversation_id, branch_id, turn_id,
+                       parent_run_id, root_run_id, kind, purpose,
+                       phase, version
+                FROM agent_run
+                WHERE kind = 'agentic'
+                  AND parent_run_id IS NOT NULL
+                  AND phase = 'accepted'
+                ORDER BY root_run_id, started_at, run_id
+                """)
+                .query(this::mapRun)
+                .list();
+    }
+
+    public Optional<Instant> findRunStartTime(String runId) {
+        return jdbc.sql("""
+                SELECT started_at FROM agent_run WHERE run_id = :runId
+                """)
+                .param("runId", runId)
+                .query(String.class)
+                .optional()
+                .map(Instant::parse);
+    }
+
+    public int countQueuedAhead(String rootRunId, Instant startedAt, String runId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM agent_run
+                WHERE root_run_id = :rootRunId
+                  AND kind = 'agentic'
+                  AND parent_run_id IS NOT NULL
+                  AND phase = 'accepted'
+                  AND (started_at < :startedAt
+                       OR (started_at = :startedAt AND run_id < :runId))
+                """)
+                .param("rootRunId", rootRunId)
+                .param("startedAt", startedAt.toString())
+                .param("runId", runId)
+                .query(Integer.class)
+                .single();
+    }
+
     public Optional<RoundRow> findRound(String roundId) {
         return jdbc.sql("""
                 SELECT round_id, run_id, round_index, phase,

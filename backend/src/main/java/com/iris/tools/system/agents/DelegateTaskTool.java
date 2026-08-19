@@ -16,6 +16,8 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
+import com.iris.agent.run.AgentRunLauncher;
+import com.iris.agent.run.RunPhase;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +33,7 @@ public class DelegateTaskTool implements Tool {
     private final ObjectProvider<PipelineRunCoordinator> coordinator;
     private final PipelineRunRepository runs;
     private final TaskLedgerService tasks;
+    private final ObjectProvider<AgentRunLauncher> agentRuns;
     private final ToolManifest manifest;
 
     public DelegateTaskTool(
@@ -38,13 +41,15 @@ public class DelegateTaskTool implements Tool {
             PipelineCommandService commands,
             ObjectProvider<PipelineRunCoordinator> coordinator,
             PipelineRunRepository runs,
-            TaskLedgerService tasks
+            TaskLedgerService tasks,
+            ObjectProvider<AgentRunLauncher> agentRuns
     ) {
         this.objectMapper = objectMapper;
         this.commands = commands;
         this.coordinator = coordinator;
         this.runs = runs;
         this.tasks = tasks;
+        this.agentRuns = agentRuns;
         this.manifest = new ToolManifest(
                 "iris.system.agents.delegate_task",
                 "3",
@@ -167,10 +172,20 @@ public class DelegateTaskTool implements Tool {
             output.put("agentRunId", childRunId);
         }
         output.put("phase", progress.phase().name().toLowerCase());
-        output.put(
-                "delivery",
-                "后台运行完成、失败或取消后会自动向当前 Run 发送通知；无需轮询"
-        );
+        if (progress.phase() == RunPhase.ACCEPTED && childRunId != null) {
+            int ahead = agentRuns.getObject().queuedAhead(childRunId);
+            output.put(
+                    "delivery",
+                    "子任务已排队，前面还有 "
+                            + ahead
+                            + " 个；容量释放后自动启动"
+            );
+        } else {
+            output.put(
+                    "delivery",
+                    "后台运行完成、失败或取消后会自动向当前 Run 发送通知；无需轮询"
+            );
+        }
         return ToolOutcome.succeeded(output);
     }
 
