@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -100,9 +101,11 @@ class AgenticRoundCoordinatorTest {
     private ModelProvider provider() {
         ModelProvider provider = mock(ModelProvider.class);
         when(provider.profileId()).thenReturn(PROFILE);
-        when(provider.providerKind()).thenReturn("test");
+        // providerKind/timeout 只在 assemble 成功后的请求元数据与 consume
+        // 段使用；assemble 恒失败的用例触达不到，放宽避免严格 stub 误报
+        lenient().when(provider.providerKind()).thenReturn("test");
         when(provider.modelId()).thenReturn(MODEL_ID);
-        when(provider.timeout()).thenReturn(Duration.ofSeconds(30));
+        lenient().when(provider.timeout()).thenReturn(Duration.ofSeconds(30));
         when(providers.require(PROFILE)).thenReturn(provider);
         return provider;
     }
@@ -286,8 +289,6 @@ class AgenticRoundCoordinatorTest {
         when(attempts.failAcceptedRoundForOverflow(
                 anyString(), anyString(), anyString(), anyString(), any()
         )).thenReturn(failedRound());
-        when(cancellations.whenCancelled(RUN_ID))
-                .thenReturn(Mono.never());
 
         assertThatThrownBy(() -> coordinator.advance(
                 ROUND_ID,

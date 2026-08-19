@@ -211,6 +211,15 @@ public class AgenticRoundCoordinator {
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
+                // 先 map 出内层 Mono 再压平：让 onErrorResume 只覆盖 assemble
+                // 段（此时尚无 attempt，走 LoadedRound 恢复路径）；consume 段
+                // 的错误由 consume 自己的 handleAttemptFailure 处理。
+                .map(started -> consume(
+                        provider,
+                        started,
+                        workspaceRoot,
+                        cancelled
+                ))
                 .onErrorResume(error -> handleAssembleOverflow(
                         provider,
                         loaded,
@@ -218,13 +227,8 @@ public class AgenticRoundCoordinator {
                         workspaceRoot,
                         cancelled,
                         error
-                ))
-                .flatMap(started -> consume(
-                        provider,
-                        started,
-                        workspaceRoot,
-                        cancelled
-                ));
+                ).map(Mono::just))
+                .flatMap(advance -> advance);
     }
 
     private Mono<RoundAdvance> consume(
