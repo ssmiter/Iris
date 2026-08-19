@@ -53,6 +53,7 @@ public class ScheduleController {
                         request.expression(),
                         request.prompt(),
                         request.enabled() == null || request.enabled(),
+                        request.once() != null && request.once(),
                         "user"
                 ))
                 .subscribeOn(Schedulers.boundedElastic());
@@ -69,7 +70,8 @@ public class ScheduleController {
                             request.expectedVersion(),
                             request.name(),
                             request.expression(),
-                            request.prompt()
+                            request.prompt(),
+                            request.once()
                     );
                     if (request.enabled() != null
                             && request.enabled() != updated.enabled()) {
@@ -143,7 +145,8 @@ public class ScheduleController {
             String name,
             String expression,
             String prompt,
-            Boolean enabled
+            Boolean enabled,
+            Boolean once
     ) { }
 
     public record UpdateScheduleRequest(
@@ -151,6 +154,7 @@ public class ScheduleController {
             String name,
             String expression,
             String prompt,
-            Boolean enabled
+            Boolean enabled,
+            Boolean once
     ) { }
 }

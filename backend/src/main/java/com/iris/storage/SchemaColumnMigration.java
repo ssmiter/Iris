@@ -31,6 +31,7 @@ public final class SchemaColumnMigration implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         ensureColumn("iris_conversation", "archived_at", "TEXT");
+        ensureColumn("cron_task", "once", "INTEGER NOT NULL DEFAULT 0");
     }
 
     private void ensureColumn(String table, String column, String ddlType) {

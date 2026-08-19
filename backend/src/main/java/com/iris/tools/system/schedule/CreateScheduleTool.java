@@ -60,6 +60,7 @@ public class CreateScheduleTool implements Tool {
         String name = input.path("name").asText("").trim();
         String expression = input.path("expression").asText("").trim();
         String prompt = input.path("prompt").asText("").trim();
+        boolean once = input.has("once") && input.path("once").asBoolean(false);
         if (name.isBlank()
                 || name.length() > CronScheduleService.MAX_NAME_CHARS) {
             throw new IllegalArgumentException(
@@ -86,12 +87,14 @@ public class CreateScheduleTool implements Tool {
         normalized.put("name", name);
         normalized.put("expression", expression);
         normalized.put("prompt", prompt);
+        normalized.put("once", once);
         normalized.put("enabled",
                 !input.has("enabled") || input.path("enabled").asBoolean(true));
+        String onceHint = once ? "单次任务，触发一次后自动停用；" : "";
         return new PreparedOperation(
                 normalized,
-                "创建定时任务「" + name + "」（" + expression
-                        + "）；到点会以该 prompt 自动开启新会话执行，"
+                "创建" + (once ? "单次" : "定时") + "任务「" + name + "」（" + expression
+                        + "）；" + onceHint + "到点会以该 prompt 自动开启新会话执行，"
                         + "其中的写动作仍需逐次审批",
                 List.of(),
                 Instant.now().plusSeconds(60)
@@ -109,6 +112,7 @@ public class CreateScheduleTool implements Tool {
                 input.path("expression").asText(),
                 input.path("prompt").asText(),
                 input.path("enabled").asBoolean(true),
+                input.path("once").asBoolean(false),
                 "agent"
         );
         return ToolOutcome.succeeded(objectMapper.valueToTree(view));
@@ -164,6 +168,10 @@ public class CreateScheduleTool implements Tool {
                 .put("type", "boolean")
                 .put("description", "是否立即启用，默认 true")
                 .put("default", true);
+        properties.putObject("once")
+                .put("type", "boolean")
+                .put("description", "是否为单次任务：true 表示到点触发一次后自动停用，不再周期触发；默认 false")
+                .put("default", false);
         schema.putArray("required")
                 .add("name").add("expression").add("prompt");
         return schema;

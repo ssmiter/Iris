@@ -70,26 +70,40 @@ class CronScheduleIntegrationTest {
                 "0 0 9 * * *",
                 "整理昨天的零散记录，给出三件最值得跟进的事。",
                 true,
+                false,
                 "user"
         );
         assertThat(enabled.nextFireAt()).isNotNull()
                 .isAfter(Instant.now());
         assertThat(enabled.enabled()).isTrue();
+        assertThat(enabled.once()).isFalse();
+
+        CronScheduleService.ScheduleView once = schedules.create(
+                "明天提醒",
+                "0 0 8 * * *",
+                "明早 8 点提醒一次。",
+                true,
+                true,
+                "user"
+        );
+        assertThat(once.once()).isTrue();
+        assertThat(once.nextFireAt()).isNotNull();
 
         CronScheduleService.ScheduleView disabled = schedules.create(
                 "暂停的任务",
                 "0 0 9 * * *",
                 "暂时不跑。",
                 false,
+                false,
                 "user"
         );
         assertThat(disabled.nextFireAt()).isNull();
 
         assertThatThrownBy(() -> schedules.create(
-                "坏表达式", "not a cron", "x", true, "user"
+                "坏表达式", "not a cron", "x", true, false, "user"
         )).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> schedules.create(
-                "空 prompt", "0 0 9 * * *", "  ", true, "user"
+                "空 prompt", "0 0 9 * * *", "  ", true, false, "user"
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -100,6 +114,7 @@ class CronScheduleIntegrationTest {
                 "0 0 6 * * *",
                 "汇报当前工作区根目录下的文件数量。",
                 true,
+                false,
                 "user"
         );
         CronScheduleService.ExecutionView execution = fires.fireNow(
@@ -139,6 +154,7 @@ class CronScheduleIntegrationTest {
                 "0 0 9 * * *",
                 "到点要做的事。",
                 true,
+                false,
                 "user"
         );
         Instant past = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -170,12 +186,104 @@ class CronScheduleIntegrationTest {
     }
 
     @Test
+    void onceTaskFiresAndDisablesItself() {
+        CronScheduleService.ScheduleView task = schedules.create(
+                "单次提醒",
+                "0 0 9 * * *",
+                "喝水提醒。",
+                true,
+                true,
+                "user"
+        );
+        assertThat(task.once()).isTrue();
+        Instant past = Instant.now().minus(1, ChronoUnit.MINUTES);
+        jdbc.update(
+                "UPDATE cron_task SET next_fire_at = ? WHERE task_id = ?",
+                past.toString(),
+                task.taskId()
+        );
+
+        launcher.tick();
+
+        CronScheduleService.ScheduleView after = schedules.require(
+                task.taskId()
+        );
+        assertThat(after.fireCount()).isEqualTo(1);
+        assertThat(after.enabled()).isFalse();
+        assertThat(after.nextFireAt()).isNull();
+        assertThat(after.lastFireAt()).isNotNull();
+
+        List<CronScheduleService.ExecutionView> executions =
+                schedules.executions(task.taskId(), 10);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.getFirst().triggerKind()).isEqualTo("schedule");
+        assertThat(executions.getFirst().status()).isEqualTo("fired");
+
+        // 已停用的单次任务不会再触发
+        launcher.tick();
+        assertThat(schedules.executions(task.taskId(), 10)).hasSize(1);
+        assertThat(schedules.require(task.taskId()).enabled()).isFalse();
+    }
+
+    @Test
+    void expiredOnceTaskIsDisabledOnStartupWithoutFiring() {
+        CronScheduleService.ScheduleView task = schedules.create(
+                "过期单次提醒",
+                "0 0 9 * * *",
+                "五分钟后的提醒。",
+                true,
+                true,
+                "user"
+        );
+        Instant longPast = Instant.now().minus(3, ChronoUnit.DAYS);
+        jdbc.update(
+                "UPDATE cron_task SET next_fire_at = ? WHERE task_id = ?",
+                longPast.toString(),
+                task.taskId()
+        );
+
+        schedules.disableExpiredOnceTasks(Instant.now());
+
+        CronScheduleService.ScheduleView after = schedules.require(
+                task.taskId()
+        );
+        assertThat(after.enabled()).isFalse();
+        assertThat(after.nextFireAt()).isNull();
+        assertThat(after.fireCount()).isZero();
+        assertThat(schedules.executions(task.taskId(), 10)).isEmpty();
+    }
+
+    @Test
+    void manualFireDoesNotDisableOnceTask() {
+        CronScheduleService.ScheduleView task = schedules.create(
+                "单次但手动",
+                "0 0 9 * * *",
+                "手动验证。",
+                true,
+                true,
+                "user"
+        );
+        CronScheduleService.ExecutionView execution = fires.fireNow(
+                task.taskId()
+        );
+        assertThat(execution.status()).isEqualTo("fired");
+
+        CronScheduleService.ScheduleView after = schedules.require(
+                task.taskId()
+        );
+        assertThat(after.enabled()).isTrue();
+        assertThat(after.nextFireAt()).isNotNull();
+        assertThat(after.fireCount()).isEqualTo(1);
+    }
+
+    @Test
     void enableDisableAndDeleteKeepTheDurableTruthCoherent() {
         CronScheduleService.ScheduleView task = schedules.create(
                 "生命周期",
                 "0 30 8 * * *",
                 "例行检查。",
                 true,
+                false,
                 "user"
         );
         CronScheduleService.ScheduleView disabled = schedules.setEnabled(
@@ -221,12 +329,14 @@ class CronScheduleIntegrationTest {
                 "0 0 7 * * *",
                 "看看今天的待办。",
                 true,
+                false,
                 "user"
         );
         CronScheduleService.ScheduleView disabled = schedules.create(
                 "目录投影不可见",
                 "0 0 7 * * *",
                 "停用期间不进模型视野。",
+                false,
                 false,
                 "user"
         );
@@ -257,6 +367,40 @@ class CronScheduleIntegrationTest {
     }
 
     @Test
+    void scheduleLeafManifestCarriesOnceFlag() {
+        CronScheduleService.ScheduleView once = schedules.create(
+                "单次叶子",
+                "0 0 10 * * *",
+                "单次任务测试。",
+                true,
+                true,
+                "user"
+        );
+        CronScheduleService.ScheduleView recurring = schedules.create(
+                "周期叶子",
+                "0 0 10 * * *",
+                "周期任务测试。",
+                true,
+                false,
+                "user"
+        );
+
+        var onceDetail = capabilityAdmin.detail(
+                "/system/schedule/" + once.taskId()
+        );
+        assertThat(onceDetail).isPresent();
+        assertThat(onceDetail.get().definition().path("once").asBoolean())
+                .isTrue();
+
+        var recurringDetail = capabilityAdmin.detail(
+                "/system/schedule/" + recurring.taskId()
+        );
+        assertThat(recurringDetail).isPresent();
+        assertThat(recurringDetail.get().definition().path("once").asBoolean())
+                .isFalse();
+    }
+
+    @Test
     void pipelineDetailCarriesRecentRuns() {
         // docs/33 §5：pipeline 详情附最近运行（数据来自既有表，零新表）。
         // 借 cron 手动触发造一个真实会话 + root Run，再补一行 pipeline Run 事实。
@@ -265,6 +409,7 @@ class CronScheduleIntegrationTest {
                 "0 0 5 * * *",
                 "占位 prompt。",
                 true,
+                false,
                 "user"
         );
         CronScheduleService.ExecutionView fired = fires.fireNow(host.taskId());

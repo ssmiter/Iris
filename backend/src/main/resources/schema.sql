@@ -1313,12 +1313,14 @@ CREATE TABLE IF NOT EXISTS tool_observation_retention_decision (
 -- 只是唤醒器，重启后按 next_fire_at 补扫。启用任务的 next_fire_at
 -- 恒非空；触发时先把 next_fire_at 推进到下一棒再执行，进程崩溃最多
 -- 漏掉当前这一棒，不会重复触发同一棒。
+-- once=1 表示单次任务：到点触发一次后自动停用，错过即不再补跑。
 CREATE TABLE IF NOT EXISTS cron_task (
     task_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     expression TEXT NOT NULL,
     prompt TEXT NOT NULL,
     enabled INTEGER NOT NULL,
+    once INTEGER NOT NULL DEFAULT 0,
     next_fire_at TEXT,
     last_fire_at TEXT,
     fire_count INTEGER NOT NULL,

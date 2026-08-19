@@ -14,6 +14,7 @@ const emptySchedule: ScheduleDraft = {
   expression: '',
   prompt: '',
   enabled: true,
+  once: false,
 }
 
 function formatInstant(value: string | null) {
@@ -176,6 +177,9 @@ export function ScheduleConsole({ onBack }: { onBack: () => void }) {
                 <Badge tone={schedule.enabled ? 'info' : 'neutral'}>
                   {schedule.enabled ? '已启用' : '已停用'}
                 </Badge>
+                {schedule.once && (
+                  <Badge appearance="outline" tone="warning">单次</Badge>
+                )}
               </div>
               <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
                 {schedule.prompt}
@@ -230,6 +234,7 @@ function ScheduleEditor({
           expression: current.expression,
           prompt: current.prompt,
           enabled: current.enabled,
+          once: current.once,
         }
       : emptySchedule,
   )
@@ -323,6 +328,14 @@ function ScheduleEditor({
           onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
         />
         {draft.enabled ? '启用' : '停用'}
+      </label>
+      <label className="flex items-center gap-2 text-small text-ink">
+        <EnableSwitch
+          checked={draft.once}
+          label={draft.once ? '单次任务' : '周期性任务'}
+          onClick={() => setDraft({ ...draft, once: !draft.once })}
+        />
+        {draft.once ? '单次：触发一次后自动停用' : '周期：按表达式重复触发'}
       </label>
 
       {current && (

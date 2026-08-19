@@ -45,6 +45,7 @@ public class CronScheduleService {
             String expression,
             String prompt,
             boolean enabled,
+            boolean once,
             String createdBy
     ) {
         String normalizedName = normalizeName(name);
@@ -57,11 +58,11 @@ public class CronScheduleService {
                 : null;
         transactions.executeWithoutResult(status -> jdbc.sql("""
                 INSERT INTO cron_task(
-                    task_id, name, expression, prompt, enabled,
+                    task_id, name, expression, prompt, enabled, once,
                     next_fire_at, last_fire_at, fire_count,
                     created_by, version, created_at, updated_at
                 ) VALUES (
-                    :taskId, :name, :expression, :prompt, :enabled,
+                    :taskId, :name, :expression, :prompt, :enabled, :once,
                     :nextFireAt, NULL, 0,
                     :createdBy, 1, :now, :now
                 )
@@ -71,6 +72,7 @@ public class CronScheduleService {
                 .param("expression", normalizedExpression)
                 .param("prompt", normalizedPrompt)
                 .param("enabled", enabled ? 1 : 0)
+                .param("once", once ? 1 : 0)
                 .param("nextFireAt", nextFire == null ? null : nextFire.toString())
                 .param("createdBy", createdBy)
                 .param("now", now.toString())
@@ -84,7 +86,8 @@ public class CronScheduleService {
             long expectedVersion,
             String name,
             String expression,
-            String prompt
+            String prompt,
+            Boolean once
     ) {
         ScheduleView current = require(taskId);
         String normalizedName = name == null
@@ -96,6 +99,7 @@ public class CronScheduleService {
         String normalizedPrompt = prompt == null
                 ? current.prompt()
                 : normalizePrompt(prompt);
+        boolean nextOnce = once == null ? current.once() : once;
         Instant now = clock.instant();
         Instant nextFire = current.enabled()
                 ? nextFire(normalizedExpression, now)
@@ -103,13 +107,14 @@ public class CronScheduleService {
         int updated = jdbc.sql("""
                 UPDATE cron_task
                 SET name = :name, expression = :expression, prompt = :prompt,
-                    next_fire_at = :nextFireAt,
+                    once = :once, next_fire_at = :nextFireAt,
                     version = version + 1, updated_at = :now
                 WHERE task_id = :taskId AND version = :expectedVersion
                 """)
                 .param("name", normalizedName)
                 .param("expression", normalizedExpression)
                 .param("prompt", normalizedPrompt)
+                .param("once", nextOnce ? 1 : 0)
                 .param("nextFireAt", nextFire == null ? null : nextFire.toString())
                 .param("now", now.toString())
                 .param("taskId", taskId)
@@ -167,9 +172,25 @@ public class CronScheduleService {
      * 触发一棒之前的护栏：把 next_fire_at 原子推进到下一棒。只有成功
      * 推进（这一棒仍归本次触发所有）的调用方才允许真正执行——崩溃最多
      * 漏一棒，两个并发唤醒器不会重复触发同一棒。
+     *
+     * <p>单次任务（once=1）触发后直接停用，不再排下一棒。</p>
      */
     boolean claimFire(String taskId, Instant expectedFireAt, Instant now) {
         ScheduleView current = require(taskId);
+        if (current.once()) {
+            int updated = jdbc.sql("""
+                    UPDATE cron_task
+                    SET enabled = 0, next_fire_at = NULL, last_fire_at = :now,
+                        fire_count = fire_count + 1,
+                        version = version + 1, updated_at = :now
+                    WHERE task_id = :taskId AND next_fire_at = :expectedFireAt
+                    """)
+                    .param("now", now.toString())
+                    .param("taskId", taskId)
+                    .param("expectedFireAt", expectedFireAt.toString())
+                    .update();
+            return updated == 1;
+        }
         Instant next = nextFire(current.expression(), now);
         int updated = jdbc.sql("""
                 UPDATE cron_task
@@ -196,6 +217,37 @@ public class CronScheduleService {
                 .param("now", now.toString())
                 .param("taskId", taskId)
                 .update();
+    }
+
+    /**
+     * 启动补扫：已过期的单次任务直接停用，不补跑。
+     * 返回被停用的任务 ID 列表，便于调用方发布变更事件。
+     */
+    public List<String> disableExpiredOnceTasks(Instant now) {
+        List<String> expired = jdbc.sql("""
+                SELECT task_id FROM cron_task
+                WHERE enabled = 1 AND once = 1
+                  AND next_fire_at IS NOT NULL AND next_fire_at < :now
+                """)
+                .param("now", now.toString())
+                .query((rs, rowNum) -> rs.getString("task_id"))
+                .list();
+        if (expired.isEmpty()) {
+            return List.of();
+        }
+        jdbc.sql("""
+                UPDATE cron_task
+                SET enabled = 0, next_fire_at = NULL,
+                    version = version + 1, updated_at = :now
+                WHERE enabled = 1 AND once = 1
+                  AND next_fire_at IS NOT NULL AND next_fire_at < :now
+                """)
+                .param("now", now.toString())
+                .update();
+        for (String taskId : expired) {
+            events.publishEvent(new CronScheduleChangedEvent(taskId));
+        }
+        return expired;
     }
 
     public ScheduleView require(String taskId) {
@@ -319,6 +371,7 @@ public class CronScheduleService {
                 rs.getString("expression"),
                 rs.getString("prompt"),
                 rs.getInt("enabled") == 1,
+                rs.getInt("once") == 1,
                 nextFireAt == null ? null : Instant.parse(nextFireAt),
                 lastFireAt == null ? null : Instant.parse(lastFireAt),
                 rs.getLong("fire_count"),
@@ -388,6 +441,7 @@ public class CronScheduleService {
             String expression,
             String prompt,
             boolean enabled,
+            boolean once,
             Instant nextFireAt,
             Instant lastFireAt,
             long fireCount,
