@@ -9,6 +9,7 @@ import com.iris.agent.model.ModelAttemptService.FailureDiagnostic;
 import com.iris.agent.model.ModelContext;
 import com.iris.agent.model.ModelContextAssembler;
 import com.iris.agent.model.ModelContextAssembler.ContextSeed;
+import com.iris.agent.model.PromptTooLargeException;
 import com.iris.agent.model.ModelProtocolException;
 import com.iris.agent.model.ModelRequest;
 import com.iris.agent.model.ModelStreamAssembler;
@@ -36,11 +37,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Service
 public class AgenticRoundCoordinator {
-    private static final int MAX_ATTEMPTS_PER_ROUND = 3;
+    private static final int MAX_ATTEMPTS_PER_ROUND = 5;
+    private static final int MAX_CONTEXT_OVERFLOW_RECOVERIES = 2;
+    private static final double OVERFLOW_BUDGET_REDUCTION_RATIO = 0.85;
     private static final long BASE_RETRY_DELAY_MILLIS = 250;
     private static final long MAX_BACKOFF_MILLIS = 2_000;
-    private static final Duration MAX_PROVIDER_RETRY_AFTER =
+    private static final Duration MAX_ROOT_RETRY_AFTER =
             Duration.ofSeconds(10);
+    private static final Duration MAX_BACKGROUND_RETRY_AFTER =
+            Duration.ofSeconds(60);
 
     private final RunRoundRepository runFacts;
     private final ModelContextAssembler contexts;
@@ -201,7 +206,8 @@ public class AgenticRoundCoordinator {
                             loaded.run(),
                             loaded.round(),
                             attempt,
-                            request
+                            request,
+                            contextSeed
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -334,7 +340,18 @@ public class AgenticRoundCoordinator {
                             false
                     ));
         }
-        if (retryableWithinInteractiveBudget(cause)
+        if (isPromptTooLarge(cause)
+                && started.contextSeed().contextOverflowRecoveries()
+                        < MAX_CONTEXT_OVERFLOW_RECOVERIES) {
+            return recoverContextOverflow(
+                    provider,
+                    started,
+                    workspaceRoot,
+                    cancelled,
+                    cause
+            );
+        }
+        if (retryableWithinInteractiveBudget(cause, started.run().root())
                 && started.attempt().attemptIndex() + 1
                 < MAX_ATTEMPTS_PER_ROUND) {
             return retryAttempt(
@@ -394,7 +411,8 @@ public class AgenticRoundCoordinator {
                             withAttemptId(
                                     failed.request(),
                                     successor.attemptId()
-                            )
+                            ),
+                            failed.contextSeed()
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -405,6 +423,30 @@ public class AgenticRoundCoordinator {
                         cancelled
                 ));
         });
+    }
+
+    private Mono<RoundAdvance> recoverContextOverflow(
+            ModelProvider provider,
+            StartedAttempt failed,
+            Path workspaceRoot,
+            boolean cancelled,
+            Throwable error
+    ) {
+        return Mono.fromCallable(() -> attempts.failAndResetForOverflow(
+                        failed.attempt().attemptId(),
+                        category(error),
+                        FailureDiagnostic.from(error)
+                ))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(resetRound -> streamModel(
+                        new LoadedRound(failed.run(), resetRound),
+                        provider.profileId(),
+                        failed.contextSeed().withTighterBudget(
+                                OVERFLOW_BUDGET_REDUCTION_RATIO
+                        ),
+                        workspaceRoot,
+                        cancelled
+                ));
     }
 
     private Mono<RoundAdvance> failAttempt(
@@ -440,6 +482,17 @@ public class AgenticRoundCoordinator {
         );
     }
 
+    private boolean isPromptTooLarge(Throwable error) {
+        if (error instanceof PromptTooLargeException) {
+            return true;
+        }
+        if (error instanceof ModelProviderException provider) {
+            return "prompt_too_large".equals(provider.category())
+                    || Integer.valueOf(413).equals(provider.httpStatus());
+        }
+        return false;
+    }
+
     private boolean retryable(Throwable error) {
         if (error instanceof ModelProviderException provider) {
             return provider.retryable();
@@ -447,15 +500,19 @@ public class AgenticRoundCoordinator {
         return error instanceof java.util.concurrent.TimeoutException;
     }
 
-    private boolean retryableWithinInteractiveBudget(Throwable error) {
+    boolean retryableWithinInteractiveBudget(
+            Throwable error,
+            boolean rootRun
+    ) {
         if (!retryable(error)) {
             return false;
         }
         if (error instanceof ModelProviderException provider
                 && provider.retryAfter() != null) {
-            return provider.retryAfter().compareTo(
-                    MAX_PROVIDER_RETRY_AFTER
-            ) <= 0;
+            Duration max = rootRun
+                    ? MAX_ROOT_RETRY_AFTER
+                    : MAX_BACKGROUND_RETRY_AFTER;
+            return provider.retryAfter().compareTo(max) <= 0;
         }
         return true;
     }
@@ -566,7 +623,8 @@ public class AgenticRoundCoordinator {
             RunRow run,
             RoundRow round,
             AttemptRow attempt,
-            ModelRequest request
+            ModelRequest request,
+            ContextSeed contextSeed
     ) {
     }
 }

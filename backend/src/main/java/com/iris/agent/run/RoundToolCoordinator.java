@@ -1,7 +1,9 @@
 package com.iris.agent.run;
 
 import com.iris.agent.model.ModelAttemptRepository;
+import com.iris.agent.model.ModelAttemptRepository.ObservationSource;
 import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
+import com.iris.agent.model.ModelTokenEstimator;
 import com.iris.agent.model.ToolObservationService;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
@@ -19,7 +21,10 @@ import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -36,7 +41,9 @@ public class RoundToolCoordinator {
     private final RunEventEmitter lifecycleEvents;
     private final RunCancellationRegistry cancellations;
     private final AgentRunContextRepository runContexts;
+    private final ModelTokenEstimator tokenEstimator;
     private final int maxParallelReadTools;
+    private final int roundToolResultBudgetTokens;
 
     public RoundToolCoordinator(
             ModelAttemptRepository modelFacts,
@@ -48,8 +55,11 @@ public class RoundToolCoordinator {
             RunEventEmitter lifecycleEvents,
             RunCancellationRegistry cancellations,
             AgentRunContextRepository runContexts,
+            ModelTokenEstimator tokenEstimator,
             @Value("${iris.agent.max-parallel-read-tools:4}")
-            int maxParallelReadTools
+            int maxParallelReadTools,
+            @Value("${iris.agent.round-tool-result-budget-tokens:24000}")
+            int roundToolResultBudgetTokens
     ) {
         this.modelFacts = modelFacts;
         this.toolRuntime = toolRuntime;
@@ -60,12 +70,19 @@ public class RoundToolCoordinator {
         this.lifecycleEvents = lifecycleEvents;
         this.cancellations = cancellations;
         this.runContexts = runContexts;
+        this.tokenEstimator = tokenEstimator;
         if (maxParallelReadTools < 1 || maxParallelReadTools > 16) {
             throw new IllegalArgumentException(
                     "max-parallel-read-tools must be between 1 and 16"
             );
         }
         this.maxParallelReadTools = maxParallelReadTools;
+        if (roundToolResultBudgetTokens < 0) {
+            throw new IllegalArgumentException(
+                    "round-tool-result-budget-tokens must be non-negative"
+            );
+        }
+        this.roundToolResultBudgetTokens = roundToolResultBudgetTokens;
     }
 
     public RoundToolProgress advance(
@@ -95,6 +112,9 @@ public class RoundToolCoordinator {
                 workspaceRoot,
                 cancelled
         );
+        Set<String> referenceOnlyExecutionIds = referenceOnlyExecutionIds(
+                executions
+        );
         List<RuntimeResult> results = new ArrayList<>();
         int observationCount = 0;
         boolean waiting = false;
@@ -104,9 +124,13 @@ public class RoundToolCoordinator {
             results.add(execution);
             projections.project(roundId, call, execution);
             if (execution.terminal()) {
+                boolean referenceOnly = referenceOnlyExecutionIds.contains(
+                        execution.executionId()
+                );
                 observations.capture(
                         call.toolCallId(),
-                        execution.executionId()
+                        execution.executionId(),
+                        referenceOnly
                 );
                 observationCount++;
             } else {
@@ -272,6 +296,55 @@ public class RoundToolCoordinator {
         ) == ConcurrencySemantics.PARALLEL_SAFE;
     }
 
+    private Set<String> referenceOnlyExecutionIds(
+            List<CallExecution> executions
+    ) {
+        if (roundToolResultBudgetTokens <= 0) {
+            return Set.of();
+        }
+        List<ExecutionSize> sizes = new ArrayList<>();
+        for (CallExecution item : executions) {
+            RuntimeResult execution = item.execution();
+            if (!execution.terminal()) {
+                continue;
+            }
+            ObservationSource source = observations.observationSource(
+                    item.call().toolCallId(),
+                    execution.executionId()
+            );
+            String output = source.outputJson();
+            int tokens = output == null
+                    ? 0
+                    : tokenEstimator.estimateText(output);
+            sizes.add(new ExecutionSize(
+                    execution.executionId(),
+                    item.call().ordinal(),
+                    tokens
+            ));
+        }
+        int total = sizes.stream()
+                .mapToInt(ExecutionSize::tokens)
+                .sum();
+        if (total <= roundToolResultBudgetTokens) {
+            return Set.of();
+        }
+        List<ExecutionSize> candidates = new ArrayList<>(sizes);
+        candidates.sort(Comparator.comparingInt(ExecutionSize::ordinal)
+                .thenComparing(
+                        Comparator.comparingInt(ExecutionSize::tokens)
+                                .reversed()
+                ));
+        Set<String> referenceOnly = new HashSet<>();
+        for (ExecutionSize candidate : candidates) {
+            if (total <= roundToolResultBudgetTokens) {
+                break;
+            }
+            total -= candidate.tokens();
+            referenceOnly.add(candidate.executionId());
+        }
+        return referenceOnly;
+    }
+
     private ToolContext context(
             RunRow run,
             String roundId,
@@ -321,6 +394,13 @@ public class RoundToolCoordinator {
     private record CallExecution(
             RoundToolCall call,
             RuntimeResult execution
+    ) {
+    }
+
+    private record ExecutionSize(
+            String executionId,
+            int ordinal,
+            int tokens
     ) {
     }
 }

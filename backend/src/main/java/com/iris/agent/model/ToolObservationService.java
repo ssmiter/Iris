@@ -29,21 +29,32 @@ public class ToolObservationService {
     private final ModelAttemptRepository repository;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
+    private final ToolResultContextProjector contextProjector;
     private final Clock clock = Clock.systemUTC();
 
     public ToolObservationService(
             ModelAttemptRepository repository,
             TransactionTemplate transactions,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ToolResultContextProjector contextProjector
     ) {
         this.repository = repository;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.contextProjector = contextProjector;
     }
 
     public ToolObservation capture(
             String toolCallId,
             String executionId
+    ) {
+        return capture(toolCallId, executionId, false);
+    }
+
+    public ToolObservation capture(
+            String toolCallId,
+            String executionId,
+            boolean referenceOnly
     ) {
         ToolObservation existing = repository.findObservation(toolCallId)
                 .orElse(null);
@@ -98,7 +109,22 @@ public class ToolObservationService {
                     "resultRef",
                     "tool-result://" + executionId
             );
-            content.set("output", read(source.outputJson()));
+            if (referenceOnly) {
+                String payloadHash = repository.payloadHash(executionId)
+                        .orElse(null);
+                content.set(
+                        "output",
+                        contextProjector.toReference(
+                                content,
+                                source.toolName(),
+                                source.resolvedToolName(),
+                                executionId,
+                                payloadHash
+                        ).path("output")
+                );
+            } else {
+                content.set("output", read(source.outputJson()));
+            }
         } else {
             String errorCode = source.errorCode() == null
                     ? source.phase()
@@ -172,6 +198,17 @@ public class ToolObservationService {
                 repository.linkExecutionAndInsertObservation(observation)
         );
         return observation;
+    }
+
+    public ObservationSource observationSource(
+            String toolCallId,
+            String executionId
+    ) {
+        return repository.observationSource(toolCallId, executionId)
+                .orElseThrow(() -> new ModelProtocolException(
+                        "tool_execution_pair_not_found",
+                        "找不到 ToolCall 与 ToolExecution 配对"
+                ));
     }
 
     private String defaultMessage(String phase) {
