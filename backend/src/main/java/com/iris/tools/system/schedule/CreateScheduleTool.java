@@ -35,7 +35,7 @@ public class CreateScheduleTool implements Tool {
                 "iris.system.schedule.create_schedule",
                 "1",
                 "create_schedule",
-                "创建一条定时任务：按六位 cron 表达式（秒 分 时 日 月 周）周期性地以给定 prompt 开启新会话执行；适合用户明确要求的提醒、巡检与例行整理",
+                "创建一条定时任务：按六位 cron 表达式（秒 分 时 日 月 周）周期性地以给定 prompt 开启新会话执行；prompt 必须自包含、用相对时间锚点、完成标准可判定、边界写清，并在结束时给出结论摘要",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.ELEVATED,
@@ -161,7 +161,10 @@ public class CreateScheduleTool implements Tool {
         properties.putObject("prompt")
                 .put("type", "string")
                 .put("description",
-                        "到点执行的自包含任务正文；不依赖任何对话上下文")
+                        "到点执行的自包含任务正文；子运行看不到当前对话上下文。"
+                                + "时间用相对锚点（如'执行当天下午 3 点'）而非固定日期；"
+                                + "完成标准必须可客观判定；允许/禁止的边界要写清；"
+                                + "结束时给出结论摘要。")
                 .put("minLength", 1)
                 .put("maxLength", CronScheduleService.MAX_PROMPT_CHARS);
         properties.putObject("enabled")
@@ -170,7 +173,7 @@ public class CreateScheduleTool implements Tool {
                 .put("default", true);
         properties.putObject("once")
                 .put("type", "boolean")
-                .put("description", "是否为单次任务：true 表示到点触发一次后自动停用，不再周期触发；默认 false")
+                .put("description", "是否为单次任务：true 表示到点触发一次后自动停用，过期不补跑，不再周期触发；默认 false")
                 .put("default", false);
         schema.putArray("required")
                 .add("name").add("expression").add("prompt");

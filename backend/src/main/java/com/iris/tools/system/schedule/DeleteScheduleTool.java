@@ -35,7 +35,7 @@ public class DeleteScheduleTool implements Tool {
                 "iris.system.schedule.delete_schedule",
                 "1",
                 "delete_schedule",
-                "删除一条定时任务及其执行历史记录；已经触发产生的会话与结果保留，不再未来触发",
+                "删除一条定时任务的定义与未来排程；已触发产生的会话及执行历史保留，不再未来触发",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.STANDARD,

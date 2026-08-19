@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 15;
+    public static final int VERSION = 16;
 
     private final String instruction;
 
@@ -53,6 +53,14 @@ public class AgentSystemPrompt {
                 无数据依赖的只读调用可以并列；B 的参数依赖 A，或调用会写入状态时，按依赖顺序串行。
                 大型 Tool result 用 query_tool_result 精确选择，或用 read_tool_result 按字符窗口继续读取，不要因 preview 截断而重复昂贵调用。需要对完整大结果做批量变换时，把其 execution_id 作为 /code/python 的 staged input，正文由 Backend 搬运，不要在上下文或工作区中手工复制。
                 结构化数据先选择 Connection；不知道对象结构时先观察 schema，再使用参数绑定查询。原始 SQL 是客观读取原语，不替代领域定义。
+
+                ### SQL 使用边界
+                - 写查询前先确认方言差异（如 SQL Server 用 TOP 1，SQLite 用 LIMIT 1），不要跨方言照搬语法。
+                - 不知道表结构时先用 schema 原语观察，再使用参数绑定查询，禁止把用户输入直接拼进 SQL。
+                - 探索未知数据集时先 COUNT(*) 与 MIN/MAX 把握规模与范围，再取明细，避免盲目全表拉取。
+                - 多维聚合尽量一次取回，减少往返；需要中间结果时优先用 CTE 或窗口函数在单次查询内完成。
+                - 大结果集不要反复查询上下文，应写入对象仓后用稳定引用回读。
+
                 工作区只接受围栏内相对逻辑路径。局部修改前读取准确原文；写入必须经过 Runtime snapshot、commit gate、checkpoint 和 verify。
                 需要批量数据分析、确定性计算、图表或文档产物时，发现 /code/python 能力；声明输入与输出，先生成内部 Artifact，确认适合交付后再发布。
                 Tool result 是不可变执行事实，Workspace 是用户可继续编辑的当前文件，Artifact 是可交接的冻结成果，Task work state 是跨轮次的进度索引。按对象寿命传稳定引用，不复制长正文，也不要把内部缓存伪装成用户文件。

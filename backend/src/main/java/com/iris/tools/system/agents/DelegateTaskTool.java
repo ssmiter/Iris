@@ -54,7 +54,7 @@ public class DelegateTaskTool implements Tool {
                 "iris.system.agents.delegate_task",
                 "3",
                 "delegate_task",
-                "把一个不依赖当前隐式思考、可以独立完成的明确子目标交给后台子 Agent；立即返回稳定 Run 标识，完成或失败后自动向父 Run 发送有界结果通知",
+                "把一个可以独立理解、独立完成并客观验收的明确子目标交给后台子 Agent；任务书应像交给聪明同事一样写清目标、背景、约束和交付标准，禁止把理解责任推给子 Agent。立即返回稳定 Run 标识，完成或失败后自动向父 Run 发送有界结果通知",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.STANDARD,
@@ -220,7 +220,10 @@ public class DelegateTaskTool implements Tool {
         ObjectNode properties = schema.putObject("properties");
         properties.putObject("task")
                 .put("type", "string")
-                .put("description", "无需父 Agent 隐式思考即可理解的自包含任务；应写清目标、范围和期望结果")
+                .put("description",
+                        "无需父 Agent 隐式思考即可理解的自包含任务；应写清目标、范围、约束和期望结果。"
+                                + "好示例：'读取 /workspace/services 下所有服务的版本号，输出 Markdown 表格并保存到 /workspace/outputs/report.md'。"
+                                + "坏示例：'继续处理一下'、'基于你的发现再决定'——不要把理解责任推给子 Agent。")
                 .put("minLength", 1)
                 .put("maxLength", 12_000);
         properties.putObject("context")
@@ -229,7 +232,9 @@ public class DelegateTaskTool implements Tool {
                 .put("maxLength", 8_000);
         properties.putObject("deliverable")
                 .put("type", "string")
-                .put("description", "期望交付物和验收标准")
+                .put("description",
+                        "期望交付物和验收标准；必须可客观判定（什么算完成、证据如何引用、输出格式与位置）。"
+                                + "例如：'完成：/workspace/outputs/report.md 存在且包含服务名与版本号两列；证据：文件内容摘要'。")
                 .put("maxLength", 4_000);
         properties.putObject("constraints")
                 .put("type", "array")

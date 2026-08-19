@@ -39,7 +39,7 @@ public class RunScheduleNowTool implements Tool {
                 "iris.system.schedule.run_schedule_now",
                 "1",
                 "run_schedule_now",
-                "立即以任务的 prompt 开启一个新会话执行一次，用于验证或临时补跑；不改变原有的下一次触发时刻",
+                "立即以任务保存的 prompt 开启一个新会话执行一次，用于验证或临时补跑；触发的是独立新会话，不是当前对话的延续，且不改变原有的下一次触发时刻",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.STANDARD,
