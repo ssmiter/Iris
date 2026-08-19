@@ -337,6 +337,17 @@ public class ModelAttemptRepository {
         return attemptsUpdated;
     }
 
+    public Optional<String> payloadHash(String executionId) {
+        return jdbc.sql("""
+                SELECT content_hash
+                FROM tool_output_payload
+                WHERE execution_id = :executionId
+                """)
+                .param("executionId", executionId)
+                .query(String.class)
+                .optional();
+    }
+
     public Optional<ObservationSource> observationSource(
             String toolCallId,
             String executionId

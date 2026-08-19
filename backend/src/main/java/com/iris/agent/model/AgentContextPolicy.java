@@ -61,6 +61,7 @@ public final class AgentContextPolicy {
                 ContextBudget.defaults(),
                 surface.maxSchemaTokens(),
                 surface.estimatedSchemaTokens(),
+                0,
                 0
         );
     }

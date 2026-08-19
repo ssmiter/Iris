@@ -361,6 +361,71 @@ public class ModelAttemptService {
         );
     }
 
+    /**
+     * Closes a streaming attempt as failed and returns the Round to ACCEPTED
+     * so the caller can re-assemble context (for example with a tighter
+     * budget) and begin a fresh attempt.
+     */
+    public RoundRow failAndResetForOverflow(
+            String attemptId,
+            String category,
+            FailureDiagnostic diagnostic
+    ) {
+        requireText(category, "category");
+        AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
+        return withLock(initial.roundId(), () ->
+                transactions.execute(status -> {
+                    AttemptRow attempt = attempts.findAttempt(attemptId)
+                            .orElseThrow();
+                    if (!"streaming".equals(attempt.phase())) {
+                        throw new IllegalStateException(
+                                "Attempt is not streaming"
+                        );
+                    }
+                    RoundRow round = runs.findRound(attempt.roundId())
+                            .orElseThrow();
+                    if (round.phase() != RoundPhase.MODEL_STREAMING) {
+                        throw new IllegalStateException(
+                                "Round is not in model_streaming"
+                        );
+                    }
+                    Instant now = clock.instant();
+                    if (!attempts.failAttempt(
+                            attemptId,
+                            attempt.version(),
+                            category,
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Context overflow reset close conflicted"
+                        );
+                    }
+                    persistFailureDetail(
+                            attemptId,
+                            category,
+                            diagnostic,
+                            now
+                    );
+                    RunStateMachine.requireTransition(
+                            RoundPhase.MODEL_STREAMING,
+                            RoundPhase.ACCEPTED
+                    );
+                    if (!attempts.transitionRound(
+                            round.roundId(),
+                            RoundPhase.MODEL_STREAMING,
+                            RoundPhase.ACCEPTED,
+                            round.version(),
+                            now
+                    )) {
+                        throw new IllegalStateException(
+                                "Context overflow reset transition conflicted"
+                        );
+                    }
+                    return runs.findRound(round.roundId()).orElseThrow();
+                })
+        );
+    }
+
     public RoundRow cancel(String attemptId) {
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         return withLock(initial.roundId(), () ->

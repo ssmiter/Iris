@@ -398,7 +398,8 @@ public class ModelContextAssembler {
             ContextBudget budget,
             int maxCapabilityTokens,
             int estimatedCapabilityTokens,
-            int omittedCapabilityCount
+            int omittedCapabilityCount,
+            int contextOverflowRecoveries
     ) {
         public ContextSeed(
                 String systemInstruction,
@@ -411,6 +412,7 @@ public class ModelContextAssembler {
                     providerToolNames,
                     ContextBudget.defaults(),
                     Integer.MAX_VALUE,
+                    0,
                     0,
                     0
             );
@@ -429,6 +431,7 @@ public class ModelContextAssembler {
                     budget,
                     Integer.MAX_VALUE,
                     0,
+                    0,
                     0
             );
         }
@@ -441,11 +444,32 @@ public class ModelContextAssembler {
                     || maxCapabilityTokens < 1
                     || estimatedCapabilityTokens < 0
                     || estimatedCapabilityTokens > maxCapabilityTokens
-                    || omittedCapabilityCount < 0) {
+                    || omittedCapabilityCount < 0
+                    || contextOverflowRecoveries < 0) {
                 throw new IllegalArgumentException(
                         "Invalid provider tool surface budget metadata"
                 );
             }
+        }
+
+        public ContextSeed withTighterBudget(double ratio) {
+            int reducedMaxInput = (int) Math.floor(
+                    budget.maxInputTokens() * ratio
+            );
+            return new ContextSeed(
+                    systemInstruction,
+                    promptDefinitionId,
+                    promptVersion,
+                    providerToolNames,
+                    new ContextBudget(
+                            Math.max(reducedMaxInput, 1024),
+                            budget.reservedOutputTokens()
+                    ),
+                    maxCapabilityTokens,
+                    estimatedCapabilityTokens,
+                    omittedCapabilityCount,
+                    contextOverflowRecoveries + 1
+            );
         }
     }
 
