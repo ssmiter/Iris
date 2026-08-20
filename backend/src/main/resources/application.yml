@@ -31,6 +31,9 @@ iris:
     compaction:
       warning-ratio: ${IRIS_COMPACTION_WARNING_RATIO:0.85}
       blocking-ratio: ${IRIS_COMPACTION_BLOCKING_RATIO:0.95}
+    speculation:
+      enabled: ${IRIS_AGENT_SPECULATION_ENABLED:true}
+      max-parallel: ${IRIS_AGENT_SPECULATION_MAX_PARALLEL:2}
   retrieval:
     embedding:
       mode: ${IRIS_EMBEDDING_MODE:disabled}

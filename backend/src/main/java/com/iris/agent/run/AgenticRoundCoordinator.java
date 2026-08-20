@@ -23,6 +23,7 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.RunEventEmitter;
 import com.iris.conversation.infrastructure.TurnStopRepository;
+import com.iris.tools.core.ToolRuntime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.Exceptions;
@@ -66,8 +67,12 @@ public class AgenticRoundCoordinator {
     private final RunFinalizationPolicy finalizationPolicy;
     private final AutoCompactionService autoCompactions;
     private final ToolObservationService toolObservations;
+    private final ToolRuntime toolRuntime;
+    private final AgentRunContextRepository runContexts;
     private final double compactionWarningRatio;
     private final double compactionBlockingRatio;
+    private final boolean speculationEnabled;
+    private final int speculationMaxParallel;
     private final Clock clock = Clock.systemUTC();
 
     public AgenticRoundCoordinator(
@@ -86,10 +91,16 @@ public class AgenticRoundCoordinator {
             RunFinalizationPolicy finalizationPolicy,
             AutoCompactionService autoCompactions,
             ToolObservationService toolObservations,
+            ToolRuntime toolRuntime,
+            AgentRunContextRepository runContexts,
             @Value("${iris.agent.compaction.warning-ratio:0.85}")
             double compactionWarningRatio,
             @Value("${iris.agent.compaction.blocking-ratio:0.95}")
-            double compactionBlockingRatio
+            double compactionBlockingRatio,
+            @Value("${iris.agent.speculation.enabled:true}")
+            boolean speculationEnabled,
+            @Value("${iris.agent.speculation.max-parallel:2}")
+            int speculationMaxParallel
     ) {
         this.runFacts = runFacts;
         this.contexts = contexts;
@@ -106,8 +117,17 @@ public class AgenticRoundCoordinator {
         this.finalizationPolicy = finalizationPolicy;
         this.autoCompactions = autoCompactions;
         this.toolObservations = toolObservations;
+        this.toolRuntime = toolRuntime;
+        this.runContexts = runContexts;
         this.compactionWarningRatio = compactionWarningRatio;
         this.compactionBlockingRatio = compactionBlockingRatio;
+        if (speculationMaxParallel < 1 || speculationMaxParallel > 16) {
+            throw new IllegalArgumentException(
+                    "speculation max-parallel must be between 1 and 16"
+            );
+        }
+        this.speculationEnabled = speculationEnabled;
+        this.speculationMaxParallel = speculationMaxParallel;
     }
 
     public Mono<RoundAdvance> advance(
@@ -263,6 +283,19 @@ public class AgenticRoundCoordinator {
                 started.attempt().attemptId(),
                 objectMapper
         );
+        StreamingToolSpeculator speculator = new StreamingToolSpeculator(
+                toolRuntime,
+                cancellations,
+                runContexts,
+                objectMapper,
+                speculationEnabled,
+                speculationMaxParallel,
+                started.attempt().attemptId(),
+                started.run(),
+                started.round().roundId(),
+                workspaceRoot,
+                cancelled
+        );
         AtomicBoolean attemptCommitted = new AtomicBoolean(false);
         Mono<RoundRow> committed = provider.stream(started.request())
                 .timeout(provider.timeout())
@@ -275,6 +308,7 @@ public class AgenticRoundCoordinator {
                 .publishOn(Schedulers.boundedElastic())
                 .doOnNext(event -> {
                     assembler.accept(event);
+                    speculator.accept(event);
                     answerStreams.accept(
                             started.run(),
                             started.round(),
@@ -290,6 +324,7 @@ public class AgenticRoundCoordinator {
                             result
                     );
                     attemptCommitted.set(true);
+                    speculator.close();
                     String visibleText = visibleText(result);
                     if (visibleText.isBlank()) {
                         answerStreams.discard(started.attempt().attemptId());
@@ -339,6 +374,7 @@ public class AgenticRoundCoordinator {
                         workspaceRoot,
                         cancelled,
                         attemptCommitted.get(),
+                        speculator,
                         error
                 ));
     }
@@ -349,6 +385,7 @@ public class AgenticRoundCoordinator {
             Path workspaceRoot,
             boolean cancelled,
             boolean attemptCommitted,
+            StreamingToolSpeculator speculator,
             Throwable error
     ) {
         Throwable cause = Exceptions.unwrap(error);
@@ -360,6 +397,10 @@ public class AgenticRoundCoordinator {
                 started.run().conversationId(),
                 started.attempt().attemptId()
         );
+        // invalidate 与下游取消/重试/溢出分支同路，一次 discard 全覆盖：
+        // 阻止新投机并跳过尚未开始的排队任务；已开始执行的只读调用
+        // 任其完成，孤儿 execution 行按设计不回收。
+        speculator.discard();
         boolean stopRequested = cancelled
                 || cause instanceof RunCancellationException
                 || cancellations.isCancelled(started.run().runId())

@@ -18,6 +18,7 @@ import com.iris.agent.model.provider.ModelProviderException;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.conversation.application.RunEventEmitter;
 import com.iris.conversation.infrastructure.TurnStopRepository;
+import com.iris.tools.core.ToolRuntime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -85,6 +86,10 @@ class AgenticRoundCoordinatorTest {
     private AutoCompactionService autoCompactions;
     @Mock
     private ToolObservationService toolObservations;
+    @Mock
+    private ToolRuntime toolRuntime;
+    @Mock
+    private AgentRunContextRepository runContexts;
 
     private AgenticRoundCoordinator coordinator() {
         return new AgenticRoundCoordinator(
@@ -103,8 +108,12 @@ class AgenticRoundCoordinatorTest {
                 finalizationPolicy,
                 autoCompactions,
                 toolObservations,
+                toolRuntime,
+                runContexts,
                 0.85,
-                0.95
+                0.95,
+                true,
+                2
         );
     }
 

@@ -438,6 +438,44 @@ public class ToolRuntime {
         }
     }
 
+    /**
+     * 流式投机资格判定（docs/36 M17）：与 schedulingConcurrency 同构的
+     * resolve + validate 快速通道，fail-closed；只有 PARALLEL_SAFE 且
+     * READ_ONLY 且无任何副作用的工具允许在模型流式期间提前 invoke。
+     * 这里只是提前执行的闸门，invoke() 仍会权威地重跑全部策略检查。
+     */
+    public boolean speculationEligible(
+            Invocation invocation,
+            JsonNode input,
+            ToolContext context
+    ) {
+        try {
+            requireInvocation(invocation, context);
+            ToolBinding visibleBinding = registry.find(invocation.toolName())
+                    .orElseThrow();
+            requireExactModelExposure(invocation, visibleBinding);
+            validator.validate(
+                    visibleBinding.manifest().inputSchema(),
+                    input
+            );
+            ResolvedInvocation resolved = resolveInvocation(
+                    visibleBinding,
+                    input,
+                    context
+            );
+            validator.validate(
+                    resolved.binding().manifest().inputSchema(),
+                    resolved.input()
+            );
+            ToolManifest manifest = resolved.binding().manifest();
+            return manifest.concurrency() == ConcurrencySemantics.PARALLEL_SAFE
+                    && manifest.riskLevel() == RiskLevel.READ_ONLY
+                    && manifest.sideEffect() == SideEffect.NONE;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private ResolvedInvocation resolveInvocation(
             ToolBinding visibleBinding,
             JsonNode input,

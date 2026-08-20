@@ -40,6 +40,15 @@ public final class ModelStreamAssembler {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 单个 ModelAttempt 内 ToolCall 身份的确定性公式（docs/36 M17）：
+     * 流式投机执行与 commit 后的正式对账必须使用同一个 toolCallId，
+     * 才能命中 ToolRuntime 的 findByToolCall 幂等早退。
+     */
+    public static String toolCallIdFor(String attemptId, int blockIndex) {
+        return "toolcall_" + attemptId + "_" + blockIndex;
+    }
+
     public void accept(ModelStreamEvent event) {
         if (event == null) {
             fail("null_event", "模型流事件不能为空");
@@ -83,7 +92,7 @@ public final class ModelStreamAssembler {
                             "模型返回了重复的 tool call id"
                     );
                 }
-                String toolCallId = "toolcall_" + attemptId + "_" + block.index;
+                String toolCallId = toolCallIdFor(attemptId, block.index);
                 content.add(new ContentBlock(
                         block.index,
                         block.kind,
