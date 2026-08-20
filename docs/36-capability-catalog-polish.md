@@ -1,12 +1,12 @@
 # 36 · 第三轮发散收敛：能力目录效果与全栈精制
 
-> 状态：**M13/M14/M15/M16 已落地**（96 测试 0 失败 + 唯一历史遗留 error 基线不变；
-> 前端 tsc + build 全绿）。M17 投机执行设计冻结，排第二波。
-> 四路探索 → 主上下文裁决 → 五包并行实现（P1-P5）。
+> 状态：**M13-M17 全部落地**（M17 投机执行随第二波上线；112 测试 0 失败
+> + 唯一历史遗留 error 基线不变；前端 tsc + build 全绿）。
+> 四路探索 → 主上下文裁决 → 五包并行实现（P1-P5）+ 第二波 P6。
 > 标尺沿用 docs/34 §6：手机 app 级顺滑 + macOS 级设计；重心在体验不在兜底。
 
 > 落地注记：M16 建议的 4 组新测试（busy 重试 / model_not_configured /
-> RunView.progressSummary / catalogPath 投影）随 M17 一波统一补；
+> RunView.progressSummary / catalogPath 投影）已随第二波补齐（6 个测试文件）；
 > P5 留痕：CompactionLauncher 无 provider 静默分支（无 Turn 失败卡语义，不动）、
 > DelegateTaskProjectionEnricher 与 ChildRunNodeProjectionService 的同构摘要逻辑
 > 可待后续收敛（非错误，仅重复）。
