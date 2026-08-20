@@ -24,6 +24,26 @@ public class CapabilityDirectoryCatalog {
             // _directory.yml 里（docs/31 §11 M2），经 ExtensionDirectoryRegistry
             // 叠加进下面的 all() 合并视图。
             directory(
+                    "/life",
+                    "生活",
+                    "日常生活相关能力区域"
+            ),
+            directory(
+                    "/life/notes",
+                    "笔记",
+                    "向工作区文本笔记追加记录；记录待办、想法或持续日志时使用"
+            ),
+            directory(
+                    "/personal",
+                    "个人",
+                    "当前用户专属的个人数据与长期状态区域"
+            ),
+            directory(
+                    "/personal/memory",
+                    "个人记忆",
+                    "记住、回读、搜索与遗忘跨会话用户记忆；涉及用户偏好与长期事实时使用"
+            ),
+            directory(
                     "/system",
                     "系统闭环",
                     "Iris 自身的能力发现、运行协作与固定流程入口"
@@ -34,9 +54,44 @@ public class CapabilityDirectoryCatalog {
                     "使用同一 Agentic 内核执行有界委派、异步通信与取消"
             ),
             directory(
+                    "/system/artifacts",
+                    "成果工件",
+                    "生成、发布、呈现与回读面向用户的工件；交付可视成果时使用"
+            ),
+            directory(
+                    "/system/capabilities",
+                    "能力发现与调用",
+                    "能力目录的列出、定义读取与统一调用入口；找能力或调用能力都从这里开始"
+            ),
+            directory(
+                    "/system/context",
+                    "上下文",
+                    "按标识回读或查询此前工具调用的完整结果；需要取回被压缩掉的细节时使用"
+            ),
+            directory(
+                    "/system/files",
+                    "工作区文件",
+                    "读写、移动、搜索工作区内的文件与目录；处理本地内容时从这里进入"
+            ),
+            directory(
+                    "/system/interaction",
+                    "用户交互",
+                    "向用户提问并等待回答；缺少关键信息且无法自行决断时使用"
+            ),
+            directory(
                     "/system/pipelines",
                     "固定流程",
                     "由按钮、系统事件或主对话触发的版本化信息转换流程"
+            ),
+            directory(
+                    "/system/schedule",
+                    "定时任务",
+                    "创建、启停、删除与立即触发定时任务；需要周期性或延迟执行时使用"
+            ),
+            directory(
+                    "/system/tasks",
+                    "任务台账",
+                    "创建、更新与回读跨轮任务台账；多步工作需要在上下文之外留痕时使用"
             )
     ).stream().sorted(
             Comparator.comparing(DirectoryDefinition::path)

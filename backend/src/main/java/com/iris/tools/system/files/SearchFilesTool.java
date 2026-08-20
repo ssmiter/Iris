@@ -178,8 +178,7 @@ public class SearchFilesTool implements Tool {
             ObjectNode item = matches.addObject();
             item.put("kind", "capability");
             item.put("path", match.path());
-            item.put("line", 1);
-            item.put("column", 1);
+            // 能力命中没有行号语义；不输出占位的 line/column
             item.put("preview", match.preview());
             item.put("name", match.name());
             item.put("matchedField", match.matchedField());
@@ -339,9 +338,12 @@ public class SearchFilesTool implements Tool {
         ObjectNode itemProperties = item.putObject("properties");
         itemProperties.putObject("kind").put("type", "string");
         itemProperties.putObject("path").put("type", "string");
-        itemProperties.putObject("line").put("type", "integer");
-        itemProperties.putObject("column").put("type", "integer");
-        itemProperties.putObject("preview").put("type", "string");
+        itemProperties.putObject("line").put("type", "integer")
+                .put("description", "命中行号；仅 workspace 命中返回");
+        itemProperties.putObject("column").put("type", "integer")
+                .put("description", "命中列号；仅 workspace 命中返回");
+        itemProperties.putObject("preview").put("type", "string")
+                .put("description", "命中预览；capability 命中为限长 160 字符的能力描述");
         itemProperties.putObject("name").put("type", "string");
         itemProperties.putObject("matchedField").put("type", "string");
         itemProperties.putObject("riskLevel").put("type", "string");

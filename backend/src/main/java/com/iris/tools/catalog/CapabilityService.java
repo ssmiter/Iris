@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import java.util.regex.PatternSyntaxException;
 public class CapabilityService {
 
     private static final int MAX_QUERY_CHARACTERS = 256;
+    private static final int PREVIEW_MAX_CHARACTERS = 160;
     private static final Pattern UNSAFE_REGEX = Pattern.compile(
             "\\([^)]*[+*][^)]*\\)[+*]"
     );
@@ -214,17 +216,34 @@ public class CapabilityService {
                         entry.getValue()
                 ))
                 .toList();
+        List<CapabilityCard> itemCards = items.stream()
+                .sorted(java.util.Comparator.comparing(
+                        CapabilityCard::path
+                ))
+                .toList();
         return new CapabilityListing(
                 parent,
-                "具体对象或动作已明确时停止逐层浏览，改用 search_files(namespace=capabilities)；"
-                        + "directories[].path 只能继续列目录，只有 items[].path 才能读取精确定义。",
+                guidance(directoryCards, itemCards),
                 directoryCards,
-                items.stream()
-                        .sorted(java.util.Comparator.comparing(
-                                CapabilityCard::path
-                        ))
-                        .toList()
+                itemCards
         );
+    }
+
+    /** 列出结果的下一步引导：按目录是否为空、条目是否过多给出情境化建议。 */
+    private String guidance(
+            List<DirectoryCard> directories,
+            List<CapabilityCard> items
+    ) {
+        if (directories.isEmpty() && items.isEmpty()) {
+            return "该目录当前没有任何条目；改用 search_files(namespace=capabilities) 直接搜索，"
+                    + "或列出上级目录确认路径";
+        }
+        if (items.size() > 20) {
+            return "该目录条目较多；先用 search_files(namespace=capabilities) 按对象或动作定位候选，"
+                    + "再用 read_capability 读取精确定义，避免逐张浏览卡片";
+        }
+        return "具体对象或动作已明确时停止逐层浏览，改用 search_files(namespace=capabilities)；"
+                + "directories[].path 只能继续列目录，只有 items[].path 才能读取精确定义。";
     }
 
     /**
@@ -429,6 +448,15 @@ public class CapabilityService {
         );
     }
 
+    /** 搜索卡片预览限长：超出部分截断并加省略号，保持单条命中可扫读。 */
+    private String preview(String description) {
+        if (description == null
+                || description.length() <= PREVIEW_MAX_CHARACTERS) {
+            return description;
+        }
+        return description.substring(0, PREVIEW_MAX_CHARACTERS - 1) + "…";
+    }
+
     private String semanticText(CatalogDocument document) {
         return String.join("\n",
                 document.name(),
@@ -439,20 +467,33 @@ public class CapabilityService {
         );
     }
 
+    /**
+     * 精确锚定：查询中任一词元精确等于能力 name（或 name 的 snake 分段之一）
+     * 即视为锚定命中；词元取不出时 fail-closed（不锚定）。
+     */
     private boolean exactAnchor(
             String query,
             CatalogDocument document,
             boolean caseSensitive
     ) {
-        String needle = caseSensitive
-                ? query : query.toLowerCase(Locale.ROOT);
         String name = caseSensitive
                 ? document.name()
                 : document.name().toLowerCase(Locale.ROOT);
-        String path = caseSensitive
-                ? document.path()
-                : document.path().toLowerCase(Locale.ROOT);
-        return name.contains(needle) || path.contains(needle);
+        Set<String> anchors = new HashSet<>();
+        anchors.add(name);
+        anchors.addAll(List.of(name.split("_")));
+        java.util.regex.Matcher matcher = Pattern.compile(
+                "[\\p{L}\\p{N}_]+"
+        ).matcher(query);
+        while (matcher.find()) {
+            String token = caseSensitive
+                    ? matcher.group()
+                    : matcher.group().toLowerCase(Locale.ROOT);
+            if (anchors.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String prefer(String current, String candidate) {
@@ -485,7 +526,7 @@ public class CapabilityService {
         return new CapabilityFileMatch(
                 document.path(),
                 document.name(),
-                document.description(),
+                preview(document.description()),
                 ranked.matchedField(),
                 document.riskLevel(),
                 current.value(),

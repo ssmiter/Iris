@@ -152,11 +152,12 @@ public class ReadCapabilityTool implements Tool {
         availability.put("status", definition.availability());
         availability.put("reason", definition.availabilityReason());
         output.set("manifest", definition.manifest());
-        ObjectNode usage = output.putObject("usage");
-        usage.put(
+        ObjectNode invocation = output.putObject("invocation");
+        invocation.put(
                 "instruction",
-                "这是按需读取的版本化 " + definition.kind()
-                        + " 定义；把正文作为工艺或连接信息使用，不要把它当成已执行的 Tool"
+                "该对象不可直接调用；它是按需读取的版本化 " + definition.kind()
+                        + " 定义，把 manifest 正文作为工艺或连接信息阅读，"
+                        + "不要把它当成已执行的 Tool"
         );
         return output;
     }
@@ -210,7 +211,8 @@ public class ReadCapabilityTool implements Tool {
                 .put("description", "完整版本化 Tool Manifest 与参数 schema");
         properties.putObject("invocation")
                 .put("type", "object")
-                .put("description", "稳定 invoke_capability 的可复制调用身份；arguments 仍按 Manifest 填写");
+                .put("description", "tool/pipeline 为稳定 invoke 的可复制调用身份（arguments 仍按 Manifest 填写）；"
+                        + "skill 等不可直接调用的对象在此注明应把 manifest 正文作为工艺阅读");
         return schema;
     }
 }
