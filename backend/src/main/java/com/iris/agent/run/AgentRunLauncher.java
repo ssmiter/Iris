@@ -183,8 +183,21 @@ public class AgentRunLauncher implements ApplicationRunner {
             boolean resume,
             boolean stopWakeup
     ) {
-        if ((!stopWakeup && !providers.configured(model.getProfile()))
-                || !active.add(run.runId())) {
+        if (!stopWakeup && !providers.configured(model.getProfile())) {
+            runs.failForMissingProvider(run.runId())
+                    .subscribe(
+                            ignored -> {
+                            },
+                            error -> log.warn(
+                                    "Agentic Run {} could not record its "
+                                            + "missing-provider failure",
+                                    run.runId(),
+                                    error
+                            )
+                    );
+            return false;
+        }
+        if (!active.add(run.runId())) {
             return false;
         }
         var advance = resume

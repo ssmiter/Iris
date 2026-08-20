@@ -156,6 +156,14 @@ public class AgenticRunCoordinator {
         );
     }
 
+    /**
+     * Fails a Run durably when no model provider profile is configured, so the
+     * user sees an actionable failure card instead of a silently idle Run.
+     */
+    public Mono<RunAdvance> failForMissingProvider(String runId) {
+        return failRun(runId, "model_not_configured");
+    }
+
     public Mono<RunAdvance> resume(
             String runId,
             String providerProfile,
@@ -474,6 +482,12 @@ public class AgenticRunCoordinator {
                 source = "model_provider";
                 recovery = "user_input";
                 message = "模型服务认证失败，请检查本机的 API 配置后再试。";
+            }
+            case "model_not_configured" -> {
+                category = "configuration";
+                source = "model_provider";
+                recovery = "user_input";
+                message = "尚未配置模型服务，请在 backend/application-local.yml 配置 API Key 后以 local profile 重启，然后重新发送。";
             }
             case "provider_request_rejected" -> {
                 category = "provider_request";

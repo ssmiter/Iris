@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.iris.agent.run.ChildRunNodeProjectionService;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationViews.BranchSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
@@ -571,6 +572,7 @@ public class ConversationQueryRepository {
                        f.recovery_action AS failure_recovery_action,
                        f.side_effect_outcome AS failure_side_effect_outcome,
                        f.details_ref AS failure_details_ref,
+                       p.input_json AS pipeline_input_json,
                        COALESCE((
                            SELECT SUM(ar.tool_call_count)
                            FROM agent_round ar
@@ -594,6 +596,7 @@ public class ConversationQueryRepository {
                 LEFT JOIN run_invocation i ON i.run_id = r.run_id
                 LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
+                LEFT JOIN pipeline_run_input p ON p.run_id = r.run_id
                 WHERE r.run_id = :runId
                 """)
                 .param("runId", runId)
@@ -639,6 +642,7 @@ public class ConversationQueryRepository {
                        f.recovery_action AS failure_recovery_action,
                        f.side_effect_outcome AS failure_side_effect_outcome,
                        f.details_ref AS failure_details_ref,
+                       p.input_json AS pipeline_input_json,
                        COALESCE((
                            SELECT SUM(ar.tool_call_count)
                            FROM agent_round ar
@@ -662,6 +666,7 @@ public class ConversationQueryRepository {
                 LEFT JOIN run_invocation i ON i.run_id = r.run_id
                 LEFT JOIN run_closure_ledger c ON c.run_id = r.run_id
                 LEFT JOIN run_failure f ON f.run_id = r.run_id
+                LEFT JOIN pipeline_run_input p ON p.run_id = r.run_id
                 WHERE r.turn_id = :turnId
                 ORDER BY r.started_at, r.run_id
                 """)
@@ -672,10 +677,11 @@ public class ConversationQueryRepository {
 
     private RunView mapRunView(java.sql.ResultSet rs)
             throws java.sql.SQLException {
+        String parentRunId = rs.getString("parent_run_id");
         return new RunView(
                 rs.getString("run_id"),
                 rs.getString("turn_id"),
-                rs.getString("parent_run_id"),
+                parentRunId,
                 rs.getString("root_run_id"),
                 rs.getString("invoking_step_run_id"),
                 rs.getString("kind"),
@@ -705,7 +711,23 @@ public class ConversationQueryRepository {
                 Instant.parse(rs.getString("started_at")),
                 rs.getString("ended_at") == null
                         ? null
-                        : Instant.parse(rs.getString("ended_at"))
+                        : Instant.parse(rs.getString("ended_at")),
+                progressSummary(rs, parentRunId)
+        );
+    }
+
+    /** 仅 child Run 投影进度摘要；与实时节点投影共用同一套文案逻辑。 */
+    private String progressSummary(java.sql.ResultSet rs, String parentRunId)
+            throws java.sql.SQLException {
+        if (parentRunId == null) {
+            return null;
+        }
+        return ChildRunNodeProjectionService.progressSummary(
+                rs.getString("phase"),
+                ChildRunNodeProjectionService.taskTextFromPipelineInput(
+                        objectMapper,
+                        rs.getString("pipeline_input_json")
+                )
         );
     }
 

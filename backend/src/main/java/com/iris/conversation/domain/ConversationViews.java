@@ -59,8 +59,56 @@ public final class ConversationViews {
             FailureView failure,
             long version,
             Instant startedAt,
-            Instant endedAt
+            Instant endedAt,
+            String progressSummary
     ) {
+        /** Root Runs have no progress summary; only child Runs project one. */
+        public RunView(
+                String runId,
+                String turnId,
+                String parentRunId,
+                String rootRunId,
+                String invokingStepId,
+                String kind,
+                RunDefinition definition,
+                String purpose,
+                String phase,
+                RunClosureView closure,
+                List<Object> blockers,
+                List<String> roundIds,
+                List<String> childRunIds,
+                RunBudget budget,
+                String outputRef,
+                List<String> evidenceRefs,
+                FailureView failure,
+                long version,
+                Instant startedAt,
+                Instant endedAt
+        ) {
+            this(
+                    runId,
+                    turnId,
+                    parentRunId,
+                    rootRunId,
+                    invokingStepId,
+                    kind,
+                    definition,
+                    purpose,
+                    phase,
+                    closure,
+                    blockers,
+                    roundIds,
+                    childRunIds,
+                    budget,
+                    outputRef,
+                    evidenceRefs,
+                    failure,
+                    version,
+                    startedAt,
+                    endedAt,
+                    null
+            );
+        }
     }
 
     public record RunDefinition(

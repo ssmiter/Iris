@@ -9,6 +9,7 @@ import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRuntimeRepository;
 import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
@@ -36,6 +37,7 @@ public class ToolProjectionService {
     private final JdbcClient jdbc;
     private final RunRoundRepository runs;
     private final ToolRuntimeRepository toolFacts;
+    private final ToolRegistry toolRegistry;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final ConversationEventAppender events;
@@ -46,6 +48,7 @@ public class ToolProjectionService {
             JdbcClient jdbc,
             RunRoundRepository runs,
             ToolRuntimeRepository toolFacts,
+            ToolRegistry toolRegistry,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
             ConversationEventAppender events,
@@ -54,6 +57,7 @@ public class ToolProjectionService {
         this.jdbc = jdbc;
         this.runs = runs;
         this.toolFacts = toolFacts;
+        this.toolRegistry = toolRegistry;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.events = events;
@@ -444,6 +448,7 @@ public class ToolProjectionService {
         if (!result.toolName().equals(call.toolName())) {
             projection.put("proxyToolName", call.toolName());
         }
+        projection.put("catalogPath", catalogPathFor(result.toolName()));
         String summary = toolSummary(result);
         projection.put("summary", summary);
         if ("succeeded".equals(result.phase())) {
@@ -507,6 +512,25 @@ public class ToolProjectionService {
                     now
             );
             upsertChildRunLink(nodeId, projection);
+        }
+    }
+
+    /**
+     * 能力树目录路径投影（docs/36 M16）：真相源是 ToolRegistry 的注册绑定；
+     * 查不到（外部/已卸载工具）投 null，前端缺失不渲染，fail-closed。
+     */
+    private String catalogPathFor(String toolName) {
+        try {
+            return toolRegistry.find(toolName)
+                    .map(ToolRegistry.ToolBinding::capabilityPath)
+                    .orElse(null);
+        } catch (RuntimeException exception) {
+            LOGGER.warn(
+                    "Tool capability path lookup failed for {}",
+                    toolName,
+                    exception
+            );
+            return null;
         }
     }
 

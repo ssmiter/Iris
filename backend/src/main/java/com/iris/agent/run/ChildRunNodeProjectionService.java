@@ -100,16 +100,26 @@ public class ChildRunNodeProjectionService {
                 WHERE r.run_id = :childRunId
                 """)
                 .param("childRunId", childRunId)
-                .query((rs, rowNum) -> {
-                    String phase = rs.getString("phase");
-                    String taskText = taskText(rs.getString("input_json"));
-                    return new ChildRunState(phase, taskText);
-                })
+                .query((rs, rowNum) -> new ChildRunState(
+                        rs.getString("phase"),
+                        taskTextFromPipelineInput(
+                                objectMapper,
+                                rs.getString("input_json")
+                        )
+                ))
                 .optional()
                 .orElse(null);
     }
 
-    private String taskText(String inputJson) {
+    /**
+     * Shared child-Run task text extraction (pipeline input {@code task}
+     * field). Also used by the RunView query assembly so the hydration path
+     * and the live node projection never diverge.
+     */
+    public static String taskTextFromPipelineInput(
+            ObjectMapper objectMapper,
+            String inputJson
+    ) {
         if (inputJson == null || inputJson.isBlank()) {
             return "后台子任务";
         }
@@ -195,7 +205,11 @@ public class ChildRunNodeProjectionService {
         }
     }
 
-    private String progressSummary(String phase, String taskText) {
+    /**
+     * Shared child-Run progress summary; identical wording for the live node
+     * projection and the RunView hydration assembly.
+     */
+    public static String progressSummary(String phase, String taskText) {
         if ("accepted".equals(phase)) {
             return "子任务已排队，等待启动：" + taskText;
         }

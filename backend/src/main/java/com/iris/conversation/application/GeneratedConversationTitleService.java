@@ -6,17 +6,21 @@ import com.iris.agent.run.RunRoundRepository;
 import com.iris.conversation.domain.ConversationEvent;
 import com.iris.conversation.infrastructure.ConversationEventHub;
 import com.iris.conversation.infrastructure.ConversationRepository;
+import com.iris.storage.SqliteContention;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.locks.LockSupport;
 
 /** Publishes a generated title without overwriting a title chosen by the user. */
 @Service
 public class GeneratedConversationTitleService {
     private static final int MAX_TITLE_CODE_POINTS = 40;
+    private static final int MAX_BUSY_RETRIES = 2;
 
     private final ConversationRepository conversations;
     private final RunRoundRepository runs;
@@ -53,11 +57,7 @@ public class GeneratedConversationTitleService {
         }
         PublishTransaction result = locks.withLock(
                 conversationId,
-                () -> transactions.execute(status -> publishLocked(
-                        conversationId,
-                        sourceRunId,
-                        title
-                ))
+                () -> publishWithBusyRetry(conversationId, sourceRunId, title)
         );
         if (result == null) {
             throw new IllegalStateException(
@@ -68,6 +68,35 @@ public class GeneratedConversationTitleService {
             eventHub.publish(List.of(result.event()));
         }
         return result.result();
+    }
+
+    /**
+     * Retries only SQLite's transient writer contention; the title write is
+     * naturally idempotent because publishLocked re-checks the placeholder
+     * before writing. Mirrors ConversationEventAppender's backoff.
+     */
+    private PublishTransaction publishWithBusyRetry(
+            String conversationId,
+            String sourceRunId,
+            String title
+    ) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return transactions.execute(status -> publishLocked(
+                        conversationId,
+                        sourceRunId,
+                        title
+                ));
+            } catch (RuntimeException exception) {
+                if (!SqliteContention.isBusy(exception)
+                        || attempt >= MAX_BUSY_RETRIES) {
+                    throw exception;
+                }
+                LockSupport.parkNanos(
+                        Duration.ofMillis(50L << attempt).toNanos()
+                );
+            }
+        }
     }
 
     public boolean needsGeneratedTitle(String conversationId) {
