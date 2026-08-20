@@ -24,6 +24,7 @@ import {
 import { ConversationShell } from '@/components/layout'
 import { Badge, Button, ToastHost, notify } from '@/components/ui'
 import { CapabilityCenter } from '@/components/capabilities'
+import { CapabilityRoom } from '@/components/capabilities/room/CapabilityRoom'
 import type {
   AttentionAction,
   AttentionNode,
@@ -774,6 +775,7 @@ export function ConversationApp() {
   )
 
   return (
+    <>
     <ConversationShell
       hasActiveTurn={Boolean(activeTurn)}
       badge={
@@ -939,5 +941,7 @@ export function ConversationApp() {
         </div>
       </StallProvider>
     </ConversationShell>
+    <CapabilityRoom />
+    </>
   )
 }

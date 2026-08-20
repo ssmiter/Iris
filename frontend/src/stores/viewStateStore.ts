@@ -31,6 +31,7 @@ export interface ViewState {
   sidebarOpen: boolean
   mobileSidebarOpen: boolean
   conversationWidth: ConversationWidth
+  capabilityRoomOpen: boolean
 
   toggleRound: (roundId: string, nodeIds: string[]) => void
   setConversationWidth: (width: ConversationWidth) => void
@@ -45,6 +46,7 @@ export interface ViewState {
   setDraft: (conversationId: string, value: string) => void
   setSidebarOpen: (open: boolean) => void
   setMobileSidebarOpen: (open: boolean) => void
+  setCapabilityRoomOpen: (open: boolean) => void
 }
 
 function toggleFlag(flags: FlagMap, id: string): FlagMap {
@@ -70,6 +72,7 @@ export const useViewStateStore = create<ViewState>()(
       sidebarOpen: true,
       mobileSidebarOpen: false,
       conversationWidth: DEFAULT_CONVERSATION_WIDTH,
+      capabilityRoomOpen: false,
 
       toggleRound: (roundId, nodeIds) =>
         set((state) => {
@@ -153,6 +156,8 @@ export const useViewStateStore = create<ViewState>()(
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
       setMobileSidebarOpen: (mobileSidebarOpen) =>
         set({ mobileSidebarOpen }),
+      setCapabilityRoomOpen: (capabilityRoomOpen) =>
+        set({ capabilityRoomOpen }),
     }),
     {
       name: 'iris.view-state.v1',
