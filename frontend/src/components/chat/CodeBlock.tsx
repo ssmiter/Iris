@@ -200,10 +200,14 @@ export function CodeBlock({
   )
 
   if (!lang) {
+    // 与有语言分支同一容器语言：header 与 pre 包进同一边框圆角容器。
+    // pre 自身的 .answer-prose 边框/圆角用内联样式归零，背景保留 token 底。
     return (
-      <div className="code-block group">
-        {header}
-        <pre>
+      <div className="code-block group overflow-hidden rounded-xl border border-border/70">
+        <div className="border-b border-border/70 bg-surface-muted">
+          {header}
+        </div>
+        <pre style={{ border: 'none', borderRadius: 0 }}>
           <code>{code}</code>
         </pre>
       </div>
@@ -211,7 +215,7 @@ export function CodeBlock({
   }
 
   return (
-    <div className="code-block group overflow-hidden rounded-xl border border-border/70">
+    <div className="code-block group overflow-hidden rounded-xl border border-border/70 bg-surface-muted">
       <div className="border-b border-border/70 bg-surface-muted">
         {header}
       </div>
@@ -225,6 +229,16 @@ export function CodeBlock({
           padding: '12px 14px',
           fontSize: '12.5px',
           lineHeight: '1.75',
+          // 高亮主题底色让位：外层容器承载 bg-surface-muted，暖/冷色调维度对代码块生效
+          background: 'transparent',
+          backgroundColor: 'transparent',
+        }}
+        codeTagProps={{
+          style: {
+            background: 'transparent',
+            backgroundColor: 'transparent',
+            textShadow: 'none',
+          },
         }}
       >
         {code}

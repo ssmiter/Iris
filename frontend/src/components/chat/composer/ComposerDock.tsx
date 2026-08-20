@@ -197,8 +197,10 @@ export function ComposerDock({
     return '告诉 Iris 你想处理什么…'
   })()
 
-  const ctxPercent = contextUsage?.percent ?? 0
-  const ctxWarn = ctxPercent > 70
+  // 有 token 统计时至少显示 1%；>90% 危险红档，>70% 警告黄档（docs/36 M15 P1-7）
+  const ctxPercent = contextUsage ? Math.max(1, contextUsage.percent) : 0
+  const ctxDanger = ctxPercent > 90
+  const ctxWarn = !ctxDanger && ctxPercent > 70
 
   return (
     <div
@@ -328,12 +330,13 @@ export function ComposerDock({
               onChange={onPermissionModeChange}
             />
 
-            <span className="hidden min-w-0 flex-1 truncate px-1 text-caption text-ink-muted sm:block">
-              {activeTurn
-                ? 'Enter 补充 · Shift+Enter 换行'
-                : 'Enter 发送 · Shift+Enter 换行'}
-            </span>
-            <span className="flex-1 sm:hidden" />
+            {/* 快捷键提示只在运行中出现（指导补充语义）；空闲态不留常驻说明 */}
+            {activeTurn && (
+              <span className="hidden min-w-0 flex-1 truncate px-1 text-caption text-ink-muted sm:block">
+                Enter 补充 · Shift+Enter 换行
+              </span>
+            )}
+            <span className={cn('flex-1', activeTurn && 'sm:hidden')} />
 
             {activeTurn && (
               <Button
@@ -375,31 +378,37 @@ export function ComposerDock({
             </span>
 
             {contextUsage && (
-              <button
-                type="button"
+              <span
                 className="flex items-center gap-1.5 font-mono text-caption text-ink-muted"
                 title={`上下文用量 ${contextUsage.used.toLocaleString()} / ${contextUsage.limit.toLocaleString()} tokens`}
-                onClick={() => {
-                  /* 预留：点击切换百分比 / 具体数字 */
-                }}
               >
-                <span>上下文 {ctxPercent}%</span>
+                <span className={ctxDanger ? 'text-danger' : undefined}>
+                  上下文 {ctxPercent}%
+                </span>
                 <span
                   className={cn(
                     'inline-block h-1 w-11 rounded-full',
-                    ctxWarn ? 'bg-warning/25' : 'bg-surface-muted',
+                    ctxDanger
+                      ? 'bg-danger/25'
+                      : ctxWarn
+                        ? 'bg-warning/25'
+                        : 'bg-surface-muted',
                   )}
                   aria-hidden="true"
                 >
                   <span
                     className={cn(
                       'block h-full rounded-full',
-                      ctxWarn ? 'bg-warning' : 'bg-success',
+                      ctxDanger
+                        ? 'bg-danger'
+                        : ctxWarn
+                          ? 'bg-warning'
+                          : 'bg-success',
                     )}
-                    style={{ width: `${ctxPercent}%` }}
+                    style={{ width: `${Math.min(ctxPercent, 100)}%` }}
                   />
                 </span>
-              </button>
+              </span>
             )}
           </div>
         </div>

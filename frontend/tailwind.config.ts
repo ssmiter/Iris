@@ -64,10 +64,14 @@ export default {
         },
       },
       fontFamily: {
+        // 与 styles/base.css body 栈保持一致（macOS 系统字体打头）
         sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
           'Segoe UI Variable',
           'Segoe UI',
           'PingFang SC',
+          'Hiragino Sans GB',
           'Microsoft YaHei UI',
           'system-ui',
           'sans-serif',

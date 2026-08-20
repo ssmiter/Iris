@@ -285,8 +285,23 @@ function ApprovalCard({
     }
   }, [node.approval])
 
+  // 风险左边条（docs/36 M15 P1-6）：elevated/destructive 用 3px 静态左缘色条
+  // 锚定风险等级；read_only/standard 不出条，保持素边。
+  const riskEdge = !node.approval
+    ? null
+    : node.approval.riskLevel === 'elevated'
+      ? 'border-l-[3px] border-l-warning'
+      : node.approval.riskLevel === 'destructive'
+        ? 'border-l-[3px] border-l-danger'
+        : null
+
   return (
-    <div className="pointer-events-auto animate-node-enter rounded-md border border-warning/30 bg-surface-raised px-3.5 py-3 shadow-floating motion-reduce:animate-none">
+    <div
+      className={cn(
+        'pointer-events-auto animate-node-enter rounded-md border border-warning/30 bg-surface-raised px-3.5 py-3 shadow-floating motion-reduce:animate-none',
+        riskEdge,
+      )}
+    >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           {node.approval && (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   CircleAlert,
@@ -12,6 +12,9 @@ import { cn } from '@/lib/cn'
 interface TaskBlackboardProps {
   tasks: TaskView[]
 }
+
+/** 消失淡出时长：覆盖 duration-fast（140ms）后卸载 */
+const FADE_OUT_MS = 160
 
 const phaseCopy: Record<
   TaskView['phase'],
@@ -70,58 +73,88 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
     expanded: false,
   })
 
-  if (!task) return null
+  // 消失时的一次性淡出：保留最后快照播完 overlay-out 再卸载。
+  // 浮条不推挤时间线（absolute），无需收拢高度动画。
+  const lastTaskRef = useRef<TaskView | null>(null)
+  const [fadingOut, setFadingOut] = useState(false)
+  useEffect(() => {
+    if (task) {
+      lastTaskRef.current = task
+      setFadingOut(false)
+      return
+    }
+    if (!lastTaskRef.current) return
+    setFadingOut(true)
+    const timer = window.setTimeout(() => {
+      lastTaskRef.current = null
+      setFadingOut(false)
+    }, FADE_OUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [task])
 
-  const expanded = disclosure.taskId === task.taskId
+  const shown = task ?? (fadingOut ? lastTaskRef.current : null)
+
+  if (!shown) return null
+
+  const expanded = !fadingOut
+    && disclosure.taskId === shown.taskId
     && disclosure.expanded
 
-  const completed = task.steps.filter(
+  const completed = shown.steps.filter(
     (step) => step.status === 'completed' || step.status === 'skipped',
   ).length
-  const progress = task.steps.length > 0
-    ? `${completed}/${task.steps.length}`
+  const progress = shown.steps.length > 0
+    ? `${completed}/${shown.steps.length}`
     : null
-  const copy = phaseCopy[task.phase]
-  const detailItems = task.pendingDecisions.length > 0
-    ? task.pendingDecisions
-    : task.nextActions
-  const detailLabel = task.pendingDecisions.length > 0
+  const copy = phaseCopy[shown.phase]
+  const detailItems = shown.pendingDecisions.length > 0
+    ? shown.pendingDecisions
+    : shown.nextActions
+  const detailLabel = shown.pendingDecisions.length > 0
     ? '需要确认'
     : '接下来'
-  const activities = task.activities ?? []
+  const activities = shown.activities ?? []
   const latestActivity = activities[0]
   const latestActivityState = latestActivity
-    ? activityState(latestActivity, task.phase)
+    ? activityState(latestActivity, shown.phase)
     : null
 
   return (
     <section
       aria-label="当前任务状态"
-      className="relative z-10 shrink-0 bg-canvas/92 backdrop-blur-md"
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 px-[var(--page-gutter)]"
     >
       <div className="max-w-conversation mx-auto w-full px-[var(--conversation-pad)] pt-2">
+        <div
+          className={cn(
+            'pointer-events-auto rounded-md border border-border/70 bg-surface-raised/95 shadow-floating backdrop-blur-md',
+            fadingOut
+              ? 'opacity-0 transition-opacity duration-fast ease-exit motion-reduce:transition-none'
+              : 'animate-overlay-in motion-reduce:animate-none',
+          )}
+        >
         <button
           type="button"
           aria-expanded={expanded}
-          className="group flex w-full items-center gap-2 rounded-sm px-1.5 py-2 text-left transition-colors duration-fast hover:bg-surface-muted/55 focus-visible:outline-none focus-visible:shadow-focus"
+          className="group flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors duration-fast hover:bg-surface-muted/55 focus-visible:outline-none focus-visible:shadow-focus"
           onClick={() => setDisclosure({
-            taskId: task.taskId,
+            taskId: shown.taskId,
             expanded: !expanded,
           })}
         >
           <span className={cn('flex items-center gap-1.5 text-caption font-medium', copy.tone)}>
-            <PhaseIcon phase={task.phase} />
+            <PhaseIcon phase={shown.phase} />
             {copy.label}
           </span>
           <span className="min-w-0 flex-1 truncate text-small text-ink-subtle">
-            {task.currentFocus || task.summary || task.objective}
+            {shown.currentFocus || shown.summary || shown.objective}
           </span>
-          {task.pendingDecisions.length > 0 && (
+          {shown.pendingDecisions.length > 0 && (
             <span className="shrink-0 text-caption text-warning">
-              {task.pendingDecisions.length} 项待确认
+              {shown.pendingDecisions.length} 项待确认
             </span>
           )}
-          {latestActivityState && task.pendingDecisions.length === 0 && (
+          {latestActivityState && shown.pendingDecisions.length === 0 && (
             <span className={cn(
               'hidden shrink-0 text-caption sm:inline',
               latestActivityState.tone,
@@ -170,9 +203,9 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
                   Iris 正在根据当前状态收敛下一步。
                 </p>
               )}
-              {task.blockers.length > 0 && task.pendingDecisions.length === 0 && (
+              {shown.blockers.length > 0 && shown.pendingDecisions.length === 0 && (
                 <p className="mt-2 text-caption text-warning">
-                  卡点：{task.blockers.join('；')}
+                  卡点：{shown.blockers.join('；')}
                 </p>
               )}
               {activities.length > 0 && (
@@ -182,7 +215,7 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
                   </p>
                   <ul className="mt-1.5 space-y-2">
                     {activities.slice(0, 3).map((activity) => {
-                      const state = activityState(activity, task.phase)
+                      const state = activityState(activity, shown.phase)
                       const outcome = activity.failure?.message
                         || activity.summary
                       return (
@@ -211,6 +244,7 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
               )}
             </div>
           </div>
+        </div>
         </div>
       </div>
     </section>

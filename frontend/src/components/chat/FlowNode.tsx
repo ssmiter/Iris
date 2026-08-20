@@ -3,7 +3,9 @@ import {
   AlertTriangle,
   Brain,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleEllipsis,
   FileText,
   GitBranch,
@@ -18,6 +20,7 @@ import type {
 } from '@/domain/chat/models'
 import { Badge, Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { riskMeta } from '@/domain/capability/riskMeta'
 import { ArtifactCard } from './ArtifactCard'
 import { ChildRunCard } from './ChildRunView'
 import { ClampText } from './ClampText'
@@ -191,20 +194,6 @@ function statusText(node: RenderNode): React.ReactNode {
   return base
 }
 
-const riskTone = {
-  read_only: 'success',
-  standard: 'neutral',
-  elevated: 'warning',
-  destructive: 'danger',
-} as const
-
-const riskLabel = {
-  read_only: '只读',
-  standard: '标准',
-  elevated: '提权',
-  destructive: '破坏性',
-} as const
-
 /**
  * 审批/澄清卡。两阶段退场（WonWork ghost 的克制版）：
  * 点击后按钮区立刻淡出禁用（决定已提交，不瞬消），
@@ -233,8 +222,8 @@ function AttentionBody({
           {node.impact}
         </p>
         {node.approval && (
-          <Badge tone={riskTone[node.approval.riskLevel]}>
-            {riskLabel[node.approval.riskLevel]}
+          <Badge tone={riskMeta(node.approval.riskLevel).tone}>
+            {riskMeta(node.approval.riskLevel).label}
           </Badge>
         )}
       </div>
@@ -289,9 +278,19 @@ function ArgsLine({ args }: { args: string }) {
     >
       <span className="break-all">{display}</span>
       {truncated && (
-        <span className="ml-1.5 text-ink-muted">
-          {expanded ? '▴' : '▾'}
-        </span>
+        expanded
+          ? (
+              <ChevronUp
+                aria-hidden="true"
+                className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
+              />
+            )
+          : (
+              <ChevronDown
+                aria-hidden="true"
+                className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
+              />
+            )
       )}
     </div>
   )
@@ -333,6 +332,9 @@ function NodeBody({
     case 'tool':
       return (
         <div className="space-y-2">
+          {node.catalogPath && (
+            <p className="text-caption text-ink-muted">{node.catalogPath}</p>
+          )}
           {node.args && <ArgsLine args={node.args} />}
           <ClampText>
             <div className="space-y-2">
@@ -472,7 +474,7 @@ export const FlowNode = memo(function FlowNode({
         <button
           type="button"
           className={cn(
-            'flex min-h-8 w-full items-center gap-2 rounded-sm px-2 text-left',
+            'flex min-h-8 w-full items-baseline gap-2 rounded-sm px-2 text-left',
             'transition-[color,background-color,transform,opacity] duration-fast ease-standard',
             'hover:bg-surface-muted active:scale-[0.995] active:bg-surface-muted active:opacity-80',
             'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
@@ -541,5 +543,7 @@ export const FlowNode = memo(function FlowNode({
   && previous.isFirst === next.isFirst
   && previous.isLast === next.isLast
   && previous.chainLive === next.chainLive
+  && previous.onToggle === next.onToggle
   && previous.onAttentionAction === next.onAttentionAction
+  && previous.onOpenChildRun === next.onOpenChildRun
 ))

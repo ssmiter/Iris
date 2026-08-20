@@ -2,6 +2,7 @@ import { memo, useRef, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import { ImageOff } from 'lucide-react'
 
 import { CodeBlock } from './CodeBlock'
 
@@ -12,6 +13,19 @@ function PrePass({ children }: ComponentPropsWithoutRef<'pre'> & ExtraProps) {
 const markdownComponents: Components = {
   code: CodeBlock,
   pre: PrePass,
+  // 链接一律新窗口打开并切断 opener；颜色/下划线由 .answer-prose a token 接管
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  // 与 ArtifactCard 同一策略：外部图片不自动加载，占位文案说明
+  img: ({ alt }) => (
+    <span className="inline-flex items-center gap-1 text-small text-ink-muted">
+      <ImageOff aria-hidden="true" className="h-3.5 w-3.5" />
+      外部图片未自动加载{alt ? `：${alt}` : ''}
+    </span>
+  ),
 }
 
 interface MarkdownChunk {

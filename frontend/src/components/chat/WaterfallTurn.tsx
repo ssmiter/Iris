@@ -13,6 +13,7 @@ import { Button } from '@/components/ui'
 import { RunSection } from './RunSection'
 import { cn } from '@/lib/cn'
 import { UserAttachmentList } from './UserAttachmentList'
+import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
 
 interface WaterfallTurnProps {
   turn: TurnView
@@ -189,7 +190,7 @@ function WaterfallTurnView({
       )}
     >
       <div className="flex justify-end">
-        <div className="group max-w-[88%] sm:max-w-[min(82%,40rem)]">
+        <div className={cn('group', USER_BUBBLE_WIDTH_CLASS)}>
           <UserAttachmentList
             references={turn.request.attachmentRefs}
           />
@@ -254,7 +255,7 @@ function WaterfallTurnView({
             </div>
           ) : (
             <>
-              <div className="rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
+              <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink">
                 {turn.request.text}
               </div>
               {canEdit && (
@@ -322,6 +323,13 @@ function WaterfallTurnView({
             />
             <div className="min-w-0">
               <p>{turn.failure.userMessage}</p>
+              {turn.failure.recoveryAction === 'user_input' &&
+                turn.failure.code === 'model_not_configured' && (
+                <p className="mt-1 text-caption opacity-80">
+                  尚未配置模型服务：请在 backend/application-local.yml 填入 API
+                  Key，并以 local profile 重启后端。
+                </p>
+              )}
               <p className="mt-1 text-caption opacity-80">
                 {[
                   sideEffectLabel[turn.failure.sideEffectOutcome],
@@ -378,10 +386,12 @@ function WaterfallTurnView({
           {turn.stats.childRunCount > 0 && (
             <span>· {turn.stats.childRunCount} 个子运行</span>
           )}
-          <span className="inline-flex items-center gap-1">
-            <Clock3 aria-hidden="true" className="h-3 w-3" />
-            {formatElapsed(turn)}
-          </span>
+          {turn.phase !== 'active' && (
+            <span className="inline-flex items-center gap-1">
+              <Clock3 aria-hidden="true" className="h-3 w-3" />
+              {formatElapsed(turn)}
+            </span>
+          )}
         </footer>
       </div>
     </article>

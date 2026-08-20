@@ -168,6 +168,8 @@ export interface ToolNode extends RenderNodeBase {
   durationMs?: number
   /** 工具入参紧凑 JSON 字符串，用于节点内联详情 */
   args?: string
+  /** 能力树目录路径（如 /system/files），节点展开体 muted 呈现 */
+  catalogPath?: string | null
 }
 
 export interface AttentionAction {

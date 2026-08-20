@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -13,11 +14,13 @@ import type {
   RunPhase,
   RunView,
 } from '@/domain/chat/models'
+import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
 import { Badge, Button, notify } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { useChatStore } from '@/stores/chatStore'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { sendRunMessage, stopRun } from '@/api/irisApi'
+import { ComposerTextarea } from './composer/ComposerTextarea'
 import { RunSection } from './RunSection'
 
 /**
@@ -187,6 +190,55 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
     }
   }, [draft, runId, active])
 
+  // 面板内滚动跟随（docs/36 M15 P1-10）：贴底时新内容自动跟随；
+  // 离底时露出「回到最新」。useConversationFollow 的面板内简化版——
+  // 内容量小、无虚拟列表，scrollTop 直写即可，无轮询。
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const jumpingRef = useRef(false)
+  const [atBottom, setAtBottom] = useState(true)
+
+  const handleScrollFollow = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (jumpingRef.current) {
+      // 平滑回底途中不改贴底态，避免按钮闪烁；抵达后解除
+      if (nearBottom) jumpingRef.current = false
+      return
+    }
+    atBottomRef.current = nearBottom
+    setAtBottom(nearBottom)
+  }, [])
+
+  const jumpToLatest = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    jumpingRef.current = true
+    atBottomRef.current = true
+    setAtBottom(true)
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [])
+
+  // 打开面板即定位到最新活动
+  useEffect(() => {
+    if (!runId) return
+    atBottomRef.current = true
+    jumpingRef.current = false
+    setAtBottom(true)
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [runId])
+
+  // 贴底态下新内容（SSE 投影 / 已发补充）自动跟随；离底则不打扰阅读
+  const sentCount = sent.length
+  useEffect(() => {
+    if (!atBottomRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [run, sentCount])
+
   if (!runId) return null
 
   return createPortal(
@@ -217,6 +269,11 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
             <p className="truncate text-small font-semibold text-ink">
               {run?.purpose ?? '子运行'}
             </p>
+            {run?.progressSummary && (
+              <p className="mt-0.5 truncate text-caption text-ink-muted">
+                {run.progressSummary}
+              </p>
+            )}
           </div>
           {run && (
             <span className="flex shrink-0 items-center gap-2">
@@ -231,7 +288,12 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
           )}
         </div>
 
-        <div className="scrollbar-subtle flex-1 overflow-y-auto px-4 py-3">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            onScroll={handleScrollFollow}
+            className="scrollbar-subtle flex-1 overflow-y-auto px-4 py-3"
+          >
           {run ? (
             <>
               {/* 任务书：主 Agent 派发，中性灰底，区别于用户气泡 */}
@@ -248,11 +310,16 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
                   key={`${item.at}-${index}`}
                   className="mb-3 flex justify-end"
                 >
-                  <div className="max-w-[92%] rounded-lg rounded-br-xs bg-primary-soft px-3.5 py-2.5">
+                  <div
+                    className={cn(
+                      USER_BUBBLE_WIDTH_CLASS,
+                      'rounded-lg rounded-br-xs bg-primary-soft px-3.5 py-2.5',
+                    )}
+                  >
                     <p className="text-caption font-medium text-primary-foreground/80">
                       {item.state === 'queued' ? '已排队补充' : '已注入补充'}
                     </p>
-                    <p className="mt-0.5 text-body text-primary-foreground">
+                    <p className="mt-0.5 whitespace-pre-wrap break-words text-body text-primary-foreground">
                       {item.text}
                     </p>
                   </div>
@@ -322,33 +389,45 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
               该子运行的投影不在当前视野中，可能属于其他对话。
             </p>
           )}
+          </div>
+
+          {!atBottom && (
+            <button
+              type="button"
+              className={cn(
+                'absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full',
+                'border border-border/70 bg-surface-raised/95 px-3 py-1 shadow-floating backdrop-blur-md',
+                'text-caption text-ink-subtle hover:bg-surface-muted',
+                'animate-overlay-in motion-reduce:animate-none',
+                'focus-visible:outline-none focus-visible:shadow-focus',
+              )}
+              onClick={jumpToLatest}
+            >
+              回到最新
+            </button>
+          )}
         </div>
 
         {/* 底部补充输入框 */}
         <div className="shrink-0 border-t border-border/70 bg-surface-raised/95 px-3 py-2.5">
           <div className="flex items-end gap-2">
-            <input
+            <ComposerTextarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSend()
-                }
-              }}
+              onSubmit={() => void handleSend()}
               disabled={!active}
+              aria-label="向子运行补充"
               placeholder={
                 active
                   ? '向子运行补充事实或约束…'
                   : '子运行已结束，不能再补充'
               }
               className={cn(
-                'min-h-9 flex-1 resize-none rounded-sm border border-border bg-surface px-3 py-2',
-                'text-body text-ink shadow-hairline outline-none',
+                'min-h-9 rounded-sm border border-border bg-surface px-3 py-2',
+                'shadow-hairline placeholder:text-ink-muted',
                 'transition-[border-color,box-shadow] duration-fast ease-standard',
-                'placeholder:text-ink-muted',
                 'focus:border-focus focus:shadow-focus',
-                'disabled:cursor-not-allowed disabled:bg-surface-muted disabled:text-ink-muted',
+                'disabled:bg-surface-muted disabled:text-ink-muted',
                 'motion-reduce:transition-none',
               )}
             />

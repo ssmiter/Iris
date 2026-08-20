@@ -11,6 +11,7 @@ import { ArtifactZone } from './ArtifactZone'
 import { FlowNode } from './FlowNode'
 import { ProcessSummary } from './ProcessSummary'
 import { cn } from '@/lib/cn'
+import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
 
 /** 已播过摘要行淡入的 roundId 集合（会话级） */
 const summaryFadedRoundIds = new Set<string>()
@@ -118,7 +119,12 @@ export const RoundSection = memo(function RoundSection({
     >
       {supplementNodes.map((node) => (
         <div key={node.nodeId} className="mb-3 flex justify-end">
-          <div className="max-w-[92%] rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink sm:max-w-[min(86%,42rem)]">
+          <div
+            className={cn(
+              'whitespace-pre-wrap break-words rounded-lg rounded-br-xs bg-surface-muted px-4 py-3 text-body text-ink',
+              USER_BUBBLE_WIDTH_CLASS,
+            )}
+          >
             {node.text}
           </div>
         </div>

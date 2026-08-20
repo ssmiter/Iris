@@ -51,7 +51,9 @@ export function ProcessSummary({
       {round.stats.toolCallCount > 0 && (
         <span>· {round.stats.toolCallCount} 个工具</span>
       )}
-      <span>· {formatDuration(round.stats.durationMs)}</span>
+      {round.phase !== 'active' && (
+        <span>· {formatDuration(round.stats.durationMs)}</span>
+      )}
       {pendingCount > 0 && (
         <span className="ml-1 text-warning">· {pendingCount} 项待处理</span>
       )}

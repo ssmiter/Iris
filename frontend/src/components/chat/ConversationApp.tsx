@@ -885,6 +885,8 @@ export function ConversationApp() {
     >
       {quotePopover}
       <StallProvider>
+        {/* 相对定位容器：TaskBlackboard 吸顶浮条 absolute 挂靠于此，不推挤时间线 */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <TaskBlackboard tasks={Object.values(chat.tasksById)} />
         {chat.connectionState === 'hydrating' &&
         projection.turns.length === 0 ? (
@@ -934,6 +936,7 @@ export function ConversationApp() {
           onClose={() => setViewerRunId(null)}
           onAttentionAction={handleAttentionAction}
         />
+        </div>
       </StallProvider>
     </ConversationShell>
   )
