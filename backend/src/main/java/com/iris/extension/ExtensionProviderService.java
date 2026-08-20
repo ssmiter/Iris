@@ -407,6 +407,42 @@ public class ExtensionProviderService
         log.info("extension root {} unregistered", root);
     }
 
+    /** 当前已登记并监听的拓展根绝对路径（管理面文件操作围栏用）。 */
+    public Set<Path> registeredRoots() {
+        return Set.copyOf(watchedRootPaths);
+    }
+
+    /**
+     * 手动触发指定拓展根的热重扫（docs/37 §2.3）。根必须在已登记集合内，
+     * 否则 fail-closed 抛异常；调用方负责先校验围栏。
+     */
+    public void rescanRoot(Path root) {
+        Path normalized = root.toAbsolutePath().normalize();
+        Path registered = watchedRootPaths.stream()
+                .filter(candidate -> isSameFile(normalized, candidate))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "未登记的拓展根，无法触发重扫: " + root
+                ));
+        if (!Files.isDirectory(registered)) {
+            throw new IllegalStateException("拓展根已不存在: " + root);
+        }
+        scanAndRegister(registered);
+    }
+
+    private boolean isSameFile(Path a, Path b) {
+        String aStr = a.toAbsolutePath().normalize().toString();
+        String bStr = b.toAbsolutePath().normalize().toString();
+        if (aStr.equalsIgnoreCase(bStr)) {
+            return true;
+        }
+        try {
+            return Files.isSameFile(a, b);
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
     /** 全部被遮蔽件的扁平视图（docs/32 §3；管理页只读消费）。 */
     public List<ShadowedCapability> shadowed() {
         return shadowedByRoot.values().stream()

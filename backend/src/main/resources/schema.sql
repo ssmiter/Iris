@@ -941,6 +941,12 @@ CREATE TABLE IF NOT EXISTS tool_user_input_request (
     FOREIGN KEY (execution_id) REFERENCES tool_execution(execution_id)
 );
 
+CREATE TABLE IF NOT EXISTS capability_pin (
+    path TEXT PRIMARY KEY,
+    ordinal INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 -- User-managed Skills are immutable definitions with one mutable head. A
 -- disabled head disappears from the live Catalog while historical versions
 -- remain addressable through capability_definition.

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.storage.ManagedObjectStore;
 import com.iris.tools.catalog.CapabilityCatalogSource;
+import com.iris.tools.catalog.CatalogGenerationService;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -36,18 +37,21 @@ public class SkillService implements CapabilityCatalogSource {
     private final ObjectMapper objectMapper;
     private final ManagedObjectStore objects;
     private final TransactionTemplate transactions;
+    private final CatalogGenerationService generationService;
     private final Clock clock = Clock.systemUTC();
 
     public SkillService(
             JdbcClient jdbc,
             ObjectMapper objectMapper,
             ManagedObjectStore objects,
-            TransactionTemplate transactions
+            TransactionTemplate transactions,
+            CatalogGenerationService generationService
     ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.objects = objects;
         this.transactions = transactions;
+        this.generationService = generationService;
     }
 
     public List<SkillView> list() {
@@ -87,6 +91,7 @@ public class SkillService implements CapabilityCatalogSource {
         String skillId = "skill_" + UUID.randomUUID()
                 .toString().replace("-", "");
         persistVersion(skillId, 1, valid, null);
+        generationService.bump();
         return require(skillId);
     }
 
@@ -107,6 +112,7 @@ public class SkillService implements CapabilityCatalogSource {
                 validate(draft),
                 before
         );
+        generationService.bump();
         return require(skillId);
     }
 
@@ -149,6 +155,7 @@ public class SkillService implements CapabilityCatalogSource {
                     now
             );
         });
+        generationService.bump();
         return require(skillId);
     }
 

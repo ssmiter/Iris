@@ -10,6 +10,8 @@ import com.iris.extension.ResidentProcessTool;
 import com.iris.extension.ShadowedCapability;
 import com.iris.extension.SkillTool;
 import com.iris.extension.TemplateProcessTool;
+import com.iris.tools.catalog.CapabilityCatalogSource.Definition;
+import com.iris.tools.catalog.CatalogGenerationService;
 import com.iris.tools.core.ToolRegistry;
 import org.springframework.stereotype.Service;
 
@@ -41,6 +43,7 @@ public class CapabilityAdminService {
     private final List<CapabilityCatalogSource> extensionSources;
     private final ExtensionProviderService extensions;
     private final DirectoryStatsService directoryStats;
+    private final CatalogGenerationService generationService;
     private final ObjectMapper objectMapper;
 
     public CapabilityAdminService(
@@ -52,6 +55,7 @@ public class CapabilityAdminService {
             List<CapabilityCatalogSource> extensionSources,
             ExtensionProviderService extensions,
             DirectoryStatsService directoryStats,
+            CatalogGenerationService generationService,
             ObjectMapper objectMapper
     ) {
         this.capabilities = capabilities;
@@ -62,6 +66,7 @@ public class CapabilityAdminService {
         this.extensionSources = List.copyOf(extensionSources);
         this.extensions = extensions;
         this.directoryStats = directoryStats;
+        this.generationService = generationService;
         this.objectMapper = objectMapper;
     }
 
@@ -76,8 +81,19 @@ public class CapabilityAdminService {
     ) {
     }
 
+    public record AdminTreeResponse(
+            long generation,
+            AdminTreeNode root
+    ) {
+    }
+
+    /** 当前能力目录生成号（docs/37 §2.5）。 */
+    public long generation() {
+        return generationService.current();
+    }
+
     /** 目录树：计数覆盖注册表 + Pipeline + 目录投影源，标题来自目录元数据。 */
-    public AdminTreeNode tree() {
+    public AdminTreeResponse tree() {
         Map<String, Integer> counts = new LinkedHashMap<>();
         int total = 0;
         for (ToolRegistry.ToolBinding binding : registry.all()) {
@@ -88,7 +104,7 @@ public class CapabilityAdminService {
             accumulate(counts, binding.definition().capabilityPath());
             total++;
         }
-        for (CapabilityCatalogSource.Definition definition
+        for (Definition definition
                 : extensionDefinitions()) {
             accumulate(counts, definition.path());
             total++;
@@ -97,7 +113,10 @@ public class CapabilityAdminService {
                 : directoryCatalog.all()) {
             accumulate(counts, directory.path());
         }
-        return buildNode("", counts, total);
+        return new AdminTreeResponse(
+                generationService.current(),
+                buildNode("", counts, total)
+        );
     }
 
     private void accumulate(Map<String, Integer> counts, String path) {
@@ -168,14 +187,17 @@ public class CapabilityAdminService {
             /** 来源文件绝对路径；非文件真相件为 null。 */
             String sourceFile,
             /** 非 null 表示被遮蔽（胜出者来源）。 */
-            String shadowedBy
+            String shadowedBy,
+            /** 定义快照 hash；取不到时为 null。 */
+            String manifestHash
     ) {
     }
 
     public record AdminListing(
             String path,
             List<CapabilityService.DirectoryCard> directories,
-            List<AdminItem> items
+            List<AdminItem> items,
+            long generation
     ) {
     }
 
@@ -202,7 +224,7 @@ public class CapabilityAdminService {
                     shadow.capabilityPath(), shadow.description(),
                     null, "shadowed", "被 " + shadow.shadowedBy() + " 遮蔽",
                     "extension", shadow.root(), shadow.file(),
-                    shadow.shadowedBy()
+                    shadow.shadowedBy(), null
             ));
         }
         String needle = query == null ? "" : query.trim().toLowerCase();
@@ -215,7 +237,12 @@ public class CapabilityAdminService {
                                 .toLowerCase().contains(needle)))
                 .sorted(Comparator.comparing(AdminItem::path))
                 .toList();
-        return new AdminListing(parent, base.directories(), filtered);
+        return new AdminListing(
+                parent,
+                base.directories(),
+                filtered,
+                generationService.current()
+        );
     }
 
     /** 单件详情：清单字段 + 完整定义快照。 */
@@ -256,10 +283,10 @@ public class CapabilityAdminService {
             ));
         }
         for (CapabilityCatalogSource source : extensionSources) {
-            Optional<CapabilityCatalogSource.Definition> definition =
+            Optional<Definition> definition =
                     source.findByPath(normalized);
             if (definition.isPresent()) {
-                CapabilityCatalogSource.Definition found = definition.get();
+                Definition found = definition.get();
                 return Optional.of(new AdminDetail(
                         new AdminItem(
                                 found.id(), found.version(), found.kind(),
@@ -267,7 +294,8 @@ public class CapabilityAdminService {
                                 found.description(), found.riskLevel(),
                                 found.availability(),
                                 found.availabilityReason(),
-                                originOf(found.kind()), null, null, null
+                                originOf(found.kind()), null, null, null,
+                                found.manifestHash()
                         ),
                         found.manifest(),
                         null
@@ -299,7 +327,8 @@ public class CapabilityAdminService {
                             definition.name(), normalized,
                             definition.description(), "standard",
                             "available", "本地 Pipeline Definition 已注册",
-                            "kernel", null, null, null
+                            "kernel", null, null, null,
+                            pipeline.get().snapshotHash()
                     ),
                     objectMapper.valueToTree(definition),
                     recent
@@ -315,7 +344,7 @@ public class CapabilityAdminService {
                                 null, "shadowed",
                                 "被 " + shadow.shadowedBy() + " 遮蔽",
                                 "extension", shadow.root(), shadow.file(),
-                                shadow.shadowedBy()
+                                shadow.shadowedBy(), null
                         ),
                         null,
                         null
@@ -381,15 +410,30 @@ public class CapabilityAdminService {
                     card.id(), card.version(), kindOf(found), card.name(),
                     card.path(), card.description(), card.riskLevel(),
                     card.availability(), card.availabilityReason(),
-                    origin, sourceRoot, sourceFile, null
+                    origin, sourceRoot, sourceFile, null,
+                    found.manifestHash()
             );
+        }
+        String manifestHash = null;
+        if ("pipeline".equals(card.kind())) {
+            manifestHash = pipelines.findByPath(card.path())
+                    .map(PipelineDefinitionRegistry.Binding::snapshotHash)
+                    .orElse(null);
+        } else {
+            manifestHash = extensionSources.stream()
+                    .map(source -> source.findByPath(card.path()))
+                    .flatMap(Optional::stream)
+                    .findFirst()
+                    .map(Definition::manifestHash)
+                    .orElse(null);
         }
         return new AdminItem(
                 card.id(), card.version(), card.kind(), card.name(),
                 card.path(), card.description(), card.riskLevel(),
                 card.availability(), card.availabilityReason(),
                 originOf(card.kind()),
-                null, null, null
+                null, null, null,
+                manifestHash
         );
     }
 
@@ -418,7 +462,7 @@ public class CapabilityAdminService {
         };
     }
 
-    private List<CapabilityCatalogSource.Definition> extensionDefinitions() {
+    private List<Definition> extensionDefinitions() {
         return extensionSources.stream()
                 .flatMap(source -> source.definitions().stream())
                 .toList();

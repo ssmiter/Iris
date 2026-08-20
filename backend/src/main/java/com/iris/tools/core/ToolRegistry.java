@@ -3,6 +3,7 @@ package com.iris.tools.core;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iris.tools.catalog.CatalogGenerationService;
 import com.iris.tools.catalog.DomainCatalog;
 import org.springframework.stereotype.Component;
 
@@ -32,8 +33,14 @@ public class ToolRegistry {
     private final Map<String, ToolBinding> byName = new LinkedHashMap<>();
     private final Map<String, ToolBinding> byIdentity = new LinkedHashMap<>();
     private final Map<String, String> providerByName = new LinkedHashMap<>();
+    private final CatalogGenerationService generationService;
 
-    public ToolRegistry(List<Tool> tools, ObjectMapper objectMapper) {
+    public ToolRegistry(
+            List<Tool> tools,
+            ObjectMapper objectMapper,
+            CatalogGenerationService generationService
+    ) {
+        this.generationService = generationService;
         List<String> invalid = new java.util.ArrayList<>();
         for (Tool tool : tools) {
             try {
@@ -132,10 +139,12 @@ public class ToolRegistry {
                     providerKey
             );
         }
+        generationService.bump();
     }
 
     public synchronized void unregisterExternal(String providerKey) {
         removeProvider(providerKey);
+        generationService.bump();
     }
 
     /** 某工具名当前的来源 provider（{@code local-java} / {@code extension:<root>} /

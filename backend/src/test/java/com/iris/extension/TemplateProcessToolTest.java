@@ -3,6 +3,7 @@ package com.iris.extension;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.execution.WorkspaceProcessRunner;
+import com.iris.tools.catalog.CatalogGenerationService;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.PreparedOperation;
 import com.iris.tools.core.ToolContext;
@@ -144,7 +145,8 @@ class TemplateProcessToolTest {
     @Test
     void registersThroughExternalProviderWithUnderscoreDirectory()
             throws Exception {
-        ToolRegistry registry = new ToolRegistry(List.of(), objectMapper);
+        ToolRegistry registry = new ToolRegistry(
+                List.of(), objectMapper, new CatalogGenerationService());
         TemplateProcessTool tool = tool(definition("""
                 name: mes_material_info
                 kind: template

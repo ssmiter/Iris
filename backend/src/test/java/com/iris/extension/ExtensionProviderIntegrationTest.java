@@ -387,7 +387,7 @@ class ExtensionProviderIntegrationTest {
     /** 管理投影（docs/32 §4）：来源切面 + 遮蔽可见 + 详情快照。 */
     @Test
     void adminProjectionExposesOriginAndShadowing() {
-        var tree = capabilityAdmin.tree();
+        var tree = capabilityAdmin.tree().root();
         assertThat(tree.count()).isGreaterThan(0);
 
         var processItems = capabilityAdmin.items("/code/process", null, null);

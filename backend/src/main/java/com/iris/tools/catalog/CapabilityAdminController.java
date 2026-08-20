@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 统一能力管理页的只读查询 API（docs/32 §4）。与模型发现原语
@@ -26,8 +27,14 @@ public class CapabilityAdminController {
         this.admin = admin;
     }
 
+    @GetMapping("/generation")
+    public Mono<Map<String, Long>> generation() {
+        return Mono.fromCallable(() -> Map.of("generation", admin.generation()))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
     @GetMapping("/tree")
-    public Mono<CapabilityAdminService.AdminTreeNode> tree() {
+    public Mono<CapabilityAdminService.AdminTreeResponse> tree() {
         return Mono.fromCallable(admin::tree)
                 .subscribeOn(Schedulers.boundedElastic());
     }

@@ -1,5 +1,6 @@
 package com.iris.schedule;
 
+import com.iris.tools.catalog.CatalogGenerationService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.support.CronExpression;
@@ -28,16 +29,19 @@ public class CronScheduleService {
     private final JdbcClient jdbc;
     private final TransactionTemplate transactions;
     private final ApplicationEventPublisher events;
+    private final CatalogGenerationService generationService;
     private final Clock clock = Clock.systemUTC();
 
     public CronScheduleService(
             JdbcClient jdbc,
             TransactionTemplate transactions,
-            ApplicationEventPublisher events
+            ApplicationEventPublisher events,
+            CatalogGenerationService generationService
     ) {
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.events = events;
+        this.generationService = generationService;
     }
 
     public ScheduleView create(
@@ -78,6 +82,7 @@ public class CronScheduleService {
                 .param("now", now.toString())
                 .update());
         events.publishEvent(new CronScheduleChangedEvent(taskId));
+        generationService.bump();
         return require(taskId);
     }
 
@@ -122,6 +127,7 @@ public class CronScheduleService {
                 .update();
         requireUpdated(updated, taskId, expectedVersion);
         events.publishEvent(new CronScheduleChangedEvent(taskId));
+        generationService.bump();
         return require(taskId);
     }
 
@@ -147,6 +153,7 @@ public class CronScheduleService {
                 .update();
         requireUpdated(updated, taskId, expectedVersion);
         events.publishEvent(new CronScheduleChangedEvent(taskId));
+        generationService.bump();
         return require(taskId);
     }
 
@@ -166,6 +173,7 @@ public class CronScheduleService {
             requireUpdated(updated, taskId, expectedVersion);
         });
         events.publishEvent(new CronScheduleChangedEvent(taskId));
+        generationService.bump();
     }
 
     /**
