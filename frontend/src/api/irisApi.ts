@@ -375,6 +375,7 @@ export interface CapabilityAdminItem {
   sourceRoot: string | null
   sourceFile: string | null
   shadowedBy: string | null
+  manifestHash: string | null
 }
 
 export interface CapabilityDirectoryCard {
@@ -389,6 +390,7 @@ export interface CapabilityAdminListing {
   path: string
   directories: CapabilityDirectoryCard[]
   items: CapabilityAdminItem[]
+  generation: number
 }
 
 export interface CapabilityAdminDetail {
@@ -396,6 +398,11 @@ export interface CapabilityAdminDetail {
   definition: unknown | null
   /** kind=pipeline 时的最近运行（新→旧）；其他 kind 为 null（docs/33 §5） */
   recentRuns?: PipelineRunSummary[] | null
+}
+
+export interface CapabilityAdminTreeResponse {
+  generation: number
+  root: CapabilityTreeNode
 }
 
 export interface PipelineRunSummary {
@@ -416,7 +423,9 @@ export interface CapabilityAdminProblem {
 
 /** 统一能力管理页的只读投影（docs/32 §4、docs/08 §8.7） */
 export const capabilityAdminApi = {
-  tree: () => requestJson<CapabilityTreeNode>('/api/v1/capability-admin/tree'),
+  generation: () =>
+    requestJson<{ generation: number }>('/api/v1/capability-admin/generation'),
+  tree: () => requestJson<CapabilityAdminTreeResponse>('/api/v1/capability-admin/tree'),
   items: (path: string) =>
     requestJson<CapabilityAdminListing>(
       `/api/v1/capability-admin/items?path=${encodeURIComponent(path)}`,
