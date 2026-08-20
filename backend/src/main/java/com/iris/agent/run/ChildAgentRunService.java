@@ -275,7 +275,7 @@ public class ChildAgentRunService {
         String deliverable = pipeline.input().path("deliverable")
                 .asText("").trim();
         String workMode = pipeline.input().path("work_mode")
-                .asText("observe").trim();
+                .asText("workspace").trim();
         if (!"observe".equals(workMode) && !"workspace".equals(workMode)) {
             throw new IllegalArgumentException(
                     "Child Agent work mode is invalid"

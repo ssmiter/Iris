@@ -129,7 +129,8 @@ public class ResidentProcessTool implements Tool {
                 input,
                 TemplateProcessTool.renderImpact(
                         definition, manifest.sideEffect(), input),
-                List.of(),
+                TemplateProcessTool.resourceClaims(
+                        definition, manifest.sideEffect()),
                 Instant.now().plus(APPROVAL_TTL)
         );
     }

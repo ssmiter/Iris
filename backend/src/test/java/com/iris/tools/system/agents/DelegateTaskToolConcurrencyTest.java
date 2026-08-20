@@ -27,6 +27,62 @@ import static org.mockito.Mockito.when;
 class DelegateTaskToolConcurrencyTest {
 
     @Test
+    void prepareDefaultsWorkModeToWorkspace() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DelegateTaskTool tool = new DelegateTaskTool(
+                objectMapper,
+                mock(PipelineCommandService.class),
+                mock(ObjectProvider.class),
+                mock(PipelineRunRepository.class),
+                mock(TaskLedgerService.class),
+                mock(ObjectProvider.class)
+        );
+        ToolContext context = new ToolContext() {
+            @Override
+            public String conversationId() {
+                return "conv";
+            }
+
+            @Override
+            public String turnId() {
+                return "turn";
+            }
+
+            @Override
+            public String runId() {
+                return "parent_1";
+            }
+
+            @Override
+            public String roundId() {
+                return "round_1";
+            }
+
+            @Override
+            public Path workspaceRoot() {
+                return Path.of("/tmp");
+            }
+
+            @Override
+            public boolean cancelled() {
+                return false;
+            }
+        };
+
+        ObjectNode input = objectMapper.createObjectNode();
+        input.put("task", "整理输出版本表");
+        var prepared = tool.prepare(input, context);
+
+        assertThat(prepared.normalizedInput().path("work_mode").asText())
+                .isEqualTo("workspace");
+
+        input.put("work_mode", "observe");
+        var narrowed = tool.prepare(input, context);
+        assertThat(narrowed.normalizedInput().path("work_mode").asText())
+                .isEqualTo("observe");
+    }
+
+    @Test
     void queuedChildObservationReportsQueuePosition() {
         ObjectMapper objectMapper = new ObjectMapper();
         PipelineCommandService commands = mock(PipelineCommandService.class);

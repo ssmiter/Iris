@@ -94,9 +94,28 @@ public class TemplateProcessTool implements Tool {
         return new PreparedOperation(
                 input,
                 renderImpact(definition, input),
-                List.of(),
+                resourceClaims(definition, manifest.sideEffect()),
                 Instant.now().plus(APPROVAL_TTL)
         );
+    }
+
+    /**
+     * 副作用工具的资源声明闸（ToolRuntime.validatePrepared）：扩展产物
+     * 落点在 prepare 期不可知，以工具名为逻辑路径声明一条粗粒度
+     * workspace 声明，版本诚实标注为未跟踪；只读工具保持空表。
+     */
+    static List<PreparedOperation.ResourceClaim> resourceClaims(
+            ProcessToolDefinition definition,
+            ToolManifest.SideEffect sideEffect
+    ) {
+        if (sideEffect == ToolManifest.SideEffect.NONE) {
+            return List.of();
+        }
+        return List.of(new PreparedOperation.ResourceClaim(
+                "extension_workspace",
+                definition.name(),
+                "untracked"
+        ));
     }
 
     @Override

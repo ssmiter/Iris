@@ -2,6 +2,7 @@ package com.iris.extension;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.tools.core.CommittedOperation;
+import com.iris.tools.core.PreparedOperation;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolOutcome;
 import org.junit.jupiter.api.Test;
@@ -69,6 +70,35 @@ class ResidentProcessToolTest {
                 }
             }
             """;
+
+    @Test
+    void prepareDeclaresCoarseResourceForSideEffectTools() throws Exception {
+        ResidentProcessTool tool = toolWithRisk(
+                "writer_tool",
+                "{ level: standard, side_effect: workspace_write }");
+
+        PreparedOperation prepared = tool.prepare(
+                objectMapper.createObjectNode(), context());
+
+        assertEquals(1, prepared.resources().size());
+        PreparedOperation.ResourceClaim claim = prepared.resources().getFirst();
+        assertEquals("extension_workspace", claim.kind());
+        assertEquals("writer_tool", claim.logicalPath());
+        tool.retire();
+    }
+
+    @Test
+    void prepareKeepsEmptyResourcesForReadOnlyTools() throws Exception {
+        ResidentProcessTool tool = toolWithRisk(
+                "reader_tool",
+                "{ level: read_only, side_effect: none }");
+
+        PreparedOperation prepared = tool.prepare(
+                objectMapper.createObjectNode(), context());
+
+        assertTrue(prepared.resources().isEmpty());
+        tool.retire();
+    }
 
     @Test
     void invokeRoundTripCollectsProgressAndStructured() throws Exception {
@@ -204,6 +234,24 @@ class ResidentProcessToolTest {
         alphaTool.retire();
         assertEquals("extension_retired",
                 execute(betaTool, "{}").errorCode());
+    }
+
+    /** 构造带指定 risk 声明的工具；prepare 不触碰进程，无需真实插件文件。 */
+    private ResidentProcessTool toolWithRisk(String name, String risk)
+            throws Exception {
+        ObjectMapper yaml = new ObjectMapper(
+                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+        ProcessToolDefinition definition = yaml.readValue("""
+                name: %s
+                kind: process
+                description: 资源声明探针
+                input_schema: { type: object, properties: {} }
+                risk: %s
+                runtime:
+                  entry: ["{javaBin}", "{pluginDir}/Probe.java"]
+                """.formatted(name, risk), ProcessToolDefinition.class);
+        return new ResidentProcessTool(
+                definition, pluginDir, "test-version", objectMapper);
     }
 
     private ResidentProcessTool tool() throws Exception {

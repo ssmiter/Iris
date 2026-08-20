@@ -45,6 +45,10 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 `sideEffect=internal_state`：它们不弹出外部写审批，但仍必须经过 Runtime、资源声明、
 版本前置条件、持久化和 verify，不能伪装成 read-only。
 
+> 部署姿态注记（2026-08-20 用户裁决）：上表描述审批管线**启用时**的分档语义；
+> 运行时默认 `approval-mode=auto`——写操作默认直接执行、不弹审批卡，审批管线
+> （挂起/批准/拒绝/影响陈述）完整常备，需要严格时把全局或单工具调回挂起即可。
+
 ### 2.1 两层能力，不是两套平台
 
 - **系统原语能力**负责客观观察、变换、行动和验证，接口尽量小、可组合、可单独测试；
@@ -237,7 +241,8 @@ Capability Catalog 是动态多来源投影，不再假定进程启动时已经�
   在内核三层兜底之外，插件收到 cancel 帧会主动终止在途子进程；
 - 找不到 Python 解释器时本次调用以 `python_runtime_unavailable` 明确报错
   （已尝试 `IRIS_PYTHON` 环境变量与 PATH 上的 python/python3），不静默降级；
-- 插件写工作区经过常规审批闸（elevated + explicit 影响陈述），但**不进入内核
+- 插件写工作区声明 elevated + explicit 影响陈述（审批闸启用时挂起；默认
+  auto 部署姿态下直接执行，见 §2 姿态注记），但**不进入内核
   Checkpoint/Artifact 体系**——那是内核工作区工具的语义，跨进程插件的自证就是
   结果帧（docs/31 §4 边界）。
 

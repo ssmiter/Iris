@@ -86,7 +86,7 @@ public class DelegateTaskTool implements Tool {
         normalized.put("task", task);
         copyOptionalText(input, normalized, "context", 8_000);
         copyOptionalText(input, normalized, "deliverable", 4_000);
-        String workMode = input.path("work_mode").asText("observe").trim();
+        String workMode = input.path("work_mode").asText("workspace").trim();
         if (!"observe".equals(workMode) && !"workspace".equals(workMode)) {
             throw new IllegalArgumentException(
                     "work_mode must be observe or workspace"
@@ -246,8 +246,8 @@ public class DelegateTaskTool implements Tool {
                 .put("maxLength", 1_000);
         properties.putObject("work_mode")
                 .put("type", "string")
-                .put("description", "observe 只能观察；workspace 才允许在工作区内产生变更，默认 observe")
-                .put("default", "observe")
+                .put("description", "workspace 允许在工作区内产生变更（默认）；observe 为显式窄档，只能观察")
+                .put("default", "workspace")
                 .putArray("enum")
                 .add("observe")
                 .add("workspace");

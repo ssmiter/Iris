@@ -234,7 +234,8 @@ public class ToolRuntime {
                         executionId,
                         ToolOutcome.Kind.FAILED,
                         "agent_work_mode_read_only",
-                        "这个隔离子任务以 observe 模式运行，不能改变工作区、Iris 控制状态或外部系统",
+                        "这个隔离子任务以 observe 模式运行，不能改变工作区、Iris 控制状态或外部系统；"
+                                + "如需写入，请以 work_mode=workspace 重新委派",
                         List.of()
                 );
                 return result(executionId);

@@ -294,6 +294,9 @@ dsh 的 Cordis `inject`/`apply(ctx)` 代码契约是 JS 生态绑定，不直容
 - 路径围栏不变：文件类插件同样只能在工作区根内操作；
 - 审批不出内核：挂起、决策（带人话影响陈述）、恢复全在 Runtime；无人应答
   fail-closed；
+- 资源声明不出内核：side_effect 非 none 的过程插件，prepare 由内核适配器声明一条
+  粗粒度资源（kind=`extension_workspace`、logicalPath=工具名、版本 `untracked`）——
+  产物落点在 prepare 期不可知，诚实声明为未跟踪，满足 Runtime 快照校验而不伪造精度；
 - 过程插件跑在用户进程权限下，内核管审批、审计、超时、取消与结果截断。
 
 ## 10. 内核/拓展分界

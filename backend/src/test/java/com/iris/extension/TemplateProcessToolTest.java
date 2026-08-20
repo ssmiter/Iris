@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.execution.WorkspaceProcessRunner;
 import com.iris.tools.core.CommittedOperation;
+import com.iris.tools.core.PreparedOperation;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRegistry;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -69,6 +71,49 @@ class TemplateProcessToolTest {
                 ToolRuntimeException.class,
                 () -> tool.renderArgv(definition.runtime().entry(), input)
         );
+    }
+
+    @Test
+    void prepareDeclaresCoarseResourceForSideEffectTools() throws Exception {
+        ProcessToolDefinition definition = definition("""
+                name: export_report
+                kind: template
+                description: 导出报表
+                input_schema: { type: object, properties: {} }
+                risk: { level: standard, side_effect: workspace_write }
+                runtime:
+                  entry: [python, export.py]
+                """);
+        TemplateProcessTool tool = tool(definition);
+
+        PreparedOperation prepared = tool.prepare(
+                objectMapper.createObjectNode(), context());
+
+        assertEquals(1, prepared.resources().size());
+        PreparedOperation.ResourceClaim claim = prepared.resources().getFirst();
+        assertFalse(claim.kind().isBlank());
+        assertFalse(claim.logicalPath().isBlank());
+        assertEquals("extension_workspace", claim.kind());
+        assertEquals("export_report", claim.logicalPath());
+    }
+
+    @Test
+    void prepareKeepsEmptyResourcesForReadOnlyTools() throws Exception {
+        ProcessToolDefinition definition = definition("""
+                name: echo_tool
+                kind: template
+                description: 回显
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, echo.py]
+                """);
+        TemplateProcessTool tool = tool(definition);
+
+        PreparedOperation prepared = tool.prepare(
+                objectMapper.createObjectNode(), context());
+
+        assertTrue(prepared.resources().isEmpty());
     }
 
     @Test

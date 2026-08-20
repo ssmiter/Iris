@@ -59,7 +59,7 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 - `task`：自包含目标，不依赖父 Agent 未公开的思考；
 - `context`：完成判断所需的已知背景、已经排除的方向和稳定引用，而不是整段父对话；
 - `constraints`：职责边界与不可违反的限制；
-- `work_mode`：`observe` 只允许观察，`workspace` 才允许在工作区内产生变更；
+- `work_mode`：`workspace` 允许在工作区内产生变更（默认）；`observe` 为显式窄档，只允许观察；
 - `allowedTools`：允许的常驻原语子集，不能超过父级权限上限；
 - `resultContract`：完成时应返回什么、怎样算完成，以及重要证据/Artifact 如何引用；
 - `budget`：轮次、工具调用、时间和嵌套深度；
@@ -69,7 +69,7 @@ Definition 还冻结结果交付策略：`notify_parent` 在终态向父 Agent �
 
 首版子 Agent 禁止再次委派，避免递归失控。以后开放嵌套时仍由后端根据深度和预算核验，不能靠提示词自觉。
 
-`work_mode` 是运行时权限，不是提示词标签。观察型 child 即使发现了写能力，也不能越过 Tool Runtime 的只读边界；工作区型 child 仍需经过路径围栏、审批、commit gate 与 verify。父 Agent 必须显式选择可写模式，不能因为任务描述里出现“修改”就由子 Agent 自行扩大权限。
+`work_mode` 是运行时权限，不是提示词标签。观察型 child 即使发现了写能力，也不能越过 Tool Runtime 的只读边界；工作区型 child 仍需经过路径围栏、审批、commit gate 与 verify。默认为 `workspace`——子 Agent 是用户自己的执行臂，可写在先（2026-08-20 用户裁决）；纯观察型子目标由父 Agent 显式选择 `observe` 窄档，observe 下任何写工具都会被 Tool Runtime 拒绝并提示改用 workspace 重新委派。
 
 交付不是一段无法判断真假的散文。child 终态形成有界 Result Envelope：`status`、`summary`、稳定 `outputRef` 与从真实 Tool verification 汇集的 `evidenceRefs`。长正文仍留在 child Run 中按需读取；父 Agent 只消费摘要和引用，并对关键结论负责最终核验。
 
