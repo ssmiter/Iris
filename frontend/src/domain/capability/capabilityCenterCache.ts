@@ -2,6 +2,7 @@ import type {
   CapabilityAdminDetail,
   CapabilityAdminListing,
   CapabilityAdminProblem,
+  CapabilityPin,
   CapabilityTreeNode,
   SkillView,
 } from '@/api/irisApi'
@@ -26,6 +27,9 @@ export interface CapabilityCenterCache {
   listings: Record<string, { generation: number; data: CapabilityAdminListing }>
   /** 按 path + manifestHash 缓存的详情；item hash 变化后 key 自然失效。 */
   details: Record<string, CapabilityAdminDetail>
+  /** 收藏钉选（docs/37 §2.4）。 */
+  pins: CapabilityPin[]
+  pinsLoaded: boolean
   selectedPath: string
   expanded: string[]
 }
@@ -41,6 +45,8 @@ let cache: CapabilityCenterCache = {
   problemsLoaded: false,
   listings: {},
   details: {},
+  pins: [],
+  pinsLoaded: false,
   selectedPath: '/',
   expanded: ['/'],
 }
@@ -99,6 +105,15 @@ export function readCapabilityDetail(key: string): CapabilityAdminDetail | null 
   return cache.details[key] ?? null
 }
 
+/** 收藏钉选缓存读写。 */
+export function cacheCapabilityPins(pins: CapabilityPin[]): void {
+  cache = { ...cache, pins, pinsLoaded: true }
+}
+
+export function readCapabilityPins(): CapabilityPin[] {
+  return cache.pins
+}
+
 /** 详情缓存 key：path + manifestHash。 */
 export function makeCapabilityDetailKey(
   path: string,
@@ -125,5 +140,7 @@ export function invalidateAll(): void {
     skillsLoaded: false,
     problems: [],
     problemsLoaded: false,
+    pins: [],
+    pinsLoaded: false,
   }
 }

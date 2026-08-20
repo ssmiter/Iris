@@ -405,6 +405,20 @@ export interface CapabilityAdminTreeResponse {
   root: CapabilityTreeNode
 }
 
+export interface CapabilityFileOperationResult {
+  operation: string
+  affectedPaths: string[]
+}
+
+export interface CapabilityPin {
+  path: string
+  ordinal: number
+}
+
+export interface CapabilityPinsResponse {
+  pins: CapabilityPin[]
+}
+
 export interface PipelineRunSummary {
   runId: string
   triggerKind: string | null
@@ -436,6 +450,45 @@ export const capabilityAdminApi = {
     ),
   problems: () =>
     requestJson<CapabilityAdminProblem[]>('/api/v1/capability-admin/problems'),
+  moveFile: (sourcePath: string, targetDir: string) =>
+    requestJson<CapabilityFileOperationResult>(
+      '/api/v1/capability-admin/files/move',
+      {
+        method: 'POST',
+        body: JSON.stringify({ sourcePath, targetDir }),
+      },
+    ),
+  renameFile: (path: string, newName: string) =>
+    requestJson<CapabilityFileOperationResult>(
+      '/api/v1/capability-admin/files/rename',
+      {
+        method: 'POST',
+        body: JSON.stringify({ path, newName }),
+      },
+    ),
+  copyFile: (sourcePath: string, targetDir: string) =>
+    requestJson<CapabilityFileOperationResult>(
+      '/api/v1/capability-admin/files/copy',
+      {
+        method: 'POST',
+        body: JSON.stringify({ sourcePath, targetDir }),
+      },
+    ),
+  deleteFile: (path: string) =>
+    requestJson<CapabilityFileOperationResult>(
+      '/api/v1/capability-admin/files/delete',
+      {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      },
+    ),
+  pins: () =>
+    requestJson<CapabilityPinsResponse>('/api/v1/capability-admin/pins'),
+  setPins: (paths: string[]) =>
+    requestJson<CapabilityPinsResponse>('/api/v1/capability-admin/pins', {
+      method: 'PUT',
+      body: JSON.stringify({ paths }),
+    }),
 }
 
 /** 定时任务管理（docs/33 §3、docs/08 §8.8）：DB 真相，能力树只投影启用件。 */

@@ -22,19 +22,23 @@ import {
 import {
   capabilityAdminApi,
   capabilityManagementApi,
+  IrisApiError,
   type CapabilityAdminItem,
   type CapabilityAdminListing,
   type CapabilityAdminProblem,
+  type CapabilityFileOperationResult,
+  type CapabilityPin,
   type CapabilityTreeNode,
   type SkillView,
 } from '@/api/irisApi'
-import { Button, Input, notify } from '@/components/ui'
+import { Button, ContextMenu, Input, Modal, ModalClose, notify, type ContextMenuSlot } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { kindMeta } from '@/domain/capability/kindMeta'
 import { riskMeta, type BadgeTone } from '@/domain/capability/riskMeta'
 import {
   cacheCapabilityDetail,
   cacheCapabilityListing,
+  cacheCapabilityPins,
   invalidateAll,
   makeCapabilityDetailKey,
   readCapabilityCenterCache,
@@ -125,6 +129,34 @@ function intersects(
   )
 }
 
+const FILE_TRUTH_KINDS = new Set(['process', 'template', 'skill', 'knowledge'])
+
+function isFileTruth(item: CapabilityAdminItem): boolean {
+  return FILE_TRUTH_KINDS.has(item.kind) && item.sourceFile != null
+}
+
+function isDbTruth(item: CapabilityAdminItem): boolean {
+  return ['skill_store', 'mcp', 'schedule', 'pipeline'].includes(item.origin)
+}
+
+function isKernelTool(item: CapabilityAdminItem): boolean {
+  return (
+    item.kind === 'kernel_tool' ||
+    item.origin === 'kernel' ||
+    item.path.startsWith('/system/')
+  )
+}
+
+function isValidMachineName(value: string): boolean {
+  return /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(value) && value.length > 0
+}
+
+function fileNameOf(path: string): string {
+  if (path === '/') return ''
+  const idx = path.lastIndexOf('/')
+  return idx < 0 ? path : path.slice(idx + 1)
+}
+
 export function CapabilityExplorer({
   consumeEscRef,
   onOpenMcp,
@@ -169,10 +201,36 @@ export function CapabilityExplorer({
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
   const [cursorPath, setCursorPath] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0)
+  const [contextMenu, setContextMenu] = useState<{
+    open: boolean
+    x: number
+    y: number
+    target: 'item' | 'tree' | 'pin'
+    path: string | null
+  }>({ open: false, x: 0, y: 0, target: 'item', path: null })
+  const [clipboard, setClipboard] = useState<{
+    mode: 'cut' | 'copy'
+    paths: string[]
+  } | null>(null)
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [deleteCandidates, setDeleteCandidates] = useState<string[] | null>(
+    null,
+  )
+  const [pins, setPins] = useState<CapabilityPin[]>(snapshot.pins)
   const searchRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
   const consumeEsc = useCallback(() => {
+    if (contextMenu.open) {
+      setContextMenu((current) => ({ ...current, open: false }))
+      return true
+    }
+    if (renamingPath) {
+      setRenamingPath(null)
+      setRenameDraft('')
+      return true
+    }
     if (query.trim().length > 0) {
       setQuery('')
       return true
@@ -187,7 +245,7 @@ export function CapabilityExplorer({
       return true
     }
     return false
-  }, [query, detailPath, selection])
+  }, [query, detailPath, selection, contextMenu.open, renamingPath])
 
   useEffect(() => {
     if (!consumeEscRef) return
@@ -244,6 +302,18 @@ export function CapabilityExplorer({
       })
       .catch(() => setProblems([]))
 
+  const reloadPins = () =>
+    capabilityAdminApi
+      .pins()
+      .then(({ pins: next }) => {
+        setPins(next)
+        cacheCapabilityPins(next)
+      })
+      .catch(() => {
+        setPins([])
+        cacheCapabilityPins([])
+      })
+
   const reloadListing = (path: string, force = false) => {
     if (!force) {
       const cached = readCapabilityListing(path)
@@ -274,6 +344,7 @@ export function CapabilityExplorer({
       reloadTree(),
       reloadSkills(),
       reloadProblems(),
+      reloadPins(),
       reloadListing(selectedPath),
     ]).finally(() => setRefreshing(false))
   }
@@ -306,6 +377,7 @@ export function CapabilityExplorer({
     if (!after.treeLoaded) void reloadTree()
     if (!after.skillsLoaded) void reloadSkills()
     if (!after.problemsLoaded) void reloadProblems()
+    if (!after.pinsLoaded) void reloadPins()
     void reloadListing(selectedPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generationSynced, selectedPath])
@@ -340,6 +412,366 @@ export function CapabilityExplorer({
     })
   }
 
+  // ===== 右键菜单 / 剪切板 / 文件操作 / 收藏 =====
+
+  const copyText = async (text: string, description?: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      notify.success(description ?? '已复制到剪贴板')
+    } catch {
+      notify.error('复制失败', { description: text })
+    }
+  }
+
+  const openDetailOrEdit = (item: CapabilityAdminItem) => {
+    if (item.origin === 'skill_store') {
+      const skill = skillOf(item)
+      if (skill) {
+        captureFocusKey(`skill-edit-${item.path}`)
+        setEditingSkill(skill)
+        return
+      }
+    }
+    toggleDetail(item)
+  }
+
+  const cutItems = (paths: string[]) => {
+    setClipboard({ mode: 'cut', paths })
+    setSelection(new Set(paths))
+    setCursorPath(paths[paths.length - 1])
+  }
+
+  const copyItems = (paths: string[]) => {
+    setClipboard({ mode: 'copy', paths })
+    notify.success(`已复制 ${paths.length} 项`)
+  }
+
+  const handleFileOpError = (error: Error, operation: string) => {
+    if (error instanceof IrisApiError) {
+      if (error.code === 'already_exists') {
+        notify.error('名称冲突', {
+          description: '目标位置已存在同名能力，请手动改名后再试。',
+        })
+        return
+      }
+      if (error.code === 'not_file_truth') {
+        notify.error('无法操作该对象', {
+          description: '只有文件真相对象才能移动、复制或重命名。',
+        })
+        return
+      }
+      if (error.code === 'out_of_extension_root') {
+        notify.error('超出允许范围', {
+          description: '操作越过了已登记的能力拓展根目录。',
+        })
+        return
+      }
+    }
+    notify.error(`${operation}失败`, { description: error.message })
+  }
+
+  const pasteTo = async (targetDir: string) => {
+    if (!clipboard || clipboard.paths.length === 0) return
+    const ops: Promise<CapabilityFileOperationResult>[] = []
+    for (const sourcePath of clipboard.paths) {
+      const sourceDir = parentPathOf(sourcePath)
+      const isSameDir = sourceDir === targetDir
+      if (clipboard.mode === 'cut' && !isSameDir) {
+        ops.push(capabilityAdminApi.moveFile(sourcePath, targetDir))
+      } else {
+        ops.push(capabilityAdminApi.copyFile(sourcePath, targetDir))
+      }
+    }
+    try {
+      await Promise.all(ops)
+      if (clipboard.mode === 'cut') setClipboard(null)
+      invalidateAll()
+      await Promise.all([
+        reloadTree(),
+        reloadPins(),
+        reloadListing(selectedPath, true),
+      ])
+    } catch (error) {
+      handleFileOpError(error as Error, '粘贴')
+    }
+  }
+
+  const startRename = (item: CapabilityAdminItem) => {
+    setRenamingPath(item.path)
+    setRenameDraft(item.name)
+  }
+
+  const commitRename = async () => {
+    if (!renamingPath) return
+    const trimmed = renameDraft.trim()
+    if (trimmed === fileNameOf(renamingPath)) {
+      setRenamingPath(null)
+      return
+    }
+    if (!isValidMachineName(trimmed)) {
+      notify.error('名称格式不对', {
+        description: '请使用小写、数字、- 或 _ 的机器名（如 my-tool）。',
+      })
+      return
+    }
+    try {
+      await capabilityAdminApi.renameFile(renamingPath, trimmed)
+      setRenamingPath(null)
+      invalidateAll()
+      await Promise.all([
+        reloadTree(),
+        reloadPins(),
+        reloadListing(selectedPath, true),
+      ])
+    } catch (error) {
+      handleFileOpError(error as Error, '重命名')
+    }
+  }
+
+  const confirmDelete = (paths: string[]) => setDeleteCandidates(paths)
+
+  const doDelete = async () => {
+    if (!deleteCandidates || deleteCandidates.length === 0) return
+    try {
+      await Promise.all(
+        deleteCandidates.map((path) => capabilityAdminApi.deleteFile(path)),
+      )
+      setDeleteCandidates(null)
+      invalidateAll()
+      await Promise.all([
+        reloadTree(),
+        reloadPins(),
+        reloadListing(selectedPath, true),
+      ])
+    } catch (error) {
+      handleFileOpError(error as Error, '删除')
+    }
+  }
+
+  const togglePin = async (path: string) => {
+    const nextPaths = pins.some((p) => p.path === path)
+      ? pins.filter((p) => p.path !== path).map((p) => p.path)
+      : [...pins.map((p) => p.path), path]
+    try {
+      const { pins: updated } = await capabilityAdminApi.setPins(nextPaths)
+      setPins(updated)
+      cacheCapabilityPins(updated)
+    } catch (error) {
+      notify.error('收藏更新失败', { description: (error as Error).message })
+    }
+  }
+
+  const reorderPins = async (paths: string[]) => {
+    try {
+      const { pins: updated } = await capabilityAdminApi.setPins(paths)
+      setPins(updated)
+      cacheCapabilityPins(updated)
+    } catch (error) {
+      notify.error('收藏排序失败', { description: (error as Error).message })
+    }
+  }
+
+  const isPinned = (path: string) => pins.some((p) => p.path === path)
+
+  const buildPinMenu = (path: string): ContextMenuSlot[] => {
+    return [
+      {
+        key: 'open-location',
+        label: '打开所在位置',
+        onSelect: () => selectPath(parentPathOf(path)),
+      },
+      {
+        key: 'unpin',
+        label: '取消钉选',
+        onSelect: () => togglePin(path),
+      },
+      { type: 'separator', key: 'sep-1' },
+      {
+        key: 'copy-path',
+        label: '复制路径',
+        onSelect: () => copyText(path),
+      },
+    ]
+  }
+
+  const buildTreeMenu = (path: string): ContextMenuSlot[] => {
+    return [
+      {
+        key: 'paste',
+        label: '粘贴',
+        disabled: !clipboard,
+        onSelect: () => pasteTo(path),
+      },
+      { type: 'separator', key: 'sep-1' },
+      {
+        key: 'copy-path',
+        label: '复制路径',
+        onSelect: () => copyText(path),
+      },
+    ]
+  }
+
+  const buildItemMenu = (item: CapabilityAdminItem): ContextMenuSlot[] => {
+    const pinned = isPinned(item.path)
+    const commonFooter: ContextMenuSlot[] = [
+      { type: 'separator', key: 'sep-pin' },
+      {
+        key: 'pin',
+        label: pinned ? '取消钉选' : '钉到收藏',
+        onSelect: () => togglePin(item.path),
+      },
+    ]
+
+    if (isFileTruth(item)) {
+      return [
+        {
+          key: 'open',
+          label: '打开编辑',
+          onSelect: () => openDetailOrEdit(item),
+        },
+        {
+          key: 'cut',
+          label: '剪切',
+          onSelect: () => cutItems([item.path]),
+        },
+        {
+          key: 'copy',
+          label: '复制',
+          onSelect: () => copyItems([item.path]),
+        },
+        {
+          key: 'paste',
+          label: '粘贴',
+          disabled: !clipboard,
+          onSelect: () => pasteTo(parentPathOf(item.path)),
+        },
+        {
+          key: 'rename',
+          label: '重命名',
+          onSelect: () => startRename(item),
+        },
+        { type: 'separator', key: 'sep-1' },
+        {
+          key: 'delete',
+          label: '删除',
+          danger: true,
+          onSelect: () => confirmDelete([item.path]),
+        },
+        {
+          key: 'copy-path',
+          label: '复制路径',
+          onSelect: () => copyText(item.path),
+        },
+        ...commonFooter,
+      ]
+    }
+
+    if (isDbTruth(item)) {
+      return [
+        {
+          key: 'open',
+          label: '打开编辑',
+          onSelect: () => openDetailOrEdit(item),
+        },
+        { type: 'separator', key: 'sep-1' },
+        {
+          key: 'copy-path',
+          label: '复制路径',
+          onSelect: () => copyText(item.path),
+        },
+        ...commonFooter,
+      ]
+    }
+
+    if (isKernelTool(item)) {
+      return [
+        {
+          key: 'detail',
+          label: '详情',
+          onSelect: () => toggleDetail(item),
+        },
+        {
+          key: 'copy-name',
+          label: '复制调用名',
+          onSelect: () => copyText(item.path),
+        },
+        { type: 'separator', key: 'sep-1' },
+        {
+          key: 'copy-path',
+          label: '复制路径',
+          onSelect: () => copyText(item.path),
+        },
+        ...commonFooter,
+      ]
+    }
+
+    return [
+      {
+        key: 'copy-path',
+        label: '复制路径',
+        onSelect: () => copyText(item.path),
+      },
+      ...commonFooter,
+    ]
+  }
+
+  const buildMultiMenu = (paths: string[]): ContextMenuSlot[] => {
+    return [
+      {
+        key: 'cut',
+        label: '剪切',
+        onSelect: () => cutItems(paths),
+      },
+      { type: 'separator', key: 'sep-1' },
+      {
+        key: 'delete',
+        label: '删除',
+        danger: true,
+        onSelect: () => confirmDelete(paths),
+      },
+    ]
+  }
+
+  const openItemContextMenu = (
+    event: ReactMouseEvent,
+    item: CapabilityAdminItem,
+  ) => {
+    event.preventDefault()
+    if (selection.size > 1 && !selection.has(item.path)) {
+      setSelection(new Set([item.path]))
+      setCursorPath(item.path)
+    }
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      target: 'item',
+      path: item.path,
+    })
+  }
+
+  const openTreeContextMenu = (event: ReactMouseEvent, path: string) => {
+    event.preventDefault()
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      target: 'tree',
+      path,
+    })
+  }
+
+  const openPinContextMenu = (event: ReactMouseEvent, path: string) => {
+    event.preventDefault()
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      target: 'pin',
+      path,
+    })
+  }
+
   const selectedNode = tree ? findNode(tree, selectedPath) : null
 
   const filteredItems = useMemo(() => {
@@ -356,12 +788,55 @@ export function CapabilityExplorer({
 
   const isSearching = query.trim().length > 0
 
-  // 全局键盘：搜索聚焦、上下移动、Enter 打开详情、Backspace 回上级。
+  let contextMenuItems: ContextMenuSlot[] = []
+  if (contextMenu.open) {
+    if (contextMenu.target === 'tree' && contextMenu.path) {
+      contextMenuItems = buildTreeMenu(contextMenu.path)
+    } else if (contextMenu.target === 'pin' && contextMenu.path) {
+      contextMenuItems = buildPinMenu(contextMenu.path)
+    } else if (
+      selection.size > 1 &&
+      contextMenu.path &&
+      selection.has(contextMenu.path)
+    ) {
+      contextMenuItems = buildMultiMenu([...selection])
+    } else {
+      const item = filteredItems.find((i) => i.path === contextMenu.path)
+      contextMenuItems = item ? buildItemMenu(item) : []
+    }
+  }
+
+  // 全局键盘：搜索聚焦、上下移动、Enter 打开详情、Backspace 回上级、菜单键开右键菜单。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (contextMenu.open) return
+
       if (event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f')) {
         event.preventDefault()
         searchRef.current?.focus()
+        return
+      }
+
+      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+        event.preventDefault()
+        const item = cursorPath
+          ? filteredItems.find((i) => i.path === cursorPath)
+          : filteredItems[0]
+        if (item) {
+          const el = contentRef.current?.querySelector<HTMLElement>(
+            `[data-item="${CSS.escape(item.path)}"]`,
+          )
+          const rect = el?.getBoundingClientRect()
+          const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2
+          const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2
+          setContextMenu({
+            open: true,
+            x,
+            y,
+            target: 'item',
+            path: item.path,
+          })
+        }
         return
       }
 
@@ -412,7 +887,7 @@ export function CapabilityExplorer({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursorPath, detailPath, filteredItems, selectedPath])
+  }, [cursorPath, detailPath, filteredItems, selectedPath, contextMenu.open])
 
   const toggleDetail = (item: CapabilityAdminItem) => {
     const path = item.path
@@ -668,16 +1143,19 @@ export function CapabilityExplorer({
       <div className="grid min-h-0 flex-1 grid-cols-[14rem_1fr] overflow-hidden">
         <nav className="scrollbar-subtle flex min-h-0 flex-col border-r border-border/70 bg-surface px-2 py-3">
           {tree ? (
-            <ul>
-              <DirectoryTree
-                node={tree}
-                depth={0}
-                selectedPath={selectedPath}
-                expanded={expanded}
-                onToggle={toggleExpanded}
-                onSelect={(path, alt) => selectPath(path, alt)}
-              />
-            </ul>
+            <DirectoryTree
+              node={tree}
+              depth={0}
+              selectedPath={selectedPath}
+              expanded={expanded}
+              pins={pins}
+              onToggle={toggleExpanded}
+              onSelect={(path, alt) => selectPath(path, alt)}
+              onNodeContextMenu={openTreeContextMenu}
+              onPinClick={(path) => selectPath(parentPathOf(path))}
+              onPinContextMenu={openPinContextMenu}
+              onPinReorder={reorderPins}
+            />
           ) : treeFailed ? (
             <QuietState
               icon={SearchX}
@@ -790,7 +1268,20 @@ export function CapabilityExplorer({
                     key={item.path}
                     item={item}
                     selected={selection.has(item.path)}
+                    cut={
+                      clipboard?.mode === 'cut' &&
+                      clipboard.paths.includes(item.path)
+                    }
+                    renaming={renamingPath === item.path}
+                    renameDraft={renameDraft}
+                    onRenameDraftChange={setRenameDraft}
+                    onRenameCommit={commitRename}
+                    onRenameCancel={() => {
+                      setRenamingPath(null)
+                      setRenameDraft('')
+                    }}
                     onClick={(event) => handleItemClick(item, event)}
+                    onContextMenu={(event) => openItemContextMenu(event, item)}
                     showBreadcrumb={isSearching}
                   />
                 ))}
@@ -802,7 +1293,20 @@ export function CapabilityExplorer({
                     key={item.path}
                     item={item}
                     selected={selection.has(item.path)}
+                    cut={
+                      clipboard?.mode === 'cut' &&
+                      clipboard.paths.includes(item.path)
+                    }
+                    renaming={renamingPath === item.path}
+                    renameDraft={renameDraft}
+                    onRenameDraftChange={setRenameDraft}
+                    onRenameCommit={commitRename}
+                    onRenameCancel={() => {
+                      setRenamingPath(null)
+                      setRenameDraft('')
+                    }}
                     onClick={(event) => handleItemClick(item, event)}
+                    onContextMenu={(event) => openItemContextMenu(event, item)}
                     showBreadcrumb={isSearching}
                   />
                 ))}
@@ -863,6 +1367,53 @@ export function CapabilityExplorer({
           </footer>
         </section>
       </div>
+
+      <ContextMenu
+        open={contextMenu.open}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={contextMenuItems}
+        onClose={() => setContextMenu((current) => ({ ...current, open: false }))}
+      />
+
+      <Modal
+        open={deleteCandidates != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteCandidates(null)
+        }}
+        title="确认删除"
+        description="这些文件将从磁盘删除，但可通过 git 或文件系统恢复。"
+        size="sm"
+        footer={
+          <>
+            <ModalClose asChild>
+              <Button variant="ghost" size="sm">
+                取消
+              </Button>
+            </ModalClose>
+            <Button variant="danger" size="sm" onClick={() => void doDelete()}>
+              删除
+            </Button>
+          </>
+        }
+      >
+        {deleteCandidates && (
+          <ul className="grid max-h-64 gap-2 overflow-auto">
+            {deleteCandidates.map((path) => {
+              const item = filteredItems.find((i) => i.path === path)
+              return (
+                <li
+                  key={path}
+                  className="rounded-sm border border-danger/20 bg-danger-soft px-3 py-2 text-small text-danger-foreground"
+                >
+                  <div className="font-medium">{item?.name ?? fileNameOf(path)}</div>
+                  <code className="text-caption text-ink-muted">{path}</code>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -870,12 +1421,26 @@ export function CapabilityExplorer({
 function CapabilityTile({
   item,
   selected,
+  cut,
+  renaming,
+  renameDraft,
+  onRenameDraftChange,
+  onRenameCommit,
+  onRenameCancel,
   onClick,
+  onContextMenu,
   showBreadcrumb,
 }: {
   item: CapabilityAdminItem
   selected: boolean
+  cut?: boolean
+  renaming?: boolean
+  renameDraft?: string
+  onRenameDraftChange?: (value: string) => void
+  onRenameCommit?: () => void
+  onRenameCancel?: () => void
   onClick: (event: ReactMouseEvent) => void
+  onContextMenu: (event: ReactMouseEvent) => void
   showBreadcrumb?: boolean
 }) {
   const kind = kindMeta(item)
@@ -886,9 +1451,11 @@ function CapabilityTile({
       type="button"
       data-item={item.path}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className={cn(
         'group flex flex-col items-center gap-2 rounded-md border border-transparent p-3 text-left transition-colors duration-fast',
         'hover:bg-surface-muted focus-visible:outline-none focus-visible:shadow-focus',
+        cut && 'opacity-50',
       )}
     >
       <span
@@ -903,9 +1470,18 @@ function CapabilityTile({
         <kind.Icon className="h-6 w-6" />
       </span>
       <div className="grid min-w-0 gap-0.5 text-center">
-        <span className="truncate text-[14px] font-medium text-ink">
-          {item.name}
-        </span>
+        {renaming ? (
+          <RenameInput
+            value={renameDraft ?? item.name}
+            onChange={onRenameDraftChange ?? (() => {})}
+            onCommit={onRenameCommit ?? (() => {})}
+            onCancel={onRenameCancel ?? (() => {})}
+          />
+        ) : (
+          <span className="truncate text-[14px] font-medium text-ink">
+            {item.name}
+          </span>
+        )}
         {item.description && (
           <span className="line-clamp-2 text-[12.5px] leading-relaxed text-ink-subtle">
             {item.description}
@@ -925,12 +1501,26 @@ function CapabilityTile({
 function CapabilityRow({
   item,
   selected,
+  cut,
+  renaming,
+  renameDraft,
+  onRenameDraftChange,
+  onRenameCommit,
+  onRenameCancel,
   onClick,
+  onContextMenu,
   showBreadcrumb,
 }: {
   item: CapabilityAdminItem
   selected: boolean
+  cut?: boolean
+  renaming?: boolean
+  renameDraft?: string
+  onRenameDraftChange?: (value: string) => void
+  onRenameCommit?: () => void
+  onRenameCancel?: () => void
   onClick: (event: ReactMouseEvent) => void
+  onContextMenu: (event: ReactMouseEvent) => void
   showBreadcrumb?: boolean
 }) {
   const kind = kindMeta(item)
@@ -941,9 +1531,11 @@ function CapabilityRow({
       type="button"
       data-item={item.path}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className={cn(
         'flex items-center gap-3 rounded-md px-3 py-2 text-left transition-colors duration-fast',
         'hover:bg-surface-muted focus-visible:outline-none focus-visible:shadow-focus',
+        cut && 'opacity-50',
       )}
     >
       <span
@@ -959,9 +1551,18 @@ function CapabilityRow({
       </span>
       <div className="grid min-w-0 flex-1 gap-0.5">
         <div className="flex items-baseline gap-2">
-          <span className="truncate text-[14px] font-medium text-ink">
-            {item.name}
-          </span>
+          {renaming ? (
+            <RenameInput
+              value={renameDraft ?? item.name}
+              onChange={onRenameDraftChange ?? (() => {})}
+              onCommit={onRenameCommit ?? (() => {})}
+              onCancel={onRenameCancel ?? (() => {})}
+            />
+          ) : (
+            <span className="truncate text-[14px] font-medium text-ink">
+              {item.name}
+            </span>
+          )}
           <StatusLine item={item} />
         </div>
         {item.description && (
@@ -976,6 +1577,55 @@ function CapabilityRow({
         )}
       </div>
     </button>
+  )
+}
+
+function RenameInput({
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}) {
+  const valid = isValidMachineName(value.trim())
+  return (
+    <div className="grid gap-1">
+      <input
+        type="text"
+        value={value}
+        autoFocus
+        className={cn(
+          'w-full rounded-xs border bg-surface-raised px-2 py-1 text-[14px] font-medium text-ink',
+          'focus-visible:outline-none focus-visible:shadow-focus',
+          valid
+            ? 'border-border'
+            : 'border-danger focus-visible:border-danger',
+        )}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Enter') {
+            if (valid) onCommit()
+          } else if (e.key === 'Escape') {
+            onCancel()
+          }
+        }}
+        onBlur={() => {
+          if (valid) onCommit()
+          else onCancel()
+        }}
+        onClick={(e) => e.stopPropagation()}
+      />
+      {!valid && value.trim().length > 0 && (
+        <span className="text-caption text-danger">
+          仅小写、数字、-、_
+        </span>
+      )}
+    </div>
   )
 }
 
