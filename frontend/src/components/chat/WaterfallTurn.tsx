@@ -325,7 +325,7 @@ function WaterfallTurnView({
               <p>{turn.failure.userMessage}</p>
               {turn.failure.recoveryAction === 'user_input' &&
                 turn.failure.code === 'model_not_configured' && (
-                <p className="mt-1 text-caption opacity-80">
+                <p className="mt-1 text-small opacity-80">
                   尚未配置模型服务：请在 backend/application-local.yml 填入 API
                   Key，并以 local profile 重启后端。
                 </p>

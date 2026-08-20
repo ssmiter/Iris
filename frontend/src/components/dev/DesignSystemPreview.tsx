@@ -23,6 +23,7 @@ import {
   Modal,
   ModalClose,
   ToastHost,
+  Tooltip,
   notify,
 } from '@/components/ui'
 import { cn } from '@/lib/cn'
@@ -232,7 +233,9 @@ export function DesignSystemPreview() {
                 发送
               </Button>
               <Button variant="secondary">保存草稿</Button>
-              <Button variant="ghost">稍后处理</Button>
+              <Tooltip content="收入待办，不打断当前对话">
+                <Button variant="ghost">稍后处理</Button>
+              </Tooltip>
               <Button variant="danger">删除记录</Button>
               <Button isLoading loadingLabel="保存中…">
                 保存

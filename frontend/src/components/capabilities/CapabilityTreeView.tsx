@@ -494,7 +494,7 @@ export function CapabilityTreeView({
         </nav>
 
         <section className="scrollbar-subtle grid min-h-0 content-start gap-3 overflow-y-auto">
-          <header className="grid gap-1 border-b border-border pb-3">
+          <header className="grid gap-1 border-b border-border/75 pb-3">
             <div className="flex items-baseline gap-2">
               <h3 className="text-body font-semibold text-ink">
                 {selectedNode?.title || selectedNode?.name || selectedPath}
@@ -552,7 +552,7 @@ export function CapabilityTreeView({
               />
             )
           ) : (
-            <div className="grid divide-y divide-border">
+            <div className="grid divide-y divide-border/75">
               {visibleItems.map((item) => (
                 <CapabilityCard
                   key={item.path}
@@ -842,7 +842,7 @@ function DetailPanel({
   onOpenMcp: (serverId?: string) => void
 }) {
   return (
-    <div className="mt-3 grid animate-node-enter gap-3 border-t border-border pt-3 motion-reduce:animate-none">
+    <div className="mt-3 grid animate-node-enter gap-3 border-t border-border/75 pt-3 motion-reduce:animate-none">
       <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
         <code className="break-all">{item.path}</code>
         {item.version && <span>v{item.version}</span>}
@@ -862,13 +862,13 @@ function DetailPanel({
             <p className="text-small text-ink-muted">定义读取失败。</p>
           )}
           {state?.status === 'ready' && state.detail.definition !== null && (
-            <pre className="scrollbar-subtle max-h-64 overflow-auto rounded-md bg-surface-muted p-3 font-mono text-caption leading-relaxed text-ink-subtle">
+            <pre className="scrollbar-subtle max-h-64 overflow-auto rounded-md bg-surface-muted p-3 font-mono text-small leading-relaxed text-ink-subtle">
               {JSON.stringify(state.detail.definition, null, 2)}
             </pre>
           )}
           {state?.status === 'ready' && state.detail.recentRuns != null && (
             <div className="grid gap-1.5">
-              <p className="text-caption font-semibold text-ink-muted">
+              <p className="text-caption font-medium text-ink-muted">
                 最近运行
               </p>
               {state.detail.recentRuns.length === 0 ? (

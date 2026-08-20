@@ -161,7 +161,7 @@ canvas: 'rgb(var(--color-canvas) / <alpha-value>)'
 | `surface-muted` | `#F0F1EC` | 次级区块、hover |
 | `text` | `#1F211E` | 主文本 |
 | `text-subtle` | `#62675F` | 次文本 |
-| `text-muted` | `#858B82` | 辅助信息 |
+| `text-muted` | `#7C8279` | 辅助信息 |
 | `border` | `#E2E4DE` | 常规边界 |
 | `border-strong` | `#C7CBC2` | active/分隔强调 |
 | `primary` | `#575FC7` | 主动作 |
@@ -228,7 +228,7 @@ mono:
 | body | `15 / 25` | 400 | 对话与正文 |
 | body-strong | `15 / 25` | 600 | 重要短句 |
 | small | `13 / 19` | 400/600 | 组件辅助信息 |
-| caption | `11.5 / 16` | 500 | 时间、状态、元数据 |
+| caption | `12 / 17` | 500 | 时间、状态、元数据 |
 | code | `13 / 20` | 400 | 参数、路径、代码 |
 
 正文默认 15px，直接继承 WonWork 在长对话中的可读尺度；基础组件不得用任意 `text-[Npx]` 创造新层级。

@@ -284,8 +284,12 @@
     vertical-align: bottom;
   }
 
-  /* 小字号中文标签字重克制：prose 内 caption/small 不撑到 650 */
-  .answer-prose .text-caption,
+  /* 小字号中文字重克制：caption 在 prose 内保持 token 的 500，
+     small 压到 600 上限，都不撑到 650。 */
+  .answer-prose .text-caption {
+    font-weight: 500;
+  }
+
   .answer-prose .text-small {
     font-weight: 600;
   }

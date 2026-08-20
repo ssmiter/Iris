@@ -10,8 +10,10 @@ const cardVariants = cva('rounded-md text-ink', {
   variants: {
     variant: {
       plain: 'bg-transparent',
-      outlined: 'border border-border bg-surface shadow-hairline',
-      raised: 'border border-border/80 bg-surface-raised shadow-raised',
+      // 一整块画布收敛：默认描边降权（/75）并去掉 hairline 投影，
+      // 卡片靠留白与底色分层，不靠边线划格。
+      outlined: 'border border-border/75 bg-surface',
+      raised: 'border border-border/60 bg-surface-raised shadow-raised',
     },
     padding: {
       none: '',

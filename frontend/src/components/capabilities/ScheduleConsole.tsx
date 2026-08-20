@@ -370,7 +370,7 @@ function ScheduleEditor({
 
       {current && (
         <div className="grid gap-1.5">
-          <p className="text-caption font-semibold text-ink-muted">
+          <p className="text-caption font-medium text-ink-muted">
             最近触发
           </p>
           {executions === null ? (

@@ -3,6 +3,7 @@ import type { AnswerNode } from '@/domain/chat/models'
 import { useChatStore } from '@/stores/chatStore'
 import { useReveal } from '@/motion/useReveal'
 import { Button } from '@/components/ui/Button'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { IncrementalMarkdown } from './IncrementalMarkdown'
@@ -58,29 +59,30 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
       aria-busy={revealing}
     >
       {hasContent && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          title={copied ? '已复制' : '复制回答'}
-          className={cn(
-            'absolute -top-1 -right-1 z-10 h-8 w-8 rounded-xs p-0',
-            'opacity-0 transition-opacity duration-fast ease-standard',
-            'group-hover:opacity-100 focus-visible:opacity-100',
-            'motion-reduce:transition-none',
-            copied && 'text-success',
-          )}
-          onClick={handleCopy}
-        >
-          {copied
-            ? (
-                <Check size={16} aria-hidden="true" />
-              )
-            : (
-                <Copy size={16} aria-hidden="true" />
-              )}
-          <span className="sr-only">{copied ? '已复制' : '复制回答'}</span>
-        </Button>
+        <Tooltip content={copied ? '已复制' : '复制回答'}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'absolute -top-1 -right-1 z-10 h-8 w-8 rounded-xs p-0',
+              'opacity-0 transition-opacity duration-fast ease-standard',
+              'group-hover:opacity-100 focus-visible:opacity-100',
+              'motion-reduce:transition-none',
+              copied && 'text-success',
+            )}
+            onClick={handleCopy}
+          >
+            {copied
+              ? (
+                  <Check size={16} aria-hidden="true" />
+                )
+              : (
+                  <Copy size={16} aria-hidden="true" />
+                )}
+            <span className="sr-only">{copied ? '已复制' : '复制回答'}</span>
+          </Button>
+        </Tooltip>
       )}
       <div className="answer-prose prose prose-sm max-w-none text-ink">
         {streaming ? (

@@ -62,6 +62,10 @@ export default {
           soft: color('teal-soft'),
           foreground: color('teal-foreground'),
         },
+        tooltip: {
+          DEFAULT: color('tooltip'),
+          foreground: color('tooltip-foreground'),
+        },
       },
       fontFamily: {
         // 与 styles/base.css body 栈保持一致（macOS 系统字体打头）
@@ -84,7 +88,9 @@ export default {
         heading: ['1.125rem', { lineHeight: '1.625rem', fontWeight: '600' }],
         body: ['0.9375rem', { lineHeight: '1.5625rem' }],
         small: ['0.8125rem', { lineHeight: '1.1875rem' }],
-        caption: ['0.71875rem', { lineHeight: '1rem', fontWeight: '500' }],
+        // 第二波干净度收敛：中文 ≤11.5px 在 Windows 灰度渲染下发虚，
+        // caption 下限提到 12px（12/17，字重保持 500 克制）。
+        caption: ['0.75rem', { lineHeight: '1.0625rem', fontWeight: '500' }],
       },
       spacing: {
         4.5: '1.125rem',

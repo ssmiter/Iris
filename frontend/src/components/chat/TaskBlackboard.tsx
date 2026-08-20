@@ -204,7 +204,7 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
                 </p>
               )}
               {shown.blockers.length > 0 && shown.pendingDecisions.length === 0 && (
-                <p className="mt-2 text-caption text-warning">
+                <p className="mt-2 text-small text-warning">
                   卡点：{shown.blockers.join('；')}
                 </p>
               )}
@@ -232,7 +232,7 @@ export function TaskBlackboard({ tasks }: TaskBlackboardProps) {
                             </span>
                           </div>
                           {outcome && (
-                            <p className="mt-0.5 line-clamp-2 text-caption leading-relaxed text-ink-muted">
+                            <p className="mt-0.5 line-clamp-2 text-small leading-relaxed text-ink-muted">
                               {outcome}
                             </p>
                           )}

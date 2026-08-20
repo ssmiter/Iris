@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { Button } from './Button'
+import { Tooltip } from './Tooltip'
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
 
@@ -68,7 +69,7 @@ export function Modal({
             'motion-reduce:animate-none',
           )}
         >
-          <header className="flex items-start justify-between gap-5 border-b border-border px-5 py-4 sm:px-6">
+          <header className="flex items-start justify-between gap-5 border-b border-border/70 px-5 py-4 sm:px-6">
             <div className="grid gap-1">
               <Dialog.Title className="text-heading text-ink">
                 {title}
@@ -79,16 +80,18 @@ export function Modal({
                 </Dialog.Description>
               )}
             </div>
-            <Dialog.Close asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="-mr-2 -mt-1 h-9 w-9"
-                aria-label="关闭对话框"
-              >
-                <X aria-hidden="true" className="h-4 w-4" />
-              </Button>
-            </Dialog.Close>
+            <Tooltip content="关闭" placement="bottom">
+              <Dialog.Close asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="-mr-2 -mt-1 h-9 w-9"
+                  aria-label="关闭对话框"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              </Dialog.Close>
+            </Tooltip>
           </header>
           <div
             className={cn(
@@ -101,7 +104,7 @@ export function Modal({
             {children}
           </div>
           {footer && (
-            <footer className="flex flex-wrap justify-end gap-2 border-t border-border bg-surface px-5 py-4 sm:px-6">
+            <footer className="flex flex-wrap justify-end gap-2 border-t border-border/70 bg-surface px-5 py-4 sm:px-6">
               {footer}
             </footer>
           )}

@@ -23,6 +23,7 @@ import { useViewStateStore } from '@/stores/viewStateStore'
 import { useShellOverlayStore } from '@/stores/shellOverlayStore'
 import { useChatStore } from '@/stores/chatStore'
 import { Button, notify } from '@/components/ui'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { pushEscLayer } from '@/lib/escLayerStack'
 import { cn } from '@/lib/cn'
 
@@ -105,19 +106,20 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
       <div className="flex h-[var(--topbar-height)] shrink-0 items-center justify-between gap-1 px-3">
         <span className="text-small font-semibold text-ink">对话</span>
         <span className="flex items-center">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            aria-label="搜索对话（Ctrl+K）"
-            title="搜索对话 · Ctrl+K"
-            onClick={() => {
-              setSearchOpen(true)
-              if (mobile) setMobileSidebarOpen(false)
-            }}
-          >
-            <Search aria-hidden="true" className="h-4 w-4" />
-          </Button>
+          <Tooltip content="搜索对话 · Ctrl+K">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              aria-label="搜索对话（Ctrl+K）"
+              onClick={() => {
+                setSearchOpen(true)
+                if (mobile) setMobileSidebarOpen(false)
+              }}
+            >
+              <Search aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          </Tooltip>
           <Button
             variant="ghost"
             size="icon"

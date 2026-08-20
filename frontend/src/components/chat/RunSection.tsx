@@ -48,7 +48,7 @@ export const RunSection = memo(function RunSection({
         <GitBranch aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-small font-semibold text-ink">{run.purpose}</p>
+            <p className="text-small font-medium text-ink">{run.purpose}</p>
             <Badge tone="info">固定流程</Badge>
           </div>
           <p className="mt-1 text-small text-ink-subtle">

@@ -25,6 +25,7 @@ import go from 'react-syntax-highlighter/dist/esm/languages/prism/go'
 import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust'
 
 import { Button } from '@/components/ui/Button'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
@@ -137,23 +138,24 @@ function CopyButton({ text, title = '复制', className, size = 'md' }: CopyButt
   const iconSize = size === 'sm' ? 14 : 16
 
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      title={copied ? '已复制' : title}
-      className={cn('shrink-0', className)}
-      onClick={handleCopy}
-    >
-      {copied
-        ? (
-            <Check size={iconSize} className="text-success" aria-hidden="true" />
-          )
-        : (
-            <Copy size={iconSize} aria-hidden="true" />
-          )}
-      <span className="sr-only">{copied ? '已复制' : title}</span>
-    </Button>
+    <Tooltip content={copied ? '已复制' : title}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn('shrink-0', className)}
+        onClick={handleCopy}
+      >
+        {copied
+          ? (
+              <Check size={iconSize} className="text-success" aria-hidden="true" />
+            )
+          : (
+              <Copy size={iconSize} aria-hidden="true" />
+            )}
+        <span className="sr-only">{copied ? '已复制' : title}</span>
+      </Button>
+    </Tooltip>
   )
 }
 

@@ -237,7 +237,7 @@ export function TurnRail({ turns, onScrollToTurn }: TurnRailProps) {
             maxHeight: 'calc(100dvh - var(--topbar-height) - 24px)',
           }}
         >
-          <div className="border-b border-border px-3 py-2 text-small font-medium text-ink">
+          <div className="border-b border-border/75 px-3 py-2 text-small font-medium text-ink">
             轮次目录
           </div>
           <div className="max-h-[min(420px,calc(100dvh-var(--topbar-height)-80px))] overflow-y-auto p-1.5 scrollbar-subtle">

@@ -266,7 +266,7 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
             <ChevronLeft aria-hidden="true" className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-small font-semibold text-ink">
+            <p className="truncate text-small font-medium text-ink">
               {run?.purpose ?? '子运行'}
             </p>
             {run?.progressSummary && (

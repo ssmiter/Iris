@@ -8,7 +8,10 @@
   --primitive-neutral-100: 240 241 236;
   --primitive-neutral-200: 226 228 222;
   --primitive-neutral-300: 199 203 194;
-  --primitive-neutral-500: 133 139 130;
+  /* 第二波干净度收敛：muted 作为"大段辅助文字"时 3.26:1 偏浅，
+     往深压 ~7%（133/139/130 → 124/130/121），canvas 上对比升到 ~3.7:1；
+     只动文字色，不动结构性用色。 */
+  --primitive-neutral-500: 124 130 121;
   --primitive-neutral-600: 98 103 95;
   --primitive-neutral-900: 31 33 30;
 
@@ -60,6 +63,10 @@
   --color-teal: 20 125 115;
   --color-teal-soft: 224 242 239;
   --color-teal-foreground: 15 90 82;
+
+  /* Tooltip 黑胶囊：近墨色底 + 反转文字，亮色下即"深色胶囊"。 */
+  --color-tooltip: 31 33 30;
+  --color-tooltip-foreground: 250 250 247;
 
   /* Component-level defaults. */
   --control-height-sm: 2rem;
@@ -141,6 +148,11 @@
   --shadow-hairline: 0 1px 0 rgb(255 255 255 / 0.04);
   --shadow-raised: 0 10px 28px rgb(0 0 0 / 0.24);
   --shadow-floating: 0 20px 56px rgb(0 0 0 / 0.36);
+
+  /* Tooltip 胶囊（暗色）：比 surface-raised 再亮半层的浮起面 + 主文字色，
+     与亮色的深色胶囊同为"离布一层"的语义。 */
+  --color-tooltip: 47 52 45;
+  --color-tooltip-foreground: 240 241 236;
 }
 
 /* 色调维度（docs/07 §18.3）：只偏移中性面，不碰语义色与品牌色。

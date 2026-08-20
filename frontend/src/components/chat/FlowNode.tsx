@@ -19,6 +19,7 @@ import type {
   RenderNode,
 } from '@/domain/chat/models'
 import { Badge, Button } from '@/components/ui'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { cn } from '@/lib/cn'
 import { riskMeta } from '@/domain/capability/riskMeta'
 import { ArtifactCard } from './ArtifactCard'
@@ -268,31 +269,32 @@ function ArgsLine({ args }: { args: string }) {
   const truncated = args.length > 120
   const display = truncated && !expanded ? `${args.slice(0, 120)}…` : args
   return (
-    <div
-      className={cn(
-        'rounded-xs bg-surface-muted px-3 py-2 font-mono text-caption text-ink-subtle',
-        truncated && 'cursor-pointer',
-      )}
-      title={truncated ? (expanded ? '点击收起' : '点击展开') : undefined}
-      onClick={truncated ? () => setExpanded((v) => !v) : undefined}
-    >
-      <span className="break-all">{display}</span>
-      {truncated && (
-        expanded
-          ? (
-              <ChevronUp
-                aria-hidden="true"
-                className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
-              />
-            )
-          : (
-              <ChevronDown
-                aria-hidden="true"
-                className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
-              />
-            )
-      )}
-    </div>
+    <Tooltip content={truncated ? (expanded ? '点击收起' : '点击展开') : undefined}>
+      <div
+        className={cn(
+          'rounded-xs bg-surface-muted px-3 py-2 font-mono text-caption text-ink-subtle',
+          truncated && 'cursor-pointer',
+        )}
+        onClick={truncated ? () => setExpanded((v) => !v) : undefined}
+      >
+        <span className="break-all">{display}</span>
+        {truncated && (
+          expanded
+            ? (
+                <ChevronUp
+                  aria-hidden="true"
+                  className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
+                />
+              )
+            : (
+                <ChevronDown
+                  aria-hidden="true"
+                  className="ml-1 inline h-3.5 w-3.5 align-text-bottom text-ink-muted"
+                />
+              )
+        )}
+      </div>
+    </Tooltip>
   )
 }
 

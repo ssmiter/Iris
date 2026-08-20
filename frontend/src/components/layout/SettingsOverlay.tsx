@@ -4,6 +4,7 @@ import { permissionModeOptions, type PermissionMode } from '@/domain/chat/input'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { useShellOverlayStore } from '@/stores/shellOverlayStore'
 import { pushEscLayer } from '@/lib/escLayerStack'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { cn } from '@/lib/cn'
 import type { Accent, Hue, MotionPreference, Theme } from '@/theme/theme'
 
@@ -82,23 +83,23 @@ function OptionRow<T extends string>({
       {options.map((option) => {
         const selected = option.value === value
         return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            title={option.hint}
-            className={cn(
-              'rounded-sm border px-3.5 py-2 text-small transition-colors duration-fast',
-              'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
-              selected
-                ? 'border-primary/50 bg-primary-soft font-medium text-ink'
-                : 'border-border bg-surface-raised text-ink-subtle hover:border-border-strong hover:text-ink',
-            )}
-            onClick={() => onChange(option.value)}
-          >
-            {option.label}
-          </button>
+          <Tooltip key={option.value} content={option.hint}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={cn(
+                'rounded-sm border px-3.5 py-2 text-small transition-colors duration-fast',
+                'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
+                selected
+                  ? 'border-primary/50 bg-primary-soft font-medium text-ink'
+                  : 'border-border bg-surface-raised text-ink-subtle hover:border-border-strong hover:text-ink',
+              )}
+              onClick={() => onChange(option.value)}
+            >
+              {option.label}
+            </button>
+          </Tooltip>
         )
       })}
     </div>
@@ -182,30 +183,30 @@ export function SettingsOverlay() {
             {accentOptions.map((option) => {
               const selected = option.value === accent
               return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={option.label}
-                  title={option.label}
-                  className={cn(
-                    'grid h-9 w-9 place-items-center rounded-full transition-transform duration-fast',
-                    'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
-                    selected ? 'scale-105' : 'hover:scale-105',
-                  )}
-                  style={{
-                    backgroundColor: option.swatch,
-                    boxShadow: selected
-                      ? `0 0 0 2px rgb(var(--color-canvas)), 0 0 0 4px ${option.swatch}`
-                      : undefined,
-                  }}
-                  onClick={() => setAccent(option.value)}
-                >
-                  {selected && (
-                    <Check aria-hidden="true" className="h-4 w-4 text-white" />
-                  )}
-                </button>
+                <Tooltip key={option.value} content={option.label}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={option.label}
+                    className={cn(
+                      'grid h-9 w-9 place-items-center rounded-full transition-transform duration-fast',
+                      'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
+                      selected ? 'scale-105' : 'hover:scale-105',
+                    )}
+                    style={{
+                      backgroundColor: option.swatch,
+                      boxShadow: selected
+                        ? `0 0 0 2px rgb(var(--color-canvas)), 0 0 0 4px ${option.swatch}`
+                        : undefined,
+                    }}
+                    onClick={() => setAccent(option.value)}
+                  >
+                    {selected && (
+                      <Check aria-hidden="true" className="h-4 w-4 text-white" />
+                    )}
+                  </button>
+                </Tooltip>
               )
             })}
           </div>
