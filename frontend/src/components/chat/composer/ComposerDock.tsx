@@ -5,10 +5,10 @@ import {
   useState,
 } from 'react'
 import {
+  ArrowUp,
   GitBranch,
   Paperclip,
   Quote,
-  Send,
   Square,
   Upload,
   X,
@@ -19,6 +19,7 @@ import type {
 } from '@/domain/chat/input'
 import { permissionModeOptions } from '@/domain/chat/input'
 import { Button, notify } from '@/components/ui'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { cn } from '@/lib/cn'
 import { ComposerTextarea } from './ComposerTextarea'
 import { PermissionModeSelect } from './PermissionModeSelect'
@@ -241,49 +242,13 @@ export function ComposerDock({
             />
           </div>
         )}
-        {(quotes.length > 0 || attachments.length > 0) && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {quotes.map((quote) => (
-              <span
-                key={quote.id}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-primary/25 bg-primary-soft px-2 py-1 text-caption text-ink"
-              >
-                <Quote aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
-                <span className="truncate">{quote.text}</span>
-                <button
-                  type="button"
-                  className="rounded-sm text-ink-muted hover:text-ink"
-                  aria-label="移除引用"
-                  onClick={() => onRemoveQuote?.(quote.id)}
-                >
-                  <X aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))}
-            {attachments.map((attachment) => (
-              <span
-                key={attachment.artifactRef}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 py-1 text-caption text-ink"
-              >
-                <Paperclip aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
-                <span className="truncate">{attachment.name}</span>
-                <button
-                  type="button"
-                  className="rounded-sm text-ink-muted hover:text-ink"
-                  aria-label={`移除附件 ${attachment.name}`}
-                  onClick={() => onRemoveAttachment?.(attachment.artifactRef)}
-                >
-                  <X aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
 
-        {
-          /* 焦点双环：浮起阴影 + 1px primary 色环——输入位被锚定，不靠边框变粗 */
-        }
-        <div className="relative rounded-xl border border-border/70 bg-surface-raised/95 p-2 shadow-hairline backdrop-blur-md transition-[border-color,box-shadow] duration-fast focus-within:border-primary/35 focus-within:shadow-[var(--shadow-raised),0_0_0_1px_rgb(var(--color-primary)/0.3)] motion-reduce:transition-none"
+        {/*
+          单胶囊形态（第二波收敛）：靠 shadow-floating 托起而非边框——
+          焦点只叠加 1px primary 色环，不切换阴影层级。textarea 无边框
+          融入胶囊；attach / 权限 / 宽度 / 水位 / 发送全部收进同一行。
+        */}
+        <div className="relative rounded-xl border border-border/60 bg-surface-raised shadow-floating transition-[border-color,box-shadow] duration-fast focus-within:border-primary/35 focus-within:shadow-[var(--shadow-floating),0_0_0_1px_rgb(var(--color-primary)/0.3)] motion-reduce:transition-none"
         >
           {isDragOver && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-primary/50 bg-surface/80 text-small text-ink-subtle">
@@ -292,23 +257,50 @@ export function ComposerDock({
             </div>
           )}
 
-          <div className="flex items-end gap-2 px-2 pt-1">
-            <ComposerTextarea
-              value={value}
-              disabled={submitting}
-              placeholder={placeholder}
-              aria-label={activeTurn ? '补充当前任务' : '发送消息给 Iris'}
-              onChange={(event) => onValueChange(event.target.value)}
-              onSubmit={submit}
-              onKeyDown={handleKeyDown}
-            />
-          </div>
+          {(quotes.length > 0 || attachments.length > 0) && (
+            <div className="flex flex-wrap gap-1.5 px-2 pt-2">
+              {quotes.map((quote) => (
+                <span
+                  key={quote.id}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-primary/25 bg-primary-soft px-2 py-1 text-caption text-ink"
+                >
+                  <Quote aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+                  <span className="truncate">{quote.text}</span>
+                  <button
+                    type="button"
+                    className="rounded-sm text-ink-muted hover:text-ink"
+                    aria-label="移除引用"
+                    onClick={() => onRemoveQuote?.(quote.id)}
+                  >
+                    <X aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+              {attachments.map((attachment) => (
+                <span
+                  key={attachment.artifactRef}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-muted px-2 py-1 text-caption text-ink"
+                >
+                  <Paperclip aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+                  <span className="truncate">{attachment.name}</span>
+                  <button
+                    type="button"
+                    className="rounded-sm text-ink-muted hover:text-ink"
+                    aria-label={`移除附件 ${attachment.name}`}
+                    onClick={() => onRemoveAttachment?.(attachment.artifactRef)}
+                  >
+                    <X aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
-          <div className="mt-2 flex min-h-9 items-center gap-1">
+          <div className="flex items-end gap-1 p-1.5">
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-8 w-8 rounded-full"
               aria-label="添加附件"
               onClick={() => fileInput.current?.click()}
             >
@@ -325,91 +317,121 @@ export function ComposerDock({
                 if (files.length > 0) void onAttachmentRequest(files)
               }}
             />
+            <ComposerTextarea
+              value={value}
+              disabled={submitting}
+              placeholder={placeholder}
+              aria-label={activeTurn ? '补充当前任务' : '发送消息给 Iris'}
+              className="py-1"
+              onChange={(event) => onValueChange(event.target.value)}
+              onSubmit={submit}
+              onKeyDown={handleKeyDown}
+            />
+
+            {/* 运行中提示：借胶囊内同一行的空余，空闲态不渲染、不占视觉 */}
+            {activeTurn && (
+              <span className="hidden min-w-0 shrink truncate px-1 py-2 text-caption text-ink-muted sm:block">
+                {supplementReady
+                  ? 'Enter 补充 · Shift+Enter 换行'
+                  : '任务已开始…'}
+              </span>
+            )}
+
             <PermissionModeSelect
               value={permissionMode}
               onChange={onPermissionModeChange}
             />
+            <ConversationWidthToggle />
 
-            {/* 快捷键提示只在运行中出现（指导补充语义）；空闲态不留常驻说明 */}
-            {activeTurn && (
-              <span className="hidden min-w-0 flex-1 truncate px-1 text-caption text-ink-muted sm:block">
-                Enter 补充 · Shift+Enter 换行
+            {/* 上下文水位：常态细环托在发送钮旁；>70% 展开为琥珀细条 + 百分比，
+                >90% 红档——判定沿用 docs/36 M15 P1-7，只改呈现 */}
+            {contextUsage && (
+              <Tooltip
+                content={`上下文用量 ${contextUsage.used.toLocaleString()} / ${contextUsage.limit.toLocaleString()} tokens`}
+              >
+              <span
+                className="flex items-center gap-1.5 px-0.5 py-2 font-mono text-caption text-ink-muted"
+              >
+                {ctxWarn || ctxDanger ? (
+                  <>
+                    <span
+                      className={cn(
+                        'tabular-nums',
+                        ctxDanger ? 'text-danger' : 'text-warning',
+                      )}
+                    >
+                      {ctxPercent}%
+                    </span>
+                    <span
+                      className={cn(
+                        'inline-block h-1 w-9 rounded-full',
+                        ctxDanger ? 'bg-danger/25' : 'bg-warning/25',
+                      )}
+                      aria-hidden="true"
+                    >
+                      <span
+                        className={cn(
+                          'block h-full rounded-full',
+                          ctxDanger ? 'bg-danger' : 'bg-warning',
+                        )}
+                        style={{ width: `${Math.min(ctxPercent, 100)}%` }}
+                      />
+                    </span>
+                  </>
+                ) : (
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="h-3.5 w-3.5 -rotate-90"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
+                      fill="none"
+                      strokeWidth="2.5"
+                      className="stroke-surface-muted"
+                    />
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      className="stroke-success"
+                      strokeDasharray={`${(Math.min(ctxPercent, 100) / 100) * 37.7} 37.7`}
+                    />
+                  </svg>
+                )}
               </span>
+              </Tooltip>
             )}
-            <span className={cn('flex-1', activeTurn && 'sm:hidden')} />
 
             {activeTurn && (
               <Button
-                variant="secondary"
+                variant="primary"
                 size="icon"
-                className="h-9 w-9 rounded-full"
+                className="h-8 w-8 rounded-full bg-ink text-canvas hover:bg-ink/85"
                 aria-label="停止当前任务"
                 disabled={stopRequested}
                 onClick={onStop}
               >
-                <Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />
+                <Square aria-hidden="true" className="h-3 w-3 fill-current" />
               </Button>
             )}
             <Button
               size="icon"
-              className="h-9 w-9 rounded-full"
+              className="h-8 w-8 rounded-full"
               disabled={!canSubmit}
               isLoading={submitting}
               aria-label={activeTurn ? '补充当前任务' : '发送消息'}
               onClick={submit}
             >
-              {!submitting && <Send aria-hidden="true" className="h-4 w-4" />}
+              {!submitting && (
+                <ArrowUp aria-hidden="true" className="h-4 w-4" />
+              )}
             </Button>
-          </div>
-        </div>
-
-        <div className="mt-1.5 flex items-center justify-between px-1 text-caption text-ink-muted">
-          <span>
-            {activeTurn
-              ? supplementReady
-                ? '运行中，现在可以补充说明'
-                : '任务已开始…'
-              : ' '}
-          </span>
-
-          <div className="flex flex-1 items-center justify-end gap-2">
-            <span className="opacity-70">
-              <ConversationWidthToggle />
-            </span>
-
-            {contextUsage && (
-              <span
-                className="flex items-center gap-1.5 font-mono text-caption text-ink-muted"
-                title={`上下文用量 ${contextUsage.used.toLocaleString()} / ${contextUsage.limit.toLocaleString()} tokens`}
-              >
-                <span className={ctxDanger ? 'text-danger' : undefined}>
-                  上下文 {ctxPercent}%
-                </span>
-                <span
-                  className={cn(
-                    'inline-block h-1 w-11 rounded-full',
-                    ctxDanger
-                      ? 'bg-danger/25'
-                      : ctxWarn
-                        ? 'bg-warning/25'
-                        : 'bg-surface-muted',
-                  )}
-                  aria-hidden="true"
-                >
-                  <span
-                    className={cn(
-                      'block h-full rounded-full',
-                      ctxDanger
-                        ? 'bg-danger'
-                        : ctxWarn
-                          ? 'bg-warning'
-                          : 'bg-success',
-                    )}
-                    style={{ width: `${Math.min(ctxPercent, 100)}%` }}
-                  />
-                </span>
-              </span>
-            )}
           </div>
         </div>
 

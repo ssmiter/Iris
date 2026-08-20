@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ShieldCheck } from 'lucide-react'
+import { ChevronDown, ShieldCheck } from 'lucide-react'
 import {
   permissionModeOptions,
   type PermissionMode,
@@ -71,9 +71,9 @@ export function PermissionModeSelect({
         type="button"
         onClick={() => setOpen((previous) => !previous)}
         className={cn(
-          'inline-flex h-8 items-center gap-1.5 rounded-xs px-2',
-          'font-mono text-caption text-ink-subtle',
-          'hover:bg-surface-muted',
+          'inline-flex h-8 items-center gap-1 rounded-xs px-1.5',
+          'font-mono text-caption text-ink-muted',
+          'hover:bg-surface-muted hover:text-ink-subtle',
           'focus-visible:outline-none focus-visible:shadow-focus',
         )}
         title={`${current.description}（Shift+Tab 快速切换）`}
@@ -81,8 +81,9 @@ export function PermissionModeSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <ShieldCheck aria-hidden="true" className="h-3.5 w-3.5" />
+        <ShieldCheck aria-hidden="true" className="h-3 w-3" />
         <span>{current.label}</span>
+        <ChevronDown aria-hidden="true" className="h-3 w-3 opacity-60" />
       </button>
 
       {open && (
