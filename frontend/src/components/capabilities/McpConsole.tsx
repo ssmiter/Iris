@@ -1,5 +1,11 @@
 import { useEffect, useState, type ComponentProps, type FormEvent } from 'react'
-import { ChevronDown, ChevronRight, Plus, RefreshCw } from 'lucide-react'
+import {
+  ChevronRight,
+  Loader2,
+  Plug,
+  Plus,
+  RefreshCw,
+} from 'lucide-react'
 import {
   capabilityManagementApi,
   type McpServerDraft,
@@ -8,7 +14,14 @@ import {
 } from '@/api/irisApi'
 import { Badge, Button, Input, notify } from '@/components/ui'
 import { cn } from '@/lib/cn'
-import { EditorHeading, EnableSwitch, QuietState } from './controls'
+import { riskMeta } from '@/domain/capability/riskMeta'
+import {
+  EditorHeading,
+  EnableSwitch,
+  INDENT_AFTER_CHEVRON,
+  QuietState,
+  useFocusReturn,
+} from './controls'
 
 const emptyMcp: McpServerDraft = {
   slug: '',
@@ -39,6 +52,8 @@ export function McpConsole({
   const [editing, setEditing] = useState<McpServerView | undefined | null>(null)
   const [expandedServer, setExpandedServer] = useState<string | null>(null)
   const [serverTools, setServerTools] = useState<Record<string, McpToolView[]>>({})
+  const { rootRef, captureFocusKey, restoreFocus } =
+    useFocusReturn<HTMLDivElement>()
 
   useEffect(() => {
     let cancelled = false
@@ -128,116 +143,178 @@ export function McpConsole({
     }
   }
 
-  if (editing !== null) {
-    return (
-      <McpEditor
-        current={editing}
-        onCancel={() => setEditing(null)}
-        onSaved={(server) => {
-          setServers((items) =>
-            items.some((item) => item.serverId === server.serverId)
-              ? replaceBy(items, server)
-              : [...items, server],
-          )
-          setEditing(null)
-        }}
-      />
-    )
+  const closeEditor = () => {
+    setEditing(null)
+    restoreFocus()
   }
 
   return (
-    <section className="grid gap-3">
-      <EditorHeading title="MCP 连接" onCancel={onBack} backLabel="返回能力树" />
-      <div className="flex items-start justify-between gap-5 px-1">
-        <p className="text-small leading-relaxed text-ink-muted">
-          Iris 保存连接方式与凭据环境变量名；连通后远端工具进入同一审批和执行链路，并出现在能力树上。支持 Streamable HTTP 与 stdio 本地进程。
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => setEditing(undefined)}>
-          <Plus className="h-3.5 w-3.5" />
-          添加 MCP
-        </Button>
-      </div>
-      {loading ? (
-        <QuietState>正在读取 MCP 连接…</QuietState>
-      ) : servers.length === 0 ? (
-        <QuietState>还没有 MCP 连接。支持 Streamable HTTP 与 stdio 本地进程。</QuietState>
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+      {editing !== null ? (
+        <McpEditor
+          current={editing}
+          onCancel={closeEditor}
+          onSaved={(server) => {
+            setServers((items) =>
+              items.some((item) => item.serverId === server.serverId)
+                ? replaceBy(items, server)
+                : [...items, server],
+            )
+            closeEditor()
+          }}
+        />
       ) : (
-        servers.map((server) => {
-          const expanded = expandedServer === server.serverId
-          return (
-            <article key={server.serverId} className="rounded-md px-3 py-3 hover:bg-surface-muted">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
-                <button
-                  type="button"
-                  className="min-w-0 text-left"
-                  onClick={() => setExpandedServer(expanded ? null : server.serverId)}
-                >
-                  <div className="flex items-center gap-2">
-                    {expanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 text-ink-muted" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5 text-ink-muted" />
-                    )}
-                    <span className="truncate text-body font-semibold text-ink">
-                      {server.displayName}
-                    </span>
-                    <ConnectionBadge state={server.connectionState} />
-                  </div>
-                  <p className="ml-[1.375rem] mt-1 truncate text-small text-ink-muted">
-                    {server.toolCount} 个工具 · {server.transport === 'stdio' ? server.command ?? 'stdio' : server.endpoint}
-                  </p>
-                </button>
-                <div className="flex items-center gap-1">
-                  {server.enabled && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      aria-label={`重新连接 ${server.displayName}`}
-                      disabled={busyId === server.serverId}
-                      onClick={() => void refreshServer(server)}
-                    >
-                      <RefreshCw className={cn('h-3.5 w-3.5', busyId === server.serverId && 'animate-spin')} />
-                    </Button>
-                  )}
-                  <EnableSwitch
-                    checked={server.enabled}
-                    disabled={busyId === server.serverId}
-                    label={`${server.enabled ? '停用' : '启用'} ${server.displayName}`}
-                    onClick={() => void toggleServer(server)}
-                  />
-                </div>
-              </div>
-              {expanded && (
-                <div className="ml-[1.375rem] mt-3 border-l border-border pl-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <p className="text-small text-ink-subtle">
-                      {server.lastError ?? server.instructions ?? '连接没有提供额外说明。'}
-                    </p>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(server)}>
-                      编辑连接
-                    </Button>
-                  </div>
-                  <div className="grid gap-2">
-                    {(serverTools[server.serverId] ?? []).map((tool) => (
-                      <div key={tool.localName} className="grid gap-0.5">
-                        <div className="flex items-center gap-2 text-small font-semibold text-ink">
-                          {tool.remoteName}
-                          <Badge appearance="outline">{tool.riskLevel}</Badge>
+        <section className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
+          <EditorHeading
+            title="MCP 连接"
+            count={loading ? undefined : servers.length}
+            onCancel={onBack}
+          />
+          <div className="flex items-start justify-between gap-5">
+            <p className="text-small leading-relaxed text-ink-muted">
+              Iris 保存连接方式与凭据环境变量名；连通后远端工具进入同一审批和执行链路，并出现在能力树上。支持 Streamable HTTP 与 stdio 本地进程。
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              data-focus-key="add-mcp"
+              onClick={() => {
+                captureFocusKey('add-mcp')
+                setEditing(undefined)
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              添加 MCP
+            </Button>
+          </div>
+          {loading ? (
+            <QuietState loading title="正在读取 MCP 连接…" />
+          ) : servers.length === 0 ? (
+            <QuietState
+              icon={Plug}
+              title="还没有 MCP 连接。"
+              hint="支持 Streamable HTTP 与 stdio 本地进程。"
+            />
+          ) : (
+            <div className="grid divide-y divide-border">
+              {servers.map((server) => {
+                const expanded = expandedServer === server.serverId
+                const tools = serverTools[server.serverId]
+                return (
+                  <article
+                    key={server.serverId}
+                    className="rounded-md px-3 py-3 transition-colors duration-fast hover:bg-surface-muted"
+                  >
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
+                      <button
+                        type="button"
+                        className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:shadow-focus"
+                        onClick={() =>
+                          setExpandedServer(expanded ? null : server.serverId)
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          <ChevronRight
+                            className={cn(
+                              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-fast ease-standard motion-reduce:transition-none',
+                              expanded && 'rotate-90',
+                            )}
+                          />
+                          <span className="truncate text-body font-semibold text-ink">
+                            {server.displayName}
+                          </span>
+                          <ConnectionBadge state={server.connectionState} />
                         </div>
-                        <p className="line-clamp-2 text-small text-ink-muted">
-                          {tool.description}
+                        <p
+                          className={cn(
+                            INDENT_AFTER_CHEVRON,
+                            'mt-1 truncate text-small text-ink-muted',
+                          )}
+                        >
+                          {server.toolCount} 个工具 · {server.transport === 'stdio' ? server.command ?? 'stdio' : server.endpoint}
                         </p>
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {server.enabled && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`重新连接 ${server.displayName}`}
+                            disabled={busyId === server.serverId}
+                            onClick={() => void refreshServer(server)}
+                          >
+                            <RefreshCw className={cn('h-3.5 w-3.5', busyId === server.serverId && 'animate-spin')} />
+                          </Button>
+                        )}
+                        <EnableSwitch
+                          checked={server.enabled}
+                          disabled={busyId === server.serverId}
+                          label={`${server.enabled ? '停用' : '启用'} ${server.displayName}`}
+                          onClick={() => void toggleServer(server)}
+                        />
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </article>
-          )
-        })
+                    </div>
+                    {expanded && (
+                      <div className="mt-3 animate-node-enter border-t border-border pt-3 motion-reduce:animate-none">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-small text-ink-subtle">
+                            {server.lastError ?? server.instructions ?? '连接没有提供额外说明。'}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            data-focus-key={`mcp-edit-${server.serverId}`}
+                            onClick={() => {
+                              captureFocusKey(`mcp-edit-${server.serverId}`)
+                              setEditing(server)
+                            }}
+                          >
+                            编辑连接
+                          </Button>
+                        </div>
+                        {server.toolCount === 0 ? (
+                          <p className="text-small text-ink-muted">
+                            该连接没有暴露工具。
+                          </p>
+                        ) : tools === undefined ? (
+                          <p className="flex items-center gap-2 text-small text-ink-muted">
+                            <Loader2
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                            />
+                            正在读取工具清单…
+                          </p>
+                        ) : (
+                          <div className="grid gap-2">
+                            {tools.map((tool) => {
+                              const risk = riskMeta(tool.riskLevel)
+                              return (
+                                <div key={tool.localName} className="grid gap-0.5">
+                                  <div className="flex items-center gap-2 text-small font-semibold text-ink">
+                                    {tool.remoteName}
+                                    <Badge tone={risk.tone} appearance="outline">
+                                      {risk.label}
+                                    </Badge>
+                                  </div>
+                                  <p className="line-clamp-2 text-small text-ink-muted">
+                                    {tool.description}
+                                  </p>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
       )}
-    </section>
+    </div>
   )
 }
 
@@ -287,7 +364,10 @@ function McpEditor({
   }
 
   return (
-    <form className="grid gap-4" onSubmit={submit}>
+    <form
+      className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-4 overflow-y-auto"
+      onSubmit={submit}
+    >
       <EditorHeading title={current ? '编辑 MCP 连接' : '添加 MCP 连接'} onCancel={onCancel} backLabel="返回连接" />
       <div className="grid gap-4 sm:grid-cols-2">
         <Input label="连接标识" required value={draft.slug} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} placeholder="office_tools" />

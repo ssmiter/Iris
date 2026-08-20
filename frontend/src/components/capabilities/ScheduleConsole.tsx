@@ -1,13 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Play, Plus, Trash2 } from 'lucide-react'
+import { Clock3, Play, Plus, Trash2 } from 'lucide-react'
 import {
   scheduleApi,
   type ScheduleDraft,
   type ScheduleExecutionView,
   type ScheduleView,
 } from '@/api/irisApi'
-import { Badge, Button, Input, notify } from '@/components/ui'
-import { EditorHeading, EnableSwitch, QuietState, TextArea } from './controls'
+import { Badge, Button, Input, Modal, notify } from '@/components/ui'
+import {
+  EditorHeading,
+  EnableSwitch,
+  QuietState,
+  TextArea,
+  useFocusReturn,
+} from './controls'
 
 const emptySchedule: ScheduleDraft = {
   name: '',
@@ -42,6 +48,8 @@ export function ScheduleConsole({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [editing, setEditing] = useState<ScheduleView | undefined | null>(null)
+  const { rootRef, captureFocusKey, restoreFocus } =
+    useFocusReturn<HTMLDivElement>()
 
   const reload = () => {
     scheduleApi
@@ -111,110 +119,127 @@ export function ScheduleConsole({ onBack }: { onBack: () => void }) {
     }
   }
 
-  if (editing !== null) {
-    return (
-      <ScheduleEditor
-        current={editing}
-        onCancel={() => setEditing(null)}
-        onSaved={(saved, removed) => {
-          setSchedules((items) =>
-            removed
-              ? items.filter((item) => item.taskId !== removed)
-              : items.some((item) => item.taskId === saved?.taskId)
-                ? replaceBy(items, saved!)
-                : saved
-                  ? [...items, saved]
-                  : items,
-          )
-          setEditing(null)
-        }}
-      />
-    )
+  const closeEditor = () => {
+    setEditing(null)
+    restoreFocus()
   }
 
   return (
-    <section className="grid gap-3">
-      <EditorHeading title="定时任务" onCancel={onBack} backLabel="返回能力树" />
-      <div className="flex items-start justify-between gap-5 px-1">
-        <p className="text-small leading-relaxed text-ink-muted">
-          到点以任务的 prompt 自动开启新会话执行；其中的写动作仍会逐次等待你的批准。启用的任务会作为叶子出现在
-          /system/schedule 目录下。
-        </p>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setEditing(undefined)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          新建定时任务
-        </Button>
-      </div>
-      {loading ? (
-        <QuietState>正在读取定时任务…</QuietState>
-      ) : schedules.length === 0 ? (
-        <QuietState>
-          还没有定时任务。也可以直接在对话里让 Iris 帮你创建。
-        </QuietState>
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+      {editing !== null ? (
+        <ScheduleEditor
+          current={editing}
+          onCancel={closeEditor}
+          onSaved={(saved, removed) => {
+            setSchedules((items) =>
+              removed
+                ? items.filter((item) => item.taskId !== removed)
+                : items.some((item) => item.taskId === saved?.taskId)
+                  ? replaceBy(items, saved!)
+                  : saved
+                    ? [...items, saved]
+                    : items,
+            )
+            closeEditor()
+          }}
+        />
       ) : (
-        schedules.map((schedule) => (
-          <article
-            key={schedule.taskId}
-            className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-md px-3 py-3 transition-colors hover:bg-surface-muted"
-          >
-            <button
-              type="button"
-              className="min-w-0 text-left"
-              disabled={busyId === schedule.taskId}
-              onClick={() => setEditing(schedule)}
+        <section className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
+          <EditorHeading
+            title="定时任务"
+            count={loading ? undefined : schedules.length}
+            onCancel={onBack}
+          />
+          <div className="flex items-start justify-between gap-5">
+            <p className="text-small leading-relaxed text-ink-muted">
+              到点以任务的 prompt 自动开启新会话执行；其中的写动作仍会逐次等待你的批准。启用的任务会作为叶子出现在
+              /system/schedule 目录下。
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              data-focus-key="add-schedule"
+              onClick={() => {
+                captureFocusKey('add-schedule')
+                setEditing(undefined)
+              }}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-body font-semibold text-ink">
-                  {schedule.name}
-                </span>
-                <code className="rounded-xs bg-surface-muted px-1.5 py-0.5 text-caption text-ink-subtle">
-                  {schedule.expression}
-                </code>
-                <Badge tone={schedule.enabled ? 'info' : 'neutral'}>
-                  {schedule.enabled ? '已启用' : '已停用'}
-                </Badge>
-                {schedule.once && (
-                  <Badge appearance="outline" tone="warning">单次</Badge>
-                )}
-              </div>
-              <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
-                {schedule.prompt}
-              </p>
-              <p className="mt-1 text-caption text-ink-muted">
-                {schedule.enabled
-                  ? `下次触发 ${formatInstant(schedule.nextFireAt)}`
-                  : '已停用，不再触发'}
-                {' · '}已触发 {schedule.fireCount} 次
-                {schedule.lastFireAt &&
-                  ` · 上次 ${formatInstant(schedule.lastFireAt)}`}
-              </p>
-            </button>
-            <div className="flex flex-col items-end gap-2">
-              <EnableSwitch
-                checked={schedule.enabled}
-                disabled={busyId === schedule.taskId}
-                label={`${schedule.enabled ? '停用' : '启用'} ${schedule.name}`}
-                onClick={() => void toggleSchedule(schedule)}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-caption"
-                disabled={busyId === schedule.taskId}
-                onClick={() => void runNow(schedule)}
-              >
-                <Play className="h-3 w-3" />
-                立即运行
-              </Button>
+              <Plus className="h-3.5 w-3.5" />
+              新建定时任务
+            </Button>
+          </div>
+          {loading ? (
+            <QuietState loading title="正在读取定时任务…" />
+          ) : schedules.length === 0 ? (
+            <QuietState
+              icon={Clock3}
+              title="还没有定时任务。"
+              hint="也可以直接在对话里让 Iris 帮你创建。"
+            />
+          ) : (
+            <div className="grid divide-y divide-border">
+              {schedules.map((schedule) => (
+                <article
+                  key={schedule.taskId}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-md px-3 py-3 transition-colors duration-fast hover:bg-surface-muted"
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:shadow-focus"
+                    data-focus-key={`schedule-${schedule.taskId}`}
+                    disabled={busyId === schedule.taskId}
+                    onClick={() => {
+                      captureFocusKey(`schedule-${schedule.taskId}`)
+                      setEditing(schedule)
+                    }}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-body font-semibold text-ink">
+                        {schedule.name}
+                      </span>
+                      <code className="rounded-xs bg-surface-muted px-1.5 py-0.5 text-caption text-ink-subtle">
+                        {schedule.expression}
+                      </code>
+                      {schedule.once && (
+                        <Badge appearance="outline" tone="warning">单次</Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
+                      {schedule.prompt}
+                    </p>
+                    <p className="mt-1 text-caption text-ink-muted">
+                      {schedule.enabled
+                        ? `下次触发 ${formatInstant(schedule.nextFireAt)}`
+                        : '已停用，不再触发'}
+                      {' · '}已触发 {schedule.fireCount} 次
+                      {schedule.lastFireAt &&
+                        ` · 上次 ${formatInstant(schedule.lastFireAt)}`}
+                    </p>
+                  </button>
+                  <div className="flex flex-col items-end gap-2">
+                    <EnableSwitch
+                      checked={schedule.enabled}
+                      disabled={busyId === schedule.taskId}
+                      label={`${schedule.enabled ? '停用' : '启用'} ${schedule.name}`}
+                      onClick={() => void toggleSchedule(schedule)}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busyId === schedule.taskId}
+                      onClick={() => void runNow(schedule)}
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                      立即运行
+                    </Button>
+                  </div>
+                </article>
+              ))}
             </div>
-          </article>
-        ))
+          )}
+        </section>
       )}
-    </section>
+    </div>
   )
 }
 
@@ -239,6 +264,7 @@ function ScheduleEditor({
       : emptySchedule,
   )
   const [saving, setSaving] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [executions, setExecutions] = useState<ScheduleExecutionView[] | null>(
     null,
   )
@@ -277,6 +303,7 @@ function ScheduleEditor({
     setSaving(true)
     try {
       await scheduleApi.remove(current)
+      setConfirmingDelete(false)
       notify.success('定时任务已删除', {
         description: '已经产生的会话与执行记录仍保留在历史中。',
       })
@@ -291,7 +318,10 @@ function ScheduleEditor({
   }
 
   return (
-    <form className="grid gap-4" onSubmit={submit}>
+    <form
+      className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-4 overflow-y-auto"
+      onSubmit={submit}
+    >
       <EditorHeading
         title={current ? '编辑定时任务' : '新建定时任务'}
         onCancel={onCancel}
@@ -377,11 +407,9 @@ function ScheduleEditor({
         <div>
           {current && (
             <Button
-              variant="ghost"
+              variant="danger"
               size="sm"
-              className="text-danger"
-              isLoading={saving}
-              onClick={() => void remove()}
+              onClick={() => setConfirmingDelete(true)}
             >
               <Trash2 className="h-3.5 w-3.5" />
               删除
@@ -397,6 +425,34 @@ function ScheduleEditor({
           </Button>
         </div>
       </div>
+
+      {current && (
+        <Modal
+          open={confirmingDelete}
+          onOpenChange={setConfirmingDelete}
+          size="sm"
+          title={`删除「${current.name}」？`}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirmingDelete(false)}>
+                取消
+              </Button>
+              <Button
+                variant="danger"
+                isLoading={saving}
+                loadingLabel="正在删除"
+                onClick={() => void remove()}
+              >
+                确认删除
+              </Button>
+            </>
+          }
+        >
+          <p className="text-small leading-relaxed text-ink-subtle">
+            删除后该任务不再触发。已经产生的会话与执行记录仍保留在历史中，不会随任务一起删除。
+          </p>
+        </Modal>
+      )}
     </form>
   )
 }

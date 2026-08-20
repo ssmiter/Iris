@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState, type ComponentProps } from 'react'
 import {
   AlertTriangle,
   Brain,
-  ChevronDown,
   ChevronRight,
   Clock3,
   Copy,
+  FolderOpen,
   Plug,
   Plus,
+  RefreshCw,
+  Search,
+  SearchX,
 } from 'lucide-react'
 import {
   capabilityAdminApi,
@@ -21,7 +24,15 @@ import {
 } from '@/api/irisApi'
 import { Badge, Button, Input, notify } from '@/components/ui'
 import { cn } from '@/lib/cn'
-import { EnableSwitch, QuietState } from './controls'
+import { kindLabel, kindMeta } from '@/domain/capability/kindMeta'
+import { riskMeta } from '@/domain/capability/riskMeta'
+import {
+  cacheCapabilityListing,
+  invalidateCapabilityListings,
+  readCapabilityCenterCache,
+  writeCapabilityCenterCache,
+} from '@/domain/capability/capabilityCenterCache'
+import { EnableSwitch, QuietState, useFocusReturn } from './controls'
 import { SkillEditor } from './SkillEditor'
 
 type BadgeTone = ComponentProps<typeof Badge>['tone']
@@ -30,40 +41,6 @@ type DetailState =
   | { status: 'loading' }
   | { status: 'error' }
   | { status: 'ready'; detail: CapabilityAdminDetail }
-
-/** kind 徽标的语义色（docs/32 §5）；DB 技能库与文件技能以 origin 区分。 */
-function kindMeta(item: CapabilityAdminItem): { label: string; tone: BadgeTone } {
-  switch (item.kind) {
-    case 'kernel_tool':
-      return { label: '内核', tone: 'neutral' }
-    case 'process':
-      return { label: '进程', tone: 'info' }
-    case 'template':
-      return { label: '模板', tone: 'info' }
-    case 'skill':
-      return item.origin === 'skill_store'
-        ? { label: '技能库', tone: 'teal' }
-        : { label: '技能', tone: 'success' }
-    case 'knowledge':
-      return { label: '知识', tone: 'violet' }
-    case 'mcp_tool':
-    case 'mcp':
-      return { label: 'MCP', tone: 'warning' }
-    case 'pipeline':
-      return { label: '流水线', tone: 'neutral' }
-    case 'schedule':
-      return { label: '定时', tone: 'info' }
-    default:
-      return { label: item.kind, tone: 'neutral' }
-  }
-}
-
-const RISK_META: Record<string, { label: string; tone: BadgeTone }> = {
-  read_only: { label: '只读', tone: 'neutral' },
-  standard: { label: '标准', tone: 'info' },
-  elevated: { label: '提权', tone: 'warning' },
-  destructive: { label: '破坏', tone: 'danger' },
-}
 
 const STAT_LABELS: Record<string, string> = {
   tool_count: '工具数',
@@ -141,56 +118,114 @@ function ancestorsOf(path: string): string[] {
 /**
  * 统一能力页的主视图（docs/32 §5）：目录树为脊柱，kind 是切面，
  * 文件真相对象只读，DB 真相对象在此进入各自的编辑器/控制台。
+ * 数据与选中/展开状态走会话级缓存（docs/36 §2-M14-B2）：Modal 重开
+ * 不闪烁，手动「刷新」按钮强制重拉。
  */
 export function CapabilityTreeView({
   onOpenMcp,
   onOpenMemory,
   onOpenSchedule,
+  initialFocusKey,
+  onInitialFocusDone,
 }: {
   onOpenMcp: (serverId?: string) => void
   onOpenMemory: () => void
   onOpenSchedule: () => void
+  /** 从子视图返回时要恢复焦点的入口按钮 key（B8）。 */
+  initialFocusKey?: string | null
+  onInitialFocusDone?: () => void
 }) {
-  const [tree, setTree] = useState<CapabilityTreeNode | null>(null)
-  const [treeFailed, setTreeFailed] = useState(false)
-  const [selectedPath, setSelectedPath] = useState('/')
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(['/']))
-  const [listing, setListing] = useState<CapabilityAdminListing | null>(null)
+  const snapshot = useMemo(readCapabilityCenterCache, [])
+  const [tree, setTree] = useState<CapabilityTreeNode | null>(snapshot.tree)
+  const [treeFailed, setTreeFailed] = useState(snapshot.treeFailed)
+  const [selectedPath, setSelectedPath] = useState(snapshot.selectedPath)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(snapshot.expanded),
+  )
+  const [listing, setListing] = useState<CapabilityAdminListing | null>(
+    snapshot.listings[snapshot.selectedPath] ?? null,
+  )
   const [listingLoading, setListingLoading] = useState(false)
-  const [skills, setSkills] = useState<SkillView[]>([])
+  const [skills, setSkills] = useState<SkillView[]>(snapshot.skills)
   const [query, setQuery] = useState('')
   const [kindFilter, setKindFilter] = useState<string | null>(null)
   const [detailPath, setDetailPath] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, DetailState>>({})
   const [editingSkill, setEditingSkill] = useState<SkillView | undefined | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
-  const [problems, setProblems] = useState<CapabilityAdminProblem[]>([])
+  const [problems, setProblems] = useState<CapabilityAdminProblem[]>(
+    snapshot.problems,
+  )
+  const [refreshing, setRefreshing] = useState(false)
+  const { rootRef, captureFocusKey, restoreFocus } =
+    useFocusReturn<HTMLDivElement>()
 
-  const reloadTree = () => {
+  // 子视图返回后把焦点还给触发入口按钮（B8）。
+  useEffect(() => {
+    if (!initialFocusKey) return
+    requestAnimationFrame(() => {
+      rootRef.current
+        ?.querySelector<HTMLElement>(
+          `[data-focus-key="${CSS.escape(initialFocusKey)}"]`,
+        )
+        ?.focus()
+      onInitialFocusDone?.()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const reloadTree = () =>
     capabilityAdminApi
       .tree()
       .then((next) => {
         setTree(next)
         setTreeFailed(false)
+        writeCapabilityCenterCache({
+          tree: next,
+          treeFailed: false,
+          treeLoaded: true,
+        })
       })
       .catch((error: Error) => {
         setTreeFailed(true)
+        writeCapabilityCenterCache({ treeFailed: true, treeLoaded: true })
         notify.error('能力目录暂时不可用', { description: error.message })
       })
-  }
 
-  const reloadSkills = () => {
+  const reloadSkills = () =>
     capabilityManagementApi
       .listSkills()
-      .then(setSkills)
+      .then((next) => {
+        setSkills(next)
+        writeCapabilityCenterCache({ skills: next, skillsLoaded: true })
+      })
       .catch(() => setSkills([]))
-  }
 
-  const reloadListing = (path: string) => {
-    setListingLoading(true)
+  const reloadProblems = () =>
     capabilityAdminApi
+      .problems()
+      .then((next) => {
+        setProblems(next)
+        writeCapabilityCenterCache({ problems: next, problemsLoaded: true })
+      })
+      .catch(() => setProblems([]))
+
+  const reloadListing = (path: string, force = false) => {
+    if (!force) {
+      const cached = readCapabilityCenterCache().listings[path]
+      if (cached) {
+        setListing(cached)
+        setListingLoading(false)
+        return Promise.resolve()
+      }
+    }
+    setListingLoading(true)
+    return capabilityAdminApi
       .items(path)
-      .then((next) => setListing(next))
+      .then((next) => {
+        setListing(next)
+        cacheCapabilityListing(path, next)
+      })
       .catch((error: Error) =>
         notify.error('没有读到该目录的能力', {
           description: (error as Error).message,
@@ -199,22 +234,36 @@ export function CapabilityTreeView({
       .finally(() => setListingLoading(false))
   }
 
+  const refreshAll = () => {
+    setRefreshing(true)
+    invalidateCapabilityListings()
+    void Promise.allSettled([
+      reloadTree(),
+      reloadSkills(),
+      reloadProblems(),
+      reloadListing(selectedPath, true),
+    ]).finally(() => setRefreshing(false))
+  }
+
   useEffect(() => {
-    reloadTree()
-    reloadSkills()
-    capabilityAdminApi
-      .problems()
-      .then(setProblems)
-      .catch(() => setProblems([]))
+    const cached = readCapabilityCenterCache()
+    if (!cached.treeLoaded) void reloadTree()
+    if (!cached.skillsLoaded) void reloadSkills()
+    if (!cached.problemsLoaded) void reloadProblems()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     setKindFilter(null)
     setDetailPath(null)
-    reloadListing(selectedPath)
+    writeCapabilityCenterCache({ selectedPath })
+    void reloadListing(selectedPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPath])
+
+  useEffect(() => {
+    writeCapabilityCenterCache({ expanded: [...expanded] })
+  }, [expanded])
 
   const selectPath = (path: string) => {
     setSelectedPath(path)
@@ -300,12 +349,14 @@ export function CapabilityTreeView({
         skill,
         !skill.enabled,
       )
-      setSkills((items) =>
-        items.map((entry) =>
+      setSkills((items) => {
+        const nextItems = items.map((entry) =>
           entry.skillId === skill.skillId ? updated : entry,
-        ),
-      )
-      reloadListing(selectedPath)
+        )
+        writeCapabilityCenterCache({ skills: nextItems })
+        return nextItems
+      })
+      await reloadListing(selectedPath, true)
     } catch (error) {
       setSkills((items) =>
         items.map((entry) => (entry.skillId === skill.skillId ? skill : entry)),
@@ -320,26 +371,33 @@ export function CapabilityTreeView({
 
   if (editingSkill !== null) {
     return (
-      <SkillEditor
-        current={editingSkill}
-        onCancel={() => setEditingSkill(null)}
-        onSaved={() => {
-          setEditingSkill(null)
-          reloadSkills()
-          reloadTree()
-          reloadListing(selectedPath)
-        }}
-      />
+      <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+        <SkillEditor
+          current={editingSkill}
+          onCancel={() => {
+            setEditingSkill(null)
+            restoreFocus()
+          }}
+          onSaved={() => {
+            setEditingSkill(null)
+            restoreFocus()
+            void reloadSkills()
+            void reloadTree()
+            void reloadListing(selectedPath, true)
+          }}
+        />
+      </div>
     )
   }
 
   return (
-    <div className="grid gap-4">
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label="按名称或描述过滤当前目录"
           containerClassName="min-w-52 flex-1"
-          className="h-9"
+          className="h-8"
+          leadingIcon={<Search className="h-4 w-4" />}
           placeholder="过滤当前目录：名称 / 描述"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -348,34 +406,70 @@ export function CapabilityTreeView({
           <Button
             variant="primary"
             size="sm"
-            onClick={() => setEditingSkill(undefined)}
+            data-focus-key="entry-new-skill"
+            onClick={() => {
+              captureFocusKey('entry-new-skill')
+              setEditingSkill(undefined)
+            }}
           >
             <Plus className="h-3.5 w-3.5" />
             新建 Skill
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => onOpenMcp()}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-focus-key="entry-mcp"
+            onClick={() => onOpenMcp()}
+          >
             <Plug className="h-3.5 w-3.5" />
             MCP 连接
           </Button>
-          <Button variant="ghost" size="sm" onClick={onOpenSchedule}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-focus-key="entry-schedule"
+            onClick={onOpenSchedule}
+          >
             <Clock3 className="h-3.5 w-3.5" />
             定时任务
           </Button>
-          <Button variant="ghost" size="sm" onClick={onOpenMemory}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-focus-key="entry-memory"
+            onClick={onOpenMemory}
+          >
             <Brain className="h-3.5 w-3.5" />
             记忆
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            aria-label="刷新能力数据"
+            disabled={refreshing}
+            onClick={refreshAll}
+          >
+            <RefreshCw
+              className={cn(
+                'h-3.5 w-3.5',
+                refreshing && 'animate-spin motion-reduce:animate-none',
+              )}
+            />
           </Button>
         </div>
       </div>
 
       {problems.length > 0 && (
-        <ProblemsBanner problems={problems} />
+        <div className="animate-node-enter motion-reduce:animate-none">
+          <ProblemsBanner problems={problems} />
+        </div>
       )}
 
-      <div className="grid gap-5 sm:grid-cols-[13.5rem_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto sm:grid-cols-[13.5rem_minmax(0,1fr)] sm:grid-rows-[minmax(0,1fr)] sm:overflow-visible">
         <nav
           aria-label="能力目录"
-          className="scrollbar-subtle max-h-[54vh] overflow-y-auto rounded-md border border-border bg-surface px-2 py-2"
+          className="scrollbar-subtle max-h-56 min-h-0 overflow-y-auto rounded-md border border-border bg-surface px-2 py-2 sm:max-h-none"
         >
           {tree ? (
             <ul>
@@ -388,14 +482,18 @@ export function CapabilityTreeView({
                 onSelect={selectPath}
               />
             </ul>
+          ) : treeFailed ? (
+            <QuietState
+              icon={AlertTriangle}
+              title="目录读取失败。"
+              hint="点工具栏的刷新按钮重试。"
+            />
           ) : (
-            <p className="px-2 py-6 text-center text-small text-ink-muted">
-              {treeFailed ? '目录读取失败。' : '正在读取目录…'}
-            </p>
+            <QuietState loading title="正在读取目录…" />
           )}
         </nav>
 
-        <section className="grid content-start gap-3">
+        <section className="scrollbar-subtle grid min-h-0 content-start gap-3 overflow-y-auto">
           <header className="grid gap-1 border-b border-border pb-3">
             <div className="flex items-baseline gap-2">
               <h3 className="text-body font-semibold text-ink">
@@ -427,7 +525,7 @@ export function CapabilityTreeView({
                   <KindChip
                     key={kind}
                     active={kindFilter === kind}
-                    label={kind}
+                    label={kindLabel(kind)}
                     onClick={() =>
                       setKindFilter(kindFilter === kind ? null : kind)
                     }
@@ -438,28 +536,41 @@ export function CapabilityTreeView({
           </header>
 
           {listingLoading ? (
-            <QuietState>正在读取能力…</QuietState>
+            <QuietState loading title="正在读取能力…" />
           ) : visibleItems.length === 0 ? (
-            <QuietState>
-              {listing && listing.items.length > 0
-                ? '当前过滤条件下没有匹配的能力。'
-                : '这个目录下还没有可直接寻址的能力。'}
-            </QuietState>
-          ) : (
-            visibleItems.map((item) => (
-              <CapabilityCard
-                key={item.path}
-                item={item}
-                expanded={detailPath === item.path}
-                detailState={details[item.path]}
-                skill={skillOf(item)}
-                busy={busyPath === item.path}
-                onToggle={() => toggleDetail(item)}
-                onToggleSkill={(skill) => void toggleSkillEnabled(item, skill)}
-                onEditSkill={(skill) => setEditingSkill(skill)}
-                onOpenMcp={onOpenMcp}
+            listing && listing.items.length > 0 ? (
+              <QuietState
+                icon={SearchX}
+                title="当前过滤条件下没有匹配的能力。"
+                hint="换个关键词，或清除 kind 过滤。"
               />
-            ))
+            ) : (
+              <QuietState
+                icon={FolderOpen}
+                title="这个目录下还没有可直接寻址的能力。"
+                hint="换个目录看看，或用上方过滤框搜索。"
+              />
+            )
+          ) : (
+            <div className="grid divide-y divide-border">
+              {visibleItems.map((item) => (
+                <CapabilityCard
+                  key={item.path}
+                  item={item}
+                  expanded={detailPath === item.path}
+                  detailState={details[item.path]}
+                  skill={skillOf(item)}
+                  busy={busyPath === item.path}
+                  onToggle={() => toggleDetail(item)}
+                  onToggleSkill={(skill) => void toggleSkillEnabled(item, skill)}
+                  onEditSkill={(skill) => {
+                    captureFocusKey(`skill-edit-${item.path}`)
+                    setEditingSkill(skill)
+                  }}
+                  onOpenMcp={onOpenMcp}
+                />
+              ))}
+            </div>
           )}
         </section>
       </div>
@@ -538,22 +649,23 @@ function TreeNode({
           <button
             type="button"
             aria-label={isExpanded ? `收起 ${node.name}` : `展开 ${node.name}`}
-            className="grid h-6 w-5 place-items-center text-ink-muted"
+            className="grid h-6 w-5 shrink-0 place-items-center rounded-xs text-ink-muted focus-visible:outline-none focus-visible:shadow-focus"
             onClick={() => onToggle(node.path)}
           >
-            {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
+            <ChevronRight
+              className={cn(
+                'h-3.5 w-3.5 transition-transform duration-fast ease-standard motion-reduce:transition-none',
+                isExpanded && 'rotate-90',
+              )}
+            />
           </button>
         ) : (
-          <span className="w-5" aria-hidden="true" />
+          <span className="w-5 shrink-0" aria-hidden="true" />
         )}
         <button
           type="button"
           aria-current={isSelected ? 'true' : undefined}
-          className="flex min-w-0 flex-1 items-baseline gap-1.5 py-1 pr-1.5 text-left"
+          className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
           onClick={() => onSelect(node.path)}
         >
           <span className="truncate break-keep">{node.title || node.name}</span>
@@ -597,6 +709,7 @@ function KindChip({
       onClick={onClick}
       className={cn(
         'rounded-full border px-2 py-0.5 text-caption transition-colors duration-fast',
+        'focus-visible:outline-none focus-visible:shadow-focus',
         active
           ? 'border-primary/40 bg-primary-soft text-ink'
           : 'border-border text-ink-muted hover:text-ink-subtle',
@@ -630,51 +743,68 @@ function CapabilityCard({
 }) {
   const shadowed = item.shadowedBy !== null
   const kind = kindMeta(item)
-  const risk = item.riskLevel ? RISK_META[item.riskLevel] : undefined
+  const risk = item.riskLevel ? riskMeta(item.riskLevel) : undefined
   return (
     <article
       className={cn(
-        'rounded-md px-3 py-3 transition-colors hover:bg-surface-muted',
+        'rounded-md px-3 py-3 transition-colors duration-fast hover:bg-surface-muted',
         shadowed && 'opacity-60',
       )}
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-        <button type="button" className="min-w-0 text-left" onClick={onToggle}>
-          <div className="flex flex-wrap items-center gap-2">
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
-            )}
-            <span className="truncate text-body font-semibold text-ink break-keep">
-              {item.name}
+        <button
+          type="button"
+          className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:shadow-focus"
+          onClick={onToggle}
+        >
+          <div className="flex items-start gap-3">
+            <span
+              aria-hidden="true"
+              className={cn(
+                'grid h-10 w-10 shrink-0 place-items-center rounded-lg',
+                kind.tileClass,
+              )}
+            >
+              <kind.Icon className="h-5 w-5" />
             </span>
-            <Badge tone={kind.tone}>{kind.label}</Badge>
-            {risk && (
-              <Badge tone={risk.tone} appearance="outline">
-                {risk.label}
-              </Badge>
-            )}
-            {shadowed && (
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-warning"
-                title="已被遮蔽，未注册到运行表"
-              />
-            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <ChevronRight
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-fast ease-standard motion-reduce:transition-none',
+                    expanded && 'rotate-90',
+                  )}
+                />
+                <span className="truncate text-body font-semibold text-ink break-keep">
+                  {item.name}
+                </span>
+                <Badge tone={kind.tone}>{kind.label}</Badge>
+                {risk && (
+                  <Badge tone={risk.tone} appearance="outline">
+                    {risk.label}
+                  </Badge>
+                )}
+                {shadowed && (
+                  <Badge tone="warning" appearance="outline">
+                    被遮蔽
+                  </Badge>
+                )}
+              </div>
+              {item.description && (
+                <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
+                  {item.description}
+                </p>
+              )}
+              {!shadowed &&
+                item.availability &&
+                item.availability !== 'available' &&
+                item.availabilityReason && (
+                  <p className="mt-1 text-caption text-ink-muted">
+                    {item.availabilityReason}
+                  </p>
+                )}
+            </div>
           </div>
-          {item.description && (
-            <p className="ml-[1.375rem] mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
-              {item.description}
-            </p>
-          )}
-          {!shadowed &&
-            item.availability &&
-            item.availability !== 'available' &&
-            item.availabilityReason && (
-              <p className="ml-[1.375rem] mt-1 text-caption text-ink-muted">
-                {item.availabilityReason}
-              </p>
-            )}
         </button>
         {skill && (
           <EnableSwitch
@@ -712,7 +842,7 @@ function DetailPanel({
   onOpenMcp: (serverId?: string) => void
 }) {
   return (
-    <div className="ml-[1.375rem] mt-3 grid gap-3 border-l border-border pl-4">
+    <div className="mt-3 grid animate-node-enter gap-3 border-t border-border pt-3 motion-reduce:animate-none">
       <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
         <code className="break-all">{item.path}</code>
         {item.version && <span>v{item.version}</span>}
@@ -785,7 +915,12 @@ function DetailPanel({
 
       <div className="flex items-center gap-2">
         {skill && (
-          <Button variant="secondary" size="sm" onClick={() => onEditSkill(skill)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-focus-key={`skill-edit-${item.path}`}
+            onClick={() => onEditSkill(skill)}
+          >
             编辑 Skill
           </Button>
         )}

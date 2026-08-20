@@ -60,7 +60,10 @@ export function SkillEditor({
   }
 
   return (
-    <form className="grid gap-4" onSubmit={submit}>
+    <form
+      className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-4 overflow-y-auto"
+      onSubmit={submit}
+    >
       <EditorHeading
         title={current ? '编辑 Skill' : '新建 Skill'}
         onCancel={onCancel}

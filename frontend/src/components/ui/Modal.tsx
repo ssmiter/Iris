@@ -16,6 +16,11 @@ export interface ModalProps {
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * body 是否由 Modal 自己滚动（默认 true）。置 false 时 body 不滚动，
+   * 由子内容自行分列滚动（如能力中心的两列各滚，docs/36 §2-M14-B3）。
+   */
+  bodyScroll?: boolean
 }
 
 const sizeClass: Record<ModalSize, string> = {
@@ -35,6 +40,7 @@ export function Modal({
   open,
   defaultOpen,
   onOpenChange,
+  bodyScroll = true,
 }: ModalProps) {
   return (
     <Dialog.Root
@@ -84,7 +90,14 @@ export function Modal({
               </Button>
             </Dialog.Close>
           </header>
-          <div className="scrollbar-subtle min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+          <div
+            className={cn(
+              'min-h-0 flex-1 px-5 py-5 sm:px-6',
+              bodyScroll
+                ? 'scrollbar-subtle overflow-y-auto'
+                : 'flex flex-col overflow-hidden',
+            )}
+          >
             {children}
           </div>
           {footer && (

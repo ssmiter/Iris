@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Plus } from 'lucide-react'
+import { Brain, Plus } from 'lucide-react'
 import {
   capabilityManagementApi,
   type MemoryDraft,
@@ -7,7 +7,13 @@ import {
   type MemoryView,
 } from '@/api/irisApi'
 import { Badge, Button, Input, notify } from '@/components/ui'
-import { EditorHeading, EnableSwitch, QuietState, TextArea } from './controls'
+import {
+  EditorHeading,
+  EnableSwitch,
+  QuietState,
+  TextArea,
+  useFocusReturn,
+} from './controls'
 
 const emptyMemory: MemoryDraft = {
   title: '',
@@ -19,6 +25,30 @@ const emptyMemory: MemoryDraft = {
   enabled: true,
 }
 
+/** 记忆作用域中文映射（B6）；scope 是自由文本，未收录的按原样显示。 */
+const SCOPE_LABELS: Record<string, string> = {
+  personal: '个人',
+  global: '全局',
+  project: '项目',
+  conversation: '会话',
+}
+
+/** 记忆来源类型中文映射（B6），与后端 SOURCE_KIND 枚举一致。 */
+const SOURCE_KIND_LABELS: Record<string, string> = {
+  user_stated: '用户陈述',
+  agent_observation: '助手观察',
+  imported: '外部导入',
+  system: '系统写入',
+}
+
+function scopeLabel(scope: string): string {
+  return SCOPE_LABELS[scope] ?? scope
+}
+
+function sourceKindLabel(sourceKind: string): string {
+  return SOURCE_KIND_LABELS[sourceKind] ?? sourceKind
+}
+
 /**
  * 记忆控制台（DB 真相）：统一能力页的子视图。记忆不是能力树上的对象
  * （docs/32 §1 的六种 kind 不含它），但写路径沿用现有控制器（§4）。
@@ -28,6 +58,8 @@ export function MemoryConsole({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [editing, setEditing] = useState<MemoryView | undefined | null>(null)
+  const { rootRef, captureFocusKey, restoreFocus } =
+    useFocusReturn<HTMLDivElement>()
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +104,7 @@ export function MemoryConsole({ onBack }: { onBack: () => void }) {
   const editMemory = async (memory: MemorySummary) => {
     setBusyId(memory.memoryId)
     try {
+      captureFocusKey(`memory-${memory.memoryId}`)
       setEditing(await capabilityManagementApi.readMemory(memory.memoryId))
     } catch (error) {
       notify.error('没有读到记忆正文', {
@@ -82,77 +115,103 @@ export function MemoryConsole({ onBack }: { onBack: () => void }) {
     }
   }
 
-  if (editing !== null) {
-    return (
-      <MemoryEditor
-        current={editing}
-        onCancel={() => setEditing(null)}
-        onSaved={(memory) => {
-          setMemories((items) =>
-            items.some((item) => item.memoryId === memory.memoryId)
-              ? replaceBy(items, memorySummary(memory))
-              : [...items, memorySummary(memory)],
-          )
-          setEditing(null)
-        }}
-      />
-    )
+  const closeEditor = () => {
+    setEditing(null)
+    restoreFocus()
   }
 
   return (
-    <section className="grid gap-3">
-      <EditorHeading title="记忆" onCancel={onBack} backLabel="返回能力树" />
-      <div className="flex items-start justify-between gap-5 px-1">
-        <p className="text-small leading-relaxed text-ink-muted">
-          启用的记忆才参与语义召回；模型先看到候选摘要，确有需要时再读取精确正文。
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => setEditing(undefined)}>
-          <Plus className="h-3.5 w-3.5" />
-          添加记忆
-        </Button>
-      </div>
-      {loading ? (
-        <QuietState>正在读取记忆…</QuietState>
-      ) : memories.length === 0 ? (
-        <QuietState>还没有长期记忆。普通对话不会自动沉淀为事实。</QuietState>
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+      {editing !== null ? (
+        <MemoryEditor
+          current={editing}
+          onCancel={closeEditor}
+          onSaved={(memory) => {
+            setMemories((items) =>
+              items.some((item) => item.memoryId === memory.memoryId)
+                ? replaceBy(items, memorySummary(memory))
+                : [...items, memorySummary(memory)],
+            )
+            closeEditor()
+          }}
+        />
       ) : (
-        memories.map((memory) => (
-          <article
-            key={memory.memoryId}
-            className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-md px-3 py-3 transition-colors hover:bg-surface-muted"
-          >
-            <button
-              type="button"
-              className="min-w-0 text-left"
-              disabled={busyId === memory.memoryId}
-              onClick={() => void editMemory(memory)}
+        <section className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
+          <EditorHeading
+            title="记忆"
+            count={loading ? undefined : memories.length}
+            onCancel={onBack}
+          />
+          <div className="flex items-start justify-between gap-5">
+            <p className="text-small leading-relaxed text-ink-muted">
+              启用的记忆才参与语义召回；模型先看到候选摘要，确有需要时再读取精确正文。
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              data-focus-key="add-memory"
+              onClick={() => {
+                captureFocusKey('add-memory')
+                setEditing(undefined)
+              }}
             >
-              <div className="flex items-center gap-2">
-                <span className="truncate text-body font-semibold text-ink">
-                  {memory.title}
-                </span>
-                <Badge appearance="outline">{memory.scope}</Badge>
-                <span className="text-caption text-ink-muted">
-                  {Math.round(memory.confidence * 100)}%
-                </span>
-              </div>
-              <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
-                {memory.preview}
-              </p>
-              <p className="mt-1 text-caption text-ink-muted">
-                来源：{memory.sourceKind}
-              </p>
-            </button>
-            <EnableSwitch
-              checked={memory.enabled}
-              disabled={busyId === memory.memoryId}
-              label={`${memory.enabled ? '忘记' : '恢复'} ${memory.title}`}
-              onClick={() => void toggleMemory(memory)}
+              <Plus className="h-3.5 w-3.5" />
+              添加记忆
+            </Button>
+          </div>
+          {loading ? (
+            <QuietState loading title="正在读取记忆…" />
+          ) : memories.length === 0 ? (
+            <QuietState
+              icon={Brain}
+              title="还没有长期记忆。"
+              hint="普通对话不会自动沉淀为事实。"
             />
-          </article>
-        ))
+          ) : (
+            <div className="grid divide-y divide-border">
+              {memories.map((memory) => (
+                <article
+                  key={memory.memoryId}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-md px-3 py-3 transition-colors duration-fast hover:bg-surface-muted"
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:shadow-focus"
+                    data-focus-key={`memory-${memory.memoryId}`}
+                    disabled={busyId === memory.memoryId}
+                    onClick={() => void editMemory(memory)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-body font-semibold text-ink">
+                        {memory.title}
+                      </span>
+                      <Badge appearance="outline">
+                        {scopeLabel(memory.scope)}
+                      </Badge>
+                      <span className="text-caption text-ink-muted">
+                        置信度 {Math.round(memory.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-small leading-relaxed text-ink-subtle">
+                      {memory.preview}
+                    </p>
+                    <p className="mt-1 text-caption text-ink-muted">
+                      来源：{sourceKindLabel(memory.sourceKind)}
+                    </p>
+                  </button>
+                  <EnableSwitch
+                    checked={memory.enabled}
+                    disabled={busyId === memory.memoryId}
+                    label={`${memory.enabled ? '忘记' : '恢复'} ${memory.title}`}
+                    onClick={() => void toggleMemory(memory)}
+                  />
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       )}
-    </section>
+    </div>
   )
 }
 
@@ -199,7 +258,10 @@ function MemoryEditor({
   }
 
   return (
-    <form className="grid gap-4" onSubmit={submit}>
+    <form
+      className="scrollbar-subtle grid min-h-0 flex-1 content-start gap-4 overflow-y-auto"
+      onSubmit={submit}
+    >
       <EditorHeading title={current ? '编辑记忆' : '添加记忆'} onCancel={onCancel} backLabel="返回记忆" />
       <Input label="事实标题" required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="偏好的周报格式" />
       <TextArea label="事实正文" value={draft.content} onChange={(value) => setDraft({ ...draft, content: value })} rows={7} description="只写可在未来复用的稳定事实；不要把一次任务的中间状态写进来。" />
@@ -207,7 +269,7 @@ function MemoryEditor({
         <Input label="作用域" required value={draft.scope} onChange={(event) => setDraft({ ...draft, scope: event.target.value })} />
         <Input label="置信度" required type="number" min={0} max={1} step={0.05} value={draft.confidence} onChange={(event) => setDraft({ ...draft, confidence: Number(event.target.value) })} />
       </div>
-      <Input label="来源引用" value={draft.sourceRef} onChange={(event) => setDraft({ ...draft, sourceRef: event.target.value })} description={`来源类型：${draft.sourceKind}。引用可留空，但不能伪造出处。`} />
+      <Input label="来源引用" value={draft.sourceRef} onChange={(event) => setDraft({ ...draft, sourceRef: event.target.value })} description={`来源类型：${sourceKindLabel(draft.sourceKind)}。引用可留空，但不能伪造出处。`} />
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>取消</Button>
         <Button type="submit" isLoading={saving} loadingLabel="正在保存">保存记忆</Button>
