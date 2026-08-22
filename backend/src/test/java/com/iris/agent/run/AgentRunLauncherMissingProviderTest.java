@@ -1,7 +1,7 @@
 package com.iris.agent.run;
 
 import com.iris.agent.model.AutoCompactionService;
-import com.iris.agent.model.provider.IrisModelProperties;
+import com.iris.agent.model.provider.ModelProfileCatalog;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.workspace.WorkspaceService;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +36,9 @@ class AgentRunLauncherMissingProviderTest {
     private final ModelProviderRegistry providers = mock(
             ModelProviderRegistry.class
     );
-    private final IrisModelProperties model = mock(IrisModelProperties.class);
+    private final ModelProfileCatalog modelProfiles = mock(
+            ModelProfileCatalog.class
+    );
     private final WorkspaceService workspace = mock(WorkspaceService.class);
     private final RunCancellationRegistry cancellations = mock(
             RunCancellationRegistry.class
@@ -53,7 +55,7 @@ class AgentRunLauncherMissingProviderTest {
     @BeforeEach
     void setUp() {
         when(providers.configured(anyString())).thenReturn(false);
-        when(model.getProfile()).thenReturn("unconfigured");
+        when(modelProfiles.activeProfile()).thenReturn("unconfigured");
         when(workspace.root()).thenReturn(Path.of("/tmp/iris"));
         when(coordinator.failForMissingProvider(anyString()))
                 .thenReturn(Mono.empty());
@@ -61,7 +63,7 @@ class AgentRunLauncherMissingProviderTest {
                 coordinator,
                 facts,
                 providers,
-                model,
+                modelProfiles,
                 workspace,
                 cancellations,
                 autoCompactions,

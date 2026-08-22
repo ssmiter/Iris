@@ -1,6 +1,6 @@
 package com.iris.agent.run;
 
-import com.iris.agent.model.provider.IrisModelProperties;
+import com.iris.agent.model.provider.ModelProfileCatalog;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.agent.model.AutoCompactionService;
 import com.iris.workspace.WorkspaceService;
@@ -35,7 +35,7 @@ public class AgentRunLauncher implements ApplicationRunner {
     private final AgenticRunCoordinator runs;
     private final RunRoundRepository facts;
     private final ModelProviderRegistry providers;
-    private final IrisModelProperties model;
+    private final ModelProfileCatalog modelProfiles;
     private final WorkspaceService workspace;
     private final RunCancellationRegistry cancellations;
     private final AutoCompactionService autoCompactions;
@@ -50,7 +50,7 @@ public class AgentRunLauncher implements ApplicationRunner {
             AgenticRunCoordinator runs,
             RunRoundRepository facts,
             ModelProviderRegistry providers,
-            IrisModelProperties model,
+            ModelProfileCatalog modelProfiles,
             WorkspaceService workspace,
             RunCancellationRegistry cancellations,
             AutoCompactionService autoCompactions,
@@ -61,7 +61,7 @@ public class AgentRunLauncher implements ApplicationRunner {
         this.runs = runs;
         this.facts = facts;
         this.providers = providers;
-        this.model = model;
+        this.modelProfiles = modelProfiles;
         this.workspace = workspace;
         this.cancellations = cancellations;
         this.autoCompactions = autoCompactions;
@@ -183,7 +183,8 @@ public class AgentRunLauncher implements ApplicationRunner {
             boolean resume,
             boolean stopWakeup
     ) {
-        if (!stopWakeup && !providers.configured(model.getProfile())) {
+        if (!stopWakeup
+                && !providers.configured(modelProfiles.activeProfile())) {
             runs.failForMissingProvider(run.runId())
                     .subscribe(
                             ignored -> {
@@ -203,13 +204,13 @@ public class AgentRunLauncher implements ApplicationRunner {
         var advance = resume
                 ? runs.resume(
                         run.runId(),
-                        model.getProfile(),
+                        modelProfiles.activeProfile(),
                         workspace.root(),
                         stopWakeup
                 )
                 : runs.advance(
                         run.runId(),
-                        model.getProfile(),
+                        modelProfiles.activeProfile(),
                         workspace.root(),
                         stopWakeup
                 );
@@ -306,7 +307,7 @@ public class AgentRunLauncher implements ApplicationRunner {
         for (RunRoundRepository.RunRow run : facts.stopRequestedRuns()) {
             requestStop(run.runId());
         }
-        if (!providers.configured(model.getProfile())) {
+        if (!providers.configured(modelProfiles.activeProfile())) {
             log.info(
                     "No model provider profile is configured; ordinary accepted Runs remain durable but idle"
             );

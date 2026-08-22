@@ -206,6 +206,30 @@ Anthropic JSON 字段。Provider profile 由后端配置选择：
 “兼容”不是让前端提交任意 base URL。每个 profile 冻结 provider kind、base URL
 允许列表、model、timeout 与 credential reference。
 
+### 7.1 多 profile 与运行时切换
+
+`iris.model` 从单份配置演进为 `active` + `profiles.<id>` 字典；每个条目仍是
+完整冻结的一份 provider 配置（kind/model-id/base-url/endpoint-path/api-key/
+timeout）。启动时 `ModelProviderConfiguration` 按字典逐 profile 构造 adapter
+并登记 `ModelProviderRegistry`；kind 缺省或为 `unconfigured` 的条目跳过
+（application.yml 的 env 占位），其他未知 kind fail-close。
+
+活跃 profile 由 `ModelProfileCatalog` 持有：yml 的 `iris.model.active` 是默认，
+`POST /api/v1/model-profiles/active` 切换后写入 `app_setting`
+（key=`model.active_profile`）持久化，重启后优先于 yml；持久化值指向已删除的
+profile 时回落 yml 默认并告警。切换立即生效于之后启动的 Run/Compaction；
+进行中的 Run 不换绑（provider state 只在相同 profile/model 上重放，见 §4），
+历史事实不因此改写。
+
+管理端点（投影只进前端顶栏，不进模型上下文；响应不含 api-key/base-url）：
+
+- `GET /api/v1/model-profiles` → `{ active, profiles: [{ id, kind, modelId, active }] }`
+- `POST /api/v1/model-profiles/active` `{ profile }` → 切换并返回同一视图；
+  未知 profile 返回 404。
+
+响应 `model` 字段与 profile 的 model-id 一致性校验（model_identity_mismatch）
+不变——切换 profile 即切换期望的模型身份。
+
 ## 8. 持久化
 
 新增事实：

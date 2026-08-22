@@ -45,6 +45,7 @@ import { ChildRunCapsules, ChildRunPanel } from './ChildRunView'
 import { ConversationTimeline } from './ConversationTimeline'
 import type { ConversationTimelineHandle } from './ConversationTimeline'
 import { HydrationSkeleton } from './HydrationSkeleton'
+import { ModelProfileSwitcher } from './ModelProfileSwitcher'
 import { StallProvider } from './FlowNode'
 import { PendingApprovalStack } from './PendingApprovalStack'
 import { TaskBlackboard } from './TaskBlackboard'
@@ -862,6 +863,7 @@ export function ConversationApp() {
                 整理上下文
               </Button>
             )}
+          <ModelProfileSwitcher />
           <CapabilityCenter />
           <Button
             variant="ghost"

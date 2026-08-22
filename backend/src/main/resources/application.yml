@@ -51,15 +51,21 @@ iris:
   storage:
     object-root: ${IRIS_OBJECT_STORE_PATH:${user.home}/Iris/data/objects}
   model:
-    profile: ${IRIS_MODEL_PROFILE:unconfigured}
-    kind: ${IRIS_MODEL_KIND:unconfigured}
-    model-id: ${IRIS_MODEL_ID:}
-    base-url: ${IRIS_MODEL_BASE_URL:}
-    endpoint-path: ${IRIS_MODEL_ENDPOINT_PATH:/v1/chat/completions}
-    api-key: ${IRIS_MODEL_API_KEY:}
-    timeout-seconds: ${IRIS_MODEL_TIMEOUT_SECONDS:180}
-    max-output-tokens: ${IRIS_MODEL_MAX_OUTPUT_TOKENS:8192}
-    cumulative-tool-arguments: ${IRIS_MODEL_CUMULATIVE_TOOL_ARGUMENTS:false}
+    # 活跃 profile：yml 默认 + app_setting 持久化的运行时选择（优先）。
+    # 环境变量 IRIS_MODEL_PROFILE 同时充当 active 与 env profile 的开关。
+    active: ${IRIS_MODEL_PROFILE:unconfigured}
+    profiles:
+      # env 占位：无 application-local.yml 时可用环境变量塞一份单 profile；
+      # kind=unconfigured 时该条目被跳过、不注册。
+      env:
+        kind: ${IRIS_MODEL_KIND:unconfigured}
+        model-id: ${IRIS_MODEL_ID:}
+        base-url: ${IRIS_MODEL_BASE_URL:}
+        endpoint-path: ${IRIS_MODEL_ENDPOINT_PATH:/v1/chat/completions}
+        api-key: ${IRIS_MODEL_API_KEY:}
+        timeout-seconds: ${IRIS_MODEL_TIMEOUT_SECONDS:180}
+        max-output-tokens: ${IRIS_MODEL_MAX_OUTPUT_TOKENS:8192}
+        cumulative-tool-arguments: ${IRIS_MODEL_CUMULATIVE_TOOL_ARGUMENTS:false}
 
 logging:
   level:

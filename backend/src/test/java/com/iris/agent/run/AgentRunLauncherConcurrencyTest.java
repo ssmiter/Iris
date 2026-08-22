@@ -1,6 +1,6 @@
 package com.iris.agent.run;
 
-import com.iris.agent.model.provider.IrisModelProperties;
+import com.iris.agent.model.provider.ModelProfileCatalog;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.agent.model.AutoCompactionService;
 import com.iris.workspace.WorkspaceService;
@@ -41,7 +41,9 @@ class AgentRunLauncherConcurrencyTest {
     private final ModelProviderRegistry providers = mock(
             ModelProviderRegistry.class
     );
-    private final IrisModelProperties model = mock(IrisModelProperties.class);
+    private final ModelProfileCatalog modelProfiles = mock(
+            ModelProfileCatalog.class
+    );
     private final WorkspaceService workspace = mock(WorkspaceService.class);
     private final RunCancellationRegistry cancellations = mock(
             RunCancellationRegistry.class
@@ -60,7 +62,7 @@ class AgentRunLauncherConcurrencyTest {
     @BeforeEach
     void setUp() {
         when(providers.configured(anyString())).thenReturn(true);
-        when(model.getProfile()).thenReturn("test");
+        when(modelProfiles.activeProfile()).thenReturn("test");
         when(workspace.root()).thenReturn(Path.of("/tmp/iris"));
         when(coordinator.advance(anyString(), anyString(), any(), anyBoolean()))
                 .thenAnswer(invocation -> advances
@@ -80,7 +82,7 @@ class AgentRunLauncherConcurrencyTest {
                 coordinator,
                 facts,
                 providers,
-                model,
+                modelProfiles,
                 workspace,
                 cancellations,
                 autoCompactions,
@@ -144,7 +146,7 @@ class AgentRunLauncherConcurrencyTest {
                 coordinator,
                 facts,
                 providers,
-                model,
+                modelProfiles,
                 workspace,
                 cancellations,
                 autoCompactions,

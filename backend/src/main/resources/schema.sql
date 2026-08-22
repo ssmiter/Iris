@@ -1360,3 +1360,11 @@ CREATE TABLE IF NOT EXISTS cron_execution (
 
 CREATE INDEX IF NOT EXISTS idx_cron_execution_task
     ON cron_execution(task_id, fired_at);
+
+-- 进程级小设置的单键存储（docs/21 §7.1）：当前只放 model.active_profile
+-- （运行时切换的模型 profile），避免为单值新建表。
+CREATE TABLE IF NOT EXISTS app_setting (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

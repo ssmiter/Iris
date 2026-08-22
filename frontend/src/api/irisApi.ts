@@ -750,6 +750,32 @@ export function getContextUsage(
   )
 }
 
+/** 模型 profile 目录与运行时切换（docs/21 §7.1）。低频管理操作，普通 REST。 */
+export interface ModelProfileView {
+  id: string
+  kind: string
+  modelId: string
+  active: boolean
+}
+
+export interface ModelProfilesView {
+  active: string
+  profiles: ModelProfileView[]
+}
+
+export function getModelProfiles(): Promise<ModelProfilesView> {
+  return requestJson<ModelProfilesView>('/api/v1/model-profiles')
+}
+
+export function setActiveModelProfile(
+  profile: string,
+): Promise<ModelProfilesView> {
+  return requestJson<ModelProfilesView>('/api/v1/model-profiles/active', {
+    method: 'POST',
+    body: JSON.stringify({ profile }),
+  })
+}
+
 export function listTasks(
   conversationId: string,
   branchId: string,

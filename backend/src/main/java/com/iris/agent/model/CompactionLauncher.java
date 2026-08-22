@@ -1,6 +1,6 @@
 package com.iris.agent.model;
 
-import com.iris.agent.model.provider.IrisModelProperties;
+import com.iris.agent.model.provider.ModelProfileCatalog;
 import com.iris.agent.model.provider.ModelProviderRegistry;
 import com.iris.conversation.application.CompactionEventEmitter;
 import org.slf4j.Logger;
@@ -23,7 +23,7 @@ public final class CompactionLauncher implements ApplicationRunner {
     private final CompactionRepository repository;
     private final CompactionEventEmitter events;
     private final ModelProviderRegistry providers;
-    private final IrisModelProperties model;
+    private final ModelProfileCatalog modelProfiles;
     private final Set<String> active = ConcurrentHashMap.newKeySet();
 
     public CompactionLauncher(
@@ -31,25 +31,25 @@ public final class CompactionLauncher implements ApplicationRunner {
             CompactionRepository repository,
             CompactionEventEmitter events,
             ModelProviderRegistry providers,
-            IrisModelProperties model
+            ModelProfileCatalog modelProfiles
     ) {
         this.coordinator = coordinator;
         this.repository = repository;
         this.events = events;
         this.providers = providers;
-        this.model = model;
+        this.modelProfiles = modelProfiles;
     }
 
     public boolean launch(String runId) {
         var row = repository.find(runId).orElse(null);
-        if (!providers.configured(model.getProfile())
+        if (!providers.configured(modelProfiles.activeProfile())
                 || row == null
                 || (!"accepted".equals(row.phase())
                     && !"running".equals(row.phase()))
                 || !active.add(runId)) {
             return false;
         }
-        coordinator.advance(runId, model.getProfile())
+        coordinator.advance(runId, modelProfiles.activeProfile())
                 .doFinally(signal -> active.remove(runId))
                 .subscribe(
                         boundary -> events.completed(runId, boundary),
@@ -67,7 +67,7 @@ public final class CompactionLauncher implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!providers.configured(model.getProfile())) {
+        if (!providers.configured(modelProfiles.activeProfile())) {
             return;
         }
         repository.resumableRunIds().forEach(this::launch);

@@ -14,13 +14,12 @@ import com.iris.agent.model.provider.ProviderMessageCompiler.ProviderStatePart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.TextPart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.ToolCallPart;
 import com.iris.agent.model.provider.ProviderMessageCompiler.ToolResultPart;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import com.iris.agent.model.provider.IrisModelProperties.Profile;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.slf4j.Logger;
@@ -37,12 +36,10 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
-@Component
-@ConditionalOnProperty(
-        prefix = "iris.model",
-        name = "kind",
-        havingValue = "openai-compatible"
-)
+/**
+ * 一个 profile 一个实例，由 {@link ModelProviderConfiguration} 按
+ * {@code iris.model.profiles} 逐个构造并登记进 {@link ModelProviderRegistry}。
+ */
 public class OpenAiCompatibleModelProvider implements ModelProvider {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             OpenAiCompatibleModelProvider.class
@@ -52,33 +49,36 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
             SSE_TYPE = new ParameterizedTypeReference<>() {
             };
 
-    private final IrisModelProperties properties;
+    private final String profileId;
+    private final Profile profile;
     private final ProviderMessageCompiler compiler;
     private final ObjectMapper objectMapper;
     private final WebClient client;
 
     public OpenAiCompatibleModelProvider(
-            IrisModelProperties properties,
+            String profileId,
+            Profile profile,
             ProviderMessageCompiler compiler,
             ObjectMapper objectMapper,
             WebClient.Builder webClient
     ) {
-        validate(properties);
-        this.properties = properties;
+        validate(profileId, profile);
+        this.profileId = profileId;
+        this.profile = profile;
         this.compiler = compiler;
         this.objectMapper = objectMapper;
         this.client = webClient
-                .baseUrl(properties.getBaseUrl())
+                .baseUrl(profile.getBaseUrl())
                 .defaultHeader(
                         HttpHeaders.AUTHORIZATION,
-                        "Bearer " + properties.getApiKey()
+                        "Bearer " + profile.getApiKey()
                 )
                 .build();
     }
 
     @Override
     public String profileId() {
-        return properties.getProfile();
+        return profileId;
     }
 
     @Override
@@ -88,12 +88,12 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
 
     @Override
     public String modelId() {
-        return properties.getModelId();
+        return profile.getModelId();
     }
 
     @Override
     public Duration timeout() {
-        return Duration.ofSeconds(properties.getTimeoutSeconds());
+        return Duration.ofSeconds(profile.getTimeoutSeconds());
     }
 
     @Override
@@ -108,13 +108,13 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         return Flux.defer(() -> {
             OpenAiCompatibleStreamMapper mapper =
                     new OpenAiCompatibleStreamMapper(
-                            properties.isCumulativeToolArguments()
+                            profile.isCumulativeToolArguments()
                                     ? FragmentMode.CUMULATIVE
                                     : FragmentMode.APPEND
                     );
             ObjectNode body = requestBody(compiler.compile(request));
             return client.post()
-                    .uri(properties.getEndpointPath())
+                    .uri(profile.getEndpointPath())
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.TEXT_EVENT_STREAM)
                     .bodyValue(body)
@@ -189,7 +189,7 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", modelId());
         body.put("stream", true);
-        body.put("max_tokens", properties.getMaxOutputTokens());
+        body.put("max_tokens", profile.getMaxOutputTokens());
         body.putObject("stream_options").put("include_usage", true);
         ArrayNode messages = body.putArray("messages");
         for (ProviderMessage message : conversation.messages()) {
@@ -377,19 +377,20 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                 : sanitized.substring(0, MAX_PROVIDER_ERROR_CHARACTERS);
     }
 
-    private void validate(IrisModelProperties properties) {
-        if (blank(properties.getProfile())
-                || blank(properties.getModelId())
-                || blank(properties.getBaseUrl())
-                || blank(properties.getApiKey())
-                || properties.getTimeoutSeconds() < 1
-                || properties.getTimeoutSeconds() > 1800
-                || properties.getMaxOutputTokens() < 1) {
+    private void validate(String profileId, Profile profile) {
+        if (blank(profileId)
+                || blank(profile.getModelId())
+                || blank(profile.getBaseUrl())
+                || blank(profile.getApiKey())
+                || profile.getTimeoutSeconds() < 1
+                || profile.getTimeoutSeconds() > 1800
+                || profile.getMaxOutputTokens() < 1) {
             throw new IllegalStateException(
-                    "OpenAI-compatible provider profile is incomplete"
+                    "OpenAI-compatible provider profile is incomplete: "
+                            + profileId
             );
         }
-        URI uri = URI.create(properties.getBaseUrl());
+        URI uri = URI.create(profile.getBaseUrl());
         boolean localHttp = "http".equalsIgnoreCase(uri.getScheme())
                 && ("localhost".equalsIgnoreCase(uri.getHost())
                 || "127.0.0.1".equals(uri.getHost()));
@@ -398,8 +399,8 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
                     "Model provider base URL must use HTTPS or local HTTP"
             );
         }
-        if (!properties.getEndpointPath().startsWith("/")
-                || properties.getEndpointPath().contains("..")) {
+        if (!profile.getEndpointPath().startsWith("/")
+                || profile.getEndpointPath().contains("..")) {
             throw new IllegalStateException(
                     "Model provider endpoint path is invalid"
             );

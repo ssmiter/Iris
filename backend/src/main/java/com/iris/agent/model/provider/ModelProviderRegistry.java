@@ -1,13 +1,15 @@
 package com.iris.agent.model.provider;
 
-import org.springframework.stereotype.Component;
-
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-@Component
+/**
+ * 已配置的 provider profile 全集。由 {@link ModelProviderConfiguration}
+ * 按 {@code iris.model.profiles} 构造；活跃 profile 的选择归
+ * {@link ModelProfileCatalog}。
+ */
 public class ModelProviderRegistry {
     private final Map<String, ModelProvider> profiles;
 
@@ -46,6 +48,10 @@ public class ModelProviderRegistry {
 
     public boolean configured(String profileId) {
         return profileId != null && profiles.containsKey(profileId);
+    }
+
+    public List<ModelProvider> all() {
+        return List.copyOf(profiles.values());
     }
 
     private void validate(ModelProvider provider) {
