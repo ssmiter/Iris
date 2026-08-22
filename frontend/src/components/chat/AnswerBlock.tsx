@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import type { AnswerNode } from '@/domain/chat/models'
 import { useChatStore } from '@/stores/chatStore'
 import { useReveal } from '@/motion/useReveal'
@@ -7,6 +7,7 @@ import { Tooltip } from '@/components/ui/Tooltip'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { IncrementalMarkdown } from './IncrementalMarkdown'
+import { formatStreamingMarkdown, normalizeMarkdown } from '@/utils/markdownNormalizer'
 
 interface AnswerBlockProps {
   node: AnswerNode
@@ -52,6 +53,12 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
   const showStoppedEyebrow = hasContent
     && (node.status === 'stopped' || stoppedByParent)
 
+  const renderContent = useMemo(() => {
+    return streaming
+      ? formatStreamingMarkdown(visibleContent)
+      : normalizeMarkdown(visibleContent)
+  }, [streaming, visibleContent])
+
   return (
     <section
       className="group relative mt-2.5 min-w-0 text-body text-ink"
@@ -85,12 +92,12 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
         </Tooltip>
       )}
       <div className="answer-prose prose prose-sm max-w-none text-ink">
-        {streaming ? (
-          <div className="whitespace-pre-wrap break-words text-ink">
-            {visibleContent}
-          </div>
-        ) : (
-          <IncrementalMarkdown content={visibleContent} />
+        <IncrementalMarkdown content={renderContent} />
+        {streaming && (
+          <span
+            className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink-muted align-middle motion-reduce:animate-none"
+            aria-hidden="true"
+          />
         )}
       </div>
       {showStoppedEyebrow && (

@@ -24,8 +24,6 @@ import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup'
 import go from 'react-syntax-highlighter/dist/esm/languages/prism/go'
 import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust'
 
-import { Button } from '@/components/ui/Button'
-import { Tooltip } from '@/components/ui/Tooltip'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
@@ -52,23 +50,6 @@ SyntaxHighlighter.registerLanguage('html', markup)
 SyntaxHighlighter.registerLanguage('go', go)
 SyntaxHighlighter.registerLanguage('rust', rust)
 
-const LANG_LABELS: Record<string, string> = {
-  tsx: 'TSX',
-  typescript: 'TypeScript',
-  javascript: 'JavaScript',
-  python: 'Python',
-  java: 'Java',
-  sql: 'SQL',
-  bash: 'Bash',
-  json: 'JSON',
-  yaml: 'YAML',
-  markdown: 'Markdown',
-  css: 'CSS',
-  html: 'HTML',
-  go: 'Go',
-  rust: 'Rust',
-}
-
 const LANG_ALIASES: Record<string, string> = {
   ts: 'typescript',
   js: 'javascript',
@@ -79,13 +60,28 @@ const LANG_ALIASES: Record<string, string> = {
   md: 'markdown',
 }
 
-const SUPPORTED_KEYS = new Set(Object.keys(LANG_LABELS))
+const SUPPORTED_KEYS = new Set([
+  'tsx',
+  'typescript',
+  'javascript',
+  'python',
+  'java',
+  'sql',
+  'bash',
+  'json',
+  'yaml',
+  'markdown',
+  'css',
+  'html',
+  'go',
+  'rust',
+])
 
 function normalizeLanguage(raw: string) {
   const lower = raw.toLowerCase()
   const key = LANG_ALIASES[lower] ?? lower
   if (!SUPPORTED_KEYS.has(key)) return null
-  return { key, label: LANG_LABELS[key] }
+  return key
 }
 
 function subscribeThemeChange(callback: () => void) {
@@ -112,12 +108,9 @@ function useIsDark() {
 
 interface CopyButtonProps {
   text: string
-  title?: string
-  className?: string
-  size?: 'sm' | 'md'
 }
 
-function CopyButton({ text, title = '复制', className, size = 'md' }: CopyButtonProps) {
+function CopyButton({ text }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
@@ -135,27 +128,22 @@ function CopyButton({ text, title = '复制', className, size = 'md' }: CopyButt
     return () => clearTimeout(timer)
   }, [copied])
 
-  const iconSize = size === 'sm' ? 14 : 16
-
   return (
-    <Tooltip content={copied ? '已复制' : title}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className={cn('shrink-0', className)}
-        onClick={handleCopy}
-      >
-        {copied
-          ? (
-              <Check size={iconSize} className="text-success" aria-hidden="true" />
-            )
-          : (
-              <Copy size={iconSize} aria-hidden="true" />
-            )}
-        <span className="sr-only">{copied ? '已复制' : title}</span>
-      </Button>
-    </Tooltip>
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={cn(
+        'absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-md',
+        'bg-surface-raised/80 text-ink-subtle opacity-0 transition-opacity duration-fast ease-standard',
+        'hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:opacity-100',
+      )}
+      title={copied ? '已复制' : '复制代码'}
+      aria-label={copied ? '已复制' : '复制代码'}
+    >
+      {copied
+        ? <Check size={14} className="text-success" aria-hidden="true" />
+        : <Copy size={14} aria-hidden="true" />}
+    </button>
   )
 }
 
@@ -173,10 +161,9 @@ export function CodeBlock({
   // react-markdown v9 不再传 inline：有语言标记或含换行按块级处理，其余按行内
   const isBlock = Boolean(match) || text.includes('\n')
 
-  // 行内代码保持默认渲染，让 .answer-prose :not(pre) > code 接管样式
   if (!isBlock) {
     return (
-      <code className={className} {...rest}>
+      <code className={cn('px-1.5 py-0.5 rounded text-sm font-mono bg-surface-muted text-ink')} {...rest}>
         {children}
       </code>
     )
@@ -184,64 +171,18 @@ export function CodeBlock({
 
   const code = text.replace(/\n$/, '')
   const rawLang = match?.[1] ?? ''
-  const lang = normalizeLanguage(rawLang)
+  const language = normalizeLanguage(rawLang) ?? 'markup'
   const isDark = useIsDark()
 
-  const header = (
-    <div className="flex items-center justify-between gap-2 px-3 py-1.5">
-      <span className="font-mono text-caption text-ink-muted">
-        {lang ? lang.label : 'text'}
-      </span>
-      <CopyButton
-        text={code}
-        title="复制代码"
-        size="sm"
-        className="h-7 w-7 rounded-xs p-0 opacity-0 transition-opacity duration-fast ease-standard group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
-      />
-    </div>
-  )
-
-  if (!lang) {
-    // 与有语言分支同一容器语言：header 与 pre 包进同一边框圆角容器。
-    // pre 自身的 .answer-prose 边框/圆角用内联样式归零，背景保留 token 底。
-    return (
-      <div className="code-block group overflow-hidden rounded-xl border border-border/70">
-        <div className="border-b border-border/70 bg-surface-muted">
-          {header}
-        </div>
-        <pre style={{ border: 'none', borderRadius: 0 }}>
-          <code>{code}</code>
-        </pre>
-      </div>
-    )
-  }
-
   return (
-    <div className="code-block group overflow-hidden rounded-xl border border-border/70 bg-surface-muted">
-      <div className="border-b border-border/70 bg-surface-muted">
-        {header}
-      </div>
+    <div className="group relative my-2">
+      <CopyButton text={code} />
       <SyntaxHighlighter
         style={isDark ? oneDark : oneLight}
-        language={lang.key}
+        language={language}
         PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: 0,
-          padding: '12px 14px',
-          fontSize: '12.5px',
-          lineHeight: '1.75',
-          // 高亮主题底色让位：外层容器承载 bg-surface-muted，暖/冷色调维度对代码块生效
-          background: 'transparent',
-          backgroundColor: 'transparent',
-        }}
-        codeTagProps={{
-          style: {
-            background: 'transparent',
-            backgroundColor: 'transparent',
-            textShadow: 'none',
-          },
-        }}
+        className="rounded-[0.5rem] text-sm"
+        customStyle={{ margin: 0 }}
       >
         {code}
       </SyntaxHighlighter>

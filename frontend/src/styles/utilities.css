@@ -72,9 +72,9 @@
   }
 
   .answer-prose {
-    /* 与 text-body 同字号：摘要行/正文同一文字轴、同一字号，天然一体 */
-    font-size: 0.9375rem;
-    line-height: 1.8;
+    /* WonWork prose-sm 基准 */
+    font-size: 0.875rem;
+    line-height: 1.714;
     overflow-wrap: anywhere;
     text-wrap: pretty;
     line-break: strict;
@@ -90,139 +90,6 @@
     margin-bottom: 0;
   }
 
-  /* 段落节奏：p/ul/ol 底部间距压到 8px，其余块级元素保持 0.6em */
-  .answer-prose p,
-  .answer-prose ul,
-  .answer-prose ol {
-    margin-top: 0.6em;
-    margin-bottom: 0.533em; /* 8px at 15px base */
-  }
-
-  .answer-prose pre,
-  .answer-prose table,
-  .answer-prose blockquote {
-    margin-top: 0.6em;
-    margin-bottom: 0.6em;
-  }
-
-  .answer-prose li {
-    margin-bottom: 2px;
-  }
-
-  /* 标题阶梯：相对 15px 正文的克制比例 */
-  .answer-prose h1,
-  .answer-prose h2,
-  .answer-prose h3,
-  .answer-prose h4 {
-    color: rgb(var(--color-text));
-    font-weight: 650;
-    line-height: 1.4;
-    margin: 14px 0 8px;
-  }
-
-  .answer-prose h1 {
-    font-size: 1.35em;
-  }
-
-  .answer-prose h2 {
-    font-size: 1.22em;
-  }
-
-  .answer-prose h3 {
-    font-size: 1.08em;
-  }
-
-  .answer-prose h4 {
-    font-size: 1em;
-  }
-
-  .answer-prose h5,
-  .answer-prose h6 {
-    color: rgb(var(--color-text));
-    font-weight: 650;
-  }
-
-  .answer-prose strong {
-    color: rgb(var(--color-text));
-    font-weight: 650;
-  }
-
-  /* 链接：默认无下划线，hover / focus-visible 出现 */
-  .answer-prose a {
-    color: rgb(var(--color-primary));
-    text-decoration: none;
-  }
-
-  .answer-prose a:hover,
-  .answer-prose a:focus-visible {
-    text-decoration: underline;
-  }
-
-  /* 行内代码：surface-muted 底、圆角、压缩字号、字重回 normal */
-  .answer-prose :not(pre) > code {
-    background: rgb(var(--color-surface-muted));
-    border-radius: 5px;
-    padding: 1px 5px;
-    font-size: 0.86em;
-    font-weight: normal;
-    color: rgb(var(--color-text));
-  }
-
-  .answer-prose code::before,
-  .answer-prose code::after {
-    content: none;
-  }
-
-  /* 代码块：保留 surface-muted 底与边框，调整圆角/内边距/字号/行高 */
-  .answer-prose pre {
-    background: rgb(var(--color-surface-muted));
-    border: 1px solid rgb(var(--color-border) / 0.7);
-    border-radius: 12px;
-    padding: 12px 14px;
-    font-size: 12.5px;
-    line-height: 1.75;
-    color: rgb(var(--color-text));
-  }
-
-  .answer-prose pre code {
-    background: transparent;
-    border-radius: 0;
-    padding: 0;
-    font-size: inherit;
-    font-weight: inherit;
-    color: inherit;
-  }
-
-  /* 引用块：左边条、不斜体、无自动引号、字色 subtle */
-  .answer-prose blockquote {
-    border-left: 3px solid rgb(var(--color-border-strong));
-    padding-left: 12px;
-    margin: 10px 0;
-    font-style: normal;
-    color: rgb(var(--color-text-subtle));
-  }
-
-  .answer-prose blockquote p::before,
-  .answer-prose blockquote p::after {
-    content: none;
-  }
-
-  /* 分割线：收紧垂直间距，边框走 token */
-  .answer-prose hr {
-    margin: 12px 0;
-    border-color: rgb(var(--color-border));
-  }
-
-  /* 列表：统一缩进、marker 走 muted token */
-  .answer-prose ul,
-  .answer-prose ol {
-    padding-left: 20px;
-  }
-
-  .answer-prose li::marker {
-    color: rgb(var(--color-text-muted));
-  }
-
   /* GFM 任务列表：去圆点、checkbox 对齐微调 */
   .answer-prose ul:has(> li > input[type='checkbox']) {
     list-style: none;
@@ -234,56 +101,6 @@
     vertical-align: -2px;
   }
 
-  /* 表格：圆角容器 + 横向滚动 + 行 hover；边框由外层容器提供，内部只留网格线 */
-  .answer-prose table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-    border-collapse: separate;
-    border-spacing: 0;
-    font-size: 13px;
-    border: 1px solid rgb(var(--color-border));
-    border-radius: var(--radius-lg);
-  }
-
-  .answer-prose th,
-  .answer-prose td {
-    border-right: 1px solid rgb(var(--color-border));
-    border-bottom: 1px solid rgb(var(--color-border));
-    padding: 6px 10px;
-    text-align: left;
-    vertical-align: top;
-    color: rgb(var(--color-text));
-  }
-
-  .answer-prose th:first-child,
-  .answer-prose td:first-child {
-    border-left: none;
-  }
-
-  .answer-prose th:last-child,
-  .answer-prose td:last-child {
-    border-right: none;
-  }
-
-  .answer-prose thead tr:first-child th {
-    border-top: none;
-  }
-
-  .answer-prose tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  .answer-prose tbody tr:hover td {
-    background: rgb(var(--color-surface-muted));
-  }
-
-  .answer-prose th {
-    background: rgb(var(--color-surface-muted));
-    font-weight: 650;
-    vertical-align: bottom;
-  }
-
   /* 小字号中文字重克制：caption 在 prose 内保持 token 的 500，
      small 压到 600 上限，都不撑到 650。 */
   .answer-prose .text-caption {
@@ -292,16 +109,5 @@
 
   .answer-prose .text-small {
     font-weight: 600;
-  }
-
-  /* 代码块包装器：与 pre 块同一垂直节奏，避免内部 pre 重复边距 */
-  .answer-prose .code-block {
-    margin-top: 0.6em;
-    margin-bottom: 0.6em;
-  }
-
-  .answer-prose .code-block > pre {
-    margin-top: 0;
-    margin-bottom: 0;
   }
 }
