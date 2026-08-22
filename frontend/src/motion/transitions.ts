@@ -1,12 +1,12 @@
 export const revealMotion = {
   firstFrameTail: 24,
-  retainedBacklog: 220,
-  backlogFastForwardThreshold: 360,
-  minCharactersPerSecond: 40,
-  maxCharactersPerSecond: 600,
-  arrivalRateMultiplier: 1.25,
+  retainedBacklog: 160,
+  backlogFastForwardThreshold: 260,
+  minCharactersPerSecond: 60,
+  maxCharactersPerSecond: 1400,
+  arrivalRateMultiplier: 1.4,
   maximumFrameDeltaMs: 100,
-  minimumPublishIntervalMs: 80,
+  minimumPublishIntervalMs: 40,
 } as const
 
 export const interactionMotion = {

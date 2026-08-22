@@ -11,6 +11,7 @@ import { ArtifactZone } from './ArtifactZone'
 import { FlowNode } from './FlowNode'
 import { ProcessSummary } from './ProcessSummary'
 import { cn } from '@/lib/cn'
+import { useViewStateStore } from '@/stores/viewStateStore'
 import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
 
 /** 已播过摘要行淡入的 roundId 集合（会话级） */
@@ -90,6 +91,14 @@ export const RoundSection = memo(function RoundSection({
     (node) => node.type === 'attention' && node.status === 'waiting',
   ).length
   const processId = `round-process-${round.roundId}`
+  const roundActive = round.phase === 'active'
+  // 活跃轮次：过程链始终展开，实时过程对流式阅读可见；
+  // 结算瞬间播种一次完整展开（完成时全链条打开），此后折叠与否由用户主导。
+  const processVisible = roundActive || processExpanded
+
+  const seedExpandedRound = useViewStateStore(
+    (state) => state.seedExpandedRound,
+  )
 
   // 摘要行入场动画：只在 active→非 active 的跃迁瞬间触发一次，
   // 水合历史时初值即 settled，不会误闪；会话级集合防重放。
@@ -105,9 +114,17 @@ export const RoundSection = memo(function RoundSection({
     }
   }, [round.phase, round.roundId])
 
+  // 结算瞬间：一次性把整条过程链播种为展开。
+  // 用户随后手动折叠优先（seed 只在 initializedNodeIds 未含 round 标记时生效一次）。
+  useEffect(() => {
+    if (roundActive) return
+    if (chainNodes.length === 0) return
+    seedExpandedRound(round.roundId, processNodeIds)
+  }, [roundActive, chainNodes.length, round.roundId, processNodeIds, seedExpandedRound])
+
   useLayoutEffect(() => {
-    if (processExpanded) onRevealNewNodes(processNodeIds)
-  }, [onRevealNewNodes, processExpanded, processNodeKey])
+    if (processVisible) onRevealNewNodes(processNodeIds)
+  }, [onRevealNewNodes, processVisible, processNodeKey])
 
   return (
     <section
@@ -137,14 +154,14 @@ export const RoundSection = memo(function RoundSection({
             className={cn(
               'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
               'hover:!opacity-100',
-              processExpanded
+              processVisible
                 ? 'grid-rows-[1fr] opacity-100'
                 : 'grid-rows-[0fr] opacity-0',
               'motion-reduce:transition-none',
             )}
           >
             <div className="overflow-hidden">
-              <div className="pb-1 pl-1">
+              <div className="pb-1">
                 {chainNodes.map((node, index) => (
                   <FlowNode
                     key={node.nodeId}
@@ -153,7 +170,7 @@ export const RoundSection = memo(function RoundSection({
                     onToggle={() => onToggleNode(node.nodeId)}
                     isFirst={index === 0}
                     isLast={index === chainNodes.length - 1}
-                    chainLive={round.phase === 'active' && processExpanded}
+                    chainLive={roundActive && processVisible}
                     onAttentionAction={onAttentionAction}
                     onOpenChildRun={onOpenChildRun}
                   />
@@ -164,7 +181,7 @@ export const RoundSection = memo(function RoundSection({
 
           <ProcessSummary
             round={round}
-            expanded={processExpanded}
+            expanded={processVisible}
             pendingCount={pendingCount}
             fadeIn={summaryFade}
             onToggle={() => onToggleProcess(processNodeIds)}

@@ -92,13 +92,7 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
         </Tooltip>
       )}
       <div className="answer-prose prose prose-sm max-w-none text-ink">
-        <IncrementalMarkdown content={renderContent} />
-        {streaming && (
-          <span
-            className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink-muted align-middle motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-        )}
+        <IncrementalMarkdown content={renderContent} streaming={streaming} />
       </div>
       {showStoppedEyebrow && (
         <div

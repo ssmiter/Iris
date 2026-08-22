@@ -38,6 +38,8 @@ export interface ViewState {
   toggleNode: (nodeId: string) => void
   seedExpandedNodes: (nodeIds: string[]) => void
   revealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
+  /** 轮次结算瞬间播种一次展开：完成时全链条自动展开，之后用户可自由折叠 */
+  seedExpandedRound: (roundId: string, nodeIds: string[]) => void
   setTheme: (theme: Theme) => void
   setHue: (hue: Hue) => void
   setAccent: (accent: Accent) => void
@@ -137,6 +139,27 @@ export const useViewStateStore = create<ViewState>()(
             initializedNodeIds: unseenNodeIds.reduce<FlagMap>(
               (flags, nodeId) => ({ ...flags, [nodeId]: true }),
               state.initializedNodeIds,
+            ),
+          }
+        }),
+      seedExpandedRound: (roundId, nodeIds) =>
+        set((state) => {
+          if (state.initializedNodeIds[`round:${roundId}`]) return state
+          return {
+            expandedRoundIds: {
+              ...state.expandedRoundIds,
+              [roundId]: true,
+            },
+            expandedNodeIds: nodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              state.expandedNodeIds,
+            ),
+            initializedNodeIds: nodeIds.reduce<FlagMap>(
+              (flags, nodeId) => ({ ...flags, [nodeId]: true }),
+              {
+                ...state.initializedNodeIds,
+                [`round:${roundId}`]: true,
+              },
             ),
           }
         }),

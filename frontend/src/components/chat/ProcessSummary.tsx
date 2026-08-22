@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, XCircle } from 'lucide-react'
 import type { RoundView } from '@/domain/chat/models'
 import { cn } from '@/lib/cn'
 
@@ -16,6 +16,11 @@ function formatDuration(durationMs: number) {
   return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)}s`
 }
 
+/**
+ * 过程摘要标题行（WonWork ThinkingProcess 标题栏同款语言）：
+ * 图标承载状态语义（活跃旋转、完成打勾、失败叉），文字只说事实，
+ * hover 泛出浅底，无描边无卡片——与正文同一平面。
+ */
 export function ProcessSummary({
   round,
   expanded,
@@ -24,14 +29,17 @@ export function ProcessSummary({
   onToggle,
 }: ProcessSummaryProps) {
   const processId = `round-process-${round.roundId}`
+  const active = round.phase === 'active'
+  const failed = round.phase === 'failed'
+  const stopped = round.phase === 'stopped'
 
   return (
     <button
       type="button"
       className={cn(
-        'group -ml-2 flex min-h-8 w-[calc(100%+0.5rem)] items-center gap-1.5 rounded-sm px-2 text-left text-body',
-        'text-ink-muted transition-[color,background-color,transform,opacity] duration-fast ease-standard',
-        'hover:bg-surface-muted hover:text-ink-subtle active:scale-[0.995] active:bg-surface-muted active:opacity-80',
+        'group -ml-2 flex min-h-9 w-[calc(100%+0.5rem)] items-center gap-2 rounded-md px-2 text-left',
+        'text-small transition-colors duration-fast ease-standard',
+        'hover:bg-surface-muted/70',
         'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
         fadeIn && 'animate-node-enter motion-reduce:animate-none',
       )}
@@ -39,30 +47,35 @@ export function ProcessSummary({
       aria-controls={processId}
       onClick={onToggle}
     >
-      <ChevronRight
-        aria-hidden="true"
-        className={cn(
-          'h-3.5 w-3.5 shrink-0 transition-transform duration-deliberate ease-flow',
-          expanded && 'rotate-90',
-          'motion-reduce:transition-none',
+      {expanded ? (
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+      ) : (
+        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+      )}
+      {active ? (
+        <Loader2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin text-primary motion-reduce:animate-none" />
+      ) : failed ? (
+        <XCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-danger" />
+      ) : (
+        <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-success" />
+      )}
+      <span className={cn(
+        'min-w-0 truncate font-medium',
+        failed ? 'text-danger' : active ? 'text-ink-subtle' : 'text-ink-muted',
+      )}>
+        第 {round.index + 1} 轮过程
+        {round.stats.toolCallCount > 0 && (
+          <>，{round.stats.toolCallCount} 个工具</>
         )}
-      />
-      <span>第 {round.index + 1} 轮过程</span>
-      {round.stats.toolCallCount > 0 && (
-        <span>，{round.stats.toolCallCount} 个工具</span>
-      )}
-      {round.phase !== 'active' && (
-        <span>，{formatDuration(round.stats.durationMs)}</span>
-      )}
-      {pendingCount > 0 && (
-        <span className="ml-1 text-warning">，{pendingCount} 项待处理</span>
-      )}
-      {round.phase === 'failed' && (
-        <span className="ml-1 text-danger">，失败</span>
-      )}
-      {round.phase === 'stopped' && (
-        <span className="ml-1 text-warning">，已停止</span>
-      )}
+        {!active && (
+          <>，{formatDuration(round.stats.durationMs)}</>
+        )}
+        {pendingCount > 0 && (
+          <span className="text-warning">，{pendingCount} 项待处理</span>
+        )}
+        {stopped && <span className="text-warning">，已停止</span>}
+        {failed && <>，失败</>}
+      </span>
     </button>
   )
 }

@@ -198,12 +198,26 @@ const MarkdownFragment = memo(function MarkdownFragment({
   )
 })
 
-export function IncrementalMarkdown({ content }: { content: string }) {
+export function IncrementalMarkdown({
+  content,
+  streaming = false,
+}: {
+  content: string
+  /** 流式期间走单树渲染：normalizer 会改写尾部文本，分块密封会失配导致整树重挂 */
+  streaming?: boolean
+}) {
   const cacheRef = useRef<MarkdownCache>({
     source: '',
     sealedLength: 0,
     chunks: [],
   })
+
+  if (streaming) {
+    return (
+      <MarkdownStreaming key="streaming" content={content} />
+    )
+  }
+
   const cache = cacheRef.current
 
   if (!content.startsWith(cache.source)) {
@@ -234,3 +248,21 @@ export function IncrementalMarkdown({ content }: { content: string }) {
     </>
   )
 }
+
+/**
+ * 流式单树渲染：整段规范化文本每次交给同一棵 ReactMarkdown。
+ * remarkPlugins 与 markdownComponents 均为模块级稳定引用，React 只增量更新尾部节点，
+ * 已渲染的块不会卸载重挂——WonWork MessageBubble 的同款机制。
+ */
+const MarkdownStreaming = memo(function MarkdownStreaming({
+  content,
+}: {
+  content: string
+}) {
+  if (!content) return null
+  return (
+    <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
+  )
+})

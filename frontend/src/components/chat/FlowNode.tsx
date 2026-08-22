@@ -1,16 +1,9 @@
 import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react'
 import {
-  AlertTriangle,
-  Brain,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  CircleEllipsis,
-  FileText,
-  GitBranch,
-  MessageSquareMore,
-  Wrench,
   X,
 } from 'lucide-react'
 import type {
@@ -81,15 +74,23 @@ function useStall() {
   return useContext(StallContext)
 }
 
-const nodeIcon = {
-  thinking: Brain,
-  tool: Wrench,
-  attention: AlertTriangle,
-  artifact: FileText,
-  answer: MessageSquareMore,
-  supplement: CircleEllipsis,
-  run: GitBranch,
-} satisfies Record<RenderNode['type'], typeof Brain>
+/** 行内状态点：活跃呼吸、完成打勾、失败叉——图标承载状态，不再整列类型图标 */
+function StatusDot({ node }: { node: RenderNode }) {
+  if (isActive(node)) {
+    return (
+      <span
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full motion-safe:animate-pulse',
+          node.type === 'attention' ? 'bg-warning' : 'bg-primary',
+        )}
+      />
+    )
+  }
+  if (isFailed(node)) {
+    return <X aria-hidden="true" className="h-3 w-3 shrink-0 text-danger" />
+  }
+  return <Check aria-hidden="true" className="h-3 w-3 shrink-0 text-success" />
+}
 
 function isActive(node: RenderNode) {
   return (
@@ -389,18 +390,14 @@ export const FlowNode = memo(function FlowNode({
   node,
   expanded,
   onToggle,
-  isFirst,
-  isLast,
+  isFirst: _isFirst,
+  isLast: _isLast,
   chainLive,
   onAttentionAction,
   onOpenChildRun,
 }: FlowNodeProps) {
-  const Icon = nodeIcon[node.type]
   const active = isActive(node)
   const failed = isFailed(node)
-  // 水流语义：执行到达过本节点，则来路/去路线段染色（queued 是唯一"未到达"态）。
-  // 已到达的连续染色在活跃节点的呼吸点处收束，形成"水流前沿"。
-  const reached = node.status !== 'queued'
   // 出生动画只在挂载瞬间判定一次：回合活跃 + 过程区可见 + 此前未播过。
   // 折叠挂载（用户尚未展开）不播也不入册，展开靠容器自身的 grid-rows 展开动画。
   const [born] = useState(() => {
@@ -415,125 +412,72 @@ export const FlowNode = memo(function FlowNode({
   const bodyId = `flow-node-body-${node.nodeId}`
 
   return (
-    <div className="relative grid grid-cols-[20px_minmax(0,1fr)] gap-2">
-      <div className="flex flex-col items-center" aria-hidden="true">
+    <div className={cn(born && 'animate-node-enter motion-reduce:animate-none')}>
+      <button
+        type="button"
+        className={cn(
+          'flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left',
+          'transition-colors duration-fast ease-standard',
+          'hover:bg-surface-muted/70',
+          'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
+        )}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={onToggle}
+      >
+        <StatusDot node={node} />
         <span
           className={cn(
-            'w-px',
-            isFirst ? 'h-2.5 flex-none' : 'flex-1',
-            reached
-              ? failed
-                ? 'bg-danger/20'
-                : 'bg-primary/15'
-              : 'bg-border',
-            born && !isFirst &&
-              'origin-top animate-seg-grow motion-reduce:animate-none',
-          )}
-        />
-        <span
-          className={cn(
-            'flex h-3 w-3 items-center justify-center rounded-full border bg-surface',
-            // 节点缩至 12px，用负 margin 让 seg 对齐圆心
-            '-my-1.5',
-            active && node.type !== 'attention' && 'border-primary text-primary',
-            active && node.type === 'attention' && 'border-warning text-warning',
-            failed && 'border-danger text-danger',
-            !active && !failed && reached && 'border-primary/40 text-primary',
-            !active && !failed && !reached &&
-              'border-border-strong text-ink-muted',
+            'min-w-0 flex-1 truncate text-small',
+            failed
+              ? 'text-danger'
+              : active
+                ? 'font-medium text-ink-subtle'
+                : 'text-ink-muted',
           )}
         >
-          {active ? (
-            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-          ) : failed ? (
-            <X className="h-2 w-2" />
-          ) : (
-            <Check className="h-2 w-2" />
-          )}
+          {nodeTitle(node)}
         </span>
         <span
           className={cn(
-            'w-px flex-1',
-            isLast
-              ? reached
-                ? 'bg-gradient-to-b from-primary/15 to-transparent'
-                : 'bg-gradient-to-b from-border to-transparent'
-              : reached
-                ? failed
-                  ? 'bg-danger/20'
-                  : 'bg-primary/15'
-                : 'bg-border',
+            'min-w-0 max-w-[50%] inline-block truncate text-caption',
+            failed
+              ? 'text-danger'
+              : active
+                ? 'text-ink-subtle'
+                : 'text-ink-muted/80',
           )}
-        />
-      </div>
-
-      <div
-        className={cn(
-          'min-w-0 py-1',
-          born && 'animate-node-enter motion-reduce:animate-none',
-        )}
-      >
-        <button
-          type="button"
-          className={cn(
-            'flex min-h-8 w-full items-baseline gap-2 rounded-sm px-2 text-left',
-            'transition-[color,background-color,transform,opacity] duration-fast ease-standard',
-            'hover:bg-surface-muted active:scale-[0.995] active:bg-surface-muted active:opacity-80',
-            'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
-          )}
-          aria-expanded={expanded}
-          aria-controls={bodyId}
-          onClick={onToggle}
         >
-          <Icon
-            aria-hidden="true"
-            className={cn(
-              'h-4 w-4 shrink-0 text-ink-muted',
-              active && 'text-ink-subtle',
-              failed && 'text-danger',
-            )}
-          />
-          <span className="min-w-0 flex-1 truncate text-small font-medium text-ink-subtle">
-            {nodeTitle(node)}
-          </span>
-          <span
-            className={cn(
-              'min-w-0 max-w-[55%] inline-block truncate text-caption text-ink-muted',
-              active && 'text-ink-subtle',
-              failed && 'text-danger',
-            )}
-          >
-            {statusText(node)}
-          </span>
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
-              expanded && 'rotate-90',
-              'motion-reduce:transition-none',
-            )}
-          />
-        </button>
-        <div
-          id={bodyId}
+          {statusText(node)}
+        </span>
+        <ChevronRight
+          aria-hidden="true"
           className={cn(
-            'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
-            expanded
-              ? 'grid-rows-[1fr] opacity-100'
-              : 'grid-rows-[0fr] opacity-0',
+            'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
+            expanded && 'rotate-90',
             'motion-reduce:transition-none',
           )}
-        >
-          <div className="overflow-hidden">
-            <div className="px-2 pb-3 pt-1 text-small text-ink-subtle">
-              <NodeBody
-                node={node}
-                expanded={expanded}
-                onAttentionAction={onAttentionAction}
-                onOpenChildRun={onOpenChildRun}
-              />
-              {chainLive && isActive(node) && <StallBanner />}
-            </div>
+        />
+      </button>
+      <div
+        id={bodyId}
+        className={cn(
+          'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
+          expanded
+            ? 'grid-rows-[1fr] opacity-100'
+            : 'grid-rows-[0fr] opacity-0',
+          'motion-reduce:transition-none',
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="px-2 pb-3 pt-1 text-small text-ink-subtle">
+            <NodeBody
+              node={node}
+              expanded={expanded}
+              onAttentionAction={onAttentionAction}
+              onOpenChildRun={onOpenChildRun}
+            />
+            {chainLive && isActive(node) && <StallBanner />}
           </div>
         </div>
       </div>
