@@ -52,7 +52,7 @@ public class DelegateTaskTool implements Tool {
         this.agentRuns = agentRuns;
         this.manifest = new ToolManifest(
                 "iris.system.agents.delegate_task",
-                "3",
+                "4",
                 "delegate_task",
                 "把一个可以独立理解、独立完成并客观验收的明确子目标交给后台子 Agent；任务书应像交给聪明同事一样写清目标、背景、约束和交付标准，禁止把理解责任推给子 Agent。立即返回稳定 Run 标识，完成或失败后自动向父 Run 发送有界结果通知",
                 inputSchema(),
