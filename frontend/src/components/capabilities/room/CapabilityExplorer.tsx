@@ -11,13 +11,23 @@ import {
   Brain,
   ChevronLeft,
   Clock3,
+  ClipboardPaste,
+  Copy,
+  FolderOpen,
   Grid3X3,
+  Link,
   List,
+  Pencil,
+  Pin,
+  PinOff,
   Plug,
   Plus,
   RefreshCw,
+  Scissors,
   Search,
   SearchX,
+  TextCursor,
+  Trash2,
 } from 'lucide-react'
 import {
   capabilityAdminApi,
@@ -31,7 +41,7 @@ import {
   type CapabilityTreeNode,
   type SkillView,
 } from '@/api/irisApi'
-import { Button, ContextMenu, Input, Modal, ModalClose, notify, type ContextMenuSlot } from '@/components/ui'
+import { Badge, Button, ContextMenu, Input, Modal, ModalClose, notify, type ContextMenuSlot } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { kindMeta } from '@/domain/capability/kindMeta'
 import { riskMeta, type BadgeTone } from '@/domain/capability/riskMeta'
@@ -51,13 +61,14 @@ import { QuietState, useFocusReturn } from '../controls'
 import { SkillEditor } from '../SkillEditor'
 import { DirectoryTree } from './DirectoryTree'
 import { CapabilityDetailPanel } from './CapabilityDetailPanel'
+import { StatusLine } from './StatusLine'
 
 const RISK_EDGE: Record<BadgeTone, string> = {
   neutral: '',
   info: '',
   success: '',
-  warning: 'ring-warning ring-[1.5px]',
-  danger: 'ring-danger ring-[1.5px]',
+  warning: 'ring-[1.5px] ring-inset ring-warning',
+  danger: 'ring-[1.5px] ring-inset ring-danger',
   violet: '',
   teal: '',
 }
@@ -510,7 +521,7 @@ export function CapabilityExplorer({
     }
     if (!isValidMachineName(trimmed)) {
       notify.error('名称格式不对', {
-        description: '请使用小写、数字、- 或 _ 的机器名（如 my-tool）。',
+        description: '请使用小写、数字、短横线或下划线的机器名（如 my-tool）。',
       })
       return
     }
@@ -578,17 +589,20 @@ export function CapabilityExplorer({
       {
         key: 'open-location',
         label: '打开所在位置',
+        icon: FolderOpen,
         onSelect: () => selectPath(parentPathOf(path)),
       },
       {
         key: 'unpin',
         label: '取消钉选',
+        icon: PinOff,
         onSelect: () => togglePin(path),
       },
       { type: 'separator', key: 'sep-1' },
       {
         key: 'copy-path',
         label: '复制路径',
+        icon: Link,
         onSelect: () => copyText(path),
       },
     ]
@@ -599,6 +613,7 @@ export function CapabilityExplorer({
       {
         key: 'paste',
         label: '粘贴',
+        icon: ClipboardPaste,
         disabled: !clipboard,
         onSelect: () => pasteTo(path),
       },
@@ -606,6 +621,7 @@ export function CapabilityExplorer({
       {
         key: 'copy-path',
         label: '复制路径',
+        icon: Link,
         onSelect: () => copyText(path),
       },
     ]
@@ -618,6 +634,7 @@ export function CapabilityExplorer({
       {
         key: 'pin',
         label: pinned ? '取消钉选' : '钉到收藏',
+        icon: pinned ? PinOff : Pin,
         onSelect: () => togglePin(item.path),
       },
     ]
@@ -626,40 +643,47 @@ export function CapabilityExplorer({
       return [
         {
           key: 'open',
-          label: '打开编辑',
+          label: '编辑',
+          icon: Pencil,
           onSelect: () => openDetailOrEdit(item),
         },
         {
           key: 'cut',
           label: '剪切',
+          icon: Scissors,
           onSelect: () => cutItems([item.path]),
         },
         {
           key: 'copy',
           label: '复制',
+          icon: Copy,
           onSelect: () => copyItems([item.path]),
         },
         {
           key: 'paste',
           label: '粘贴',
+          icon: ClipboardPaste,
           disabled: !clipboard,
           onSelect: () => pasteTo(parentPathOf(item.path)),
         },
         {
           key: 'rename',
           label: '重命名',
+          icon: TextCursor,
           onSelect: () => startRename(item),
         },
         { type: 'separator', key: 'sep-1' },
         {
           key: 'delete',
           label: '删除',
+          icon: Trash2,
           danger: true,
           onSelect: () => confirmDelete([item.path]),
         },
         {
           key: 'copy-path',
           label: '复制路径',
+          icon: Link,
           onSelect: () => copyText(item.path),
         },
         ...commonFooter,
@@ -670,13 +694,15 @@ export function CapabilityExplorer({
       return [
         {
           key: 'open',
-          label: '打开编辑',
+          label: '编辑',
+          icon: Pencil,
           onSelect: () => openDetailOrEdit(item),
         },
         { type: 'separator', key: 'sep-1' },
         {
           key: 'copy-path',
           label: '复制路径',
+          icon: Link,
           onSelect: () => copyText(item.path),
         },
         ...commonFooter,
@@ -692,13 +718,15 @@ export function CapabilityExplorer({
         },
         {
           key: 'copy-name',
-          label: '复制调用名',
+          label: '复制名称',
+          icon: Copy,
           onSelect: () => copyText(item.path),
         },
         { type: 'separator', key: 'sep-1' },
         {
           key: 'copy-path',
           label: '复制路径',
+          icon: Link,
           onSelect: () => copyText(item.path),
         },
         ...commonFooter,
@@ -709,6 +737,7 @@ export function CapabilityExplorer({
       {
         key: 'copy-path',
         label: '复制路径',
+        icon: Link,
         onSelect: () => copyText(item.path),
       },
       ...commonFooter,
@@ -720,12 +749,14 @@ export function CapabilityExplorer({
       {
         key: 'cut',
         label: '剪切',
+        icon: Scissors,
         onSelect: () => cutItems(paths),
       },
       { type: 'separator', key: 'sep-1' },
       {
         key: 'delete',
         label: '删除',
+        icon: Trash2,
         danger: true,
         onSelect: () => confirmDelete(paths),
       },
@@ -1109,7 +1140,12 @@ export function CapabilityExplorer({
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 border-b border-border/70 bg-surface-raised/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 px-3 rounded-md"
+            onClick={onClose}
+          >
             <ChevronLeft className="h-4 w-4" />
             返回
           </Button>
@@ -1118,22 +1154,23 @@ export function CapabilityExplorer({
             ref={searchRef}
             aria-label="搜索能力"
             containerClassName="min-w-0 flex-1"
-            className="h-8"
+            className="h-9"
             leadingIcon={<Search className="h-3.5 w-3.5" />}
-            placeholder="搜索：名称 / 路径（/ 或 Ctrl+F 聚焦）"
+            placeholder="搜索能力…"
+            title="按 / 或 Ctrl+F 聚焦搜索"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9 rounded-md hover:bg-surface-muted"
             aria-label="全量刷新能力数据"
             disabled={refreshing}
             onClick={refreshAll}
           >
             <RefreshCw
-              className="h-4 w-4 transition-transform duration-300 ease-standard motion-reduce:transition-none"
+              className="h-4 w-4 transition-transform duration-500 ease-flow motion-reduce:transition-none"
               style={{ transform: `rotate(${rotation}deg)` }}
             />
           </Button>
@@ -1163,7 +1200,7 @@ export function CapabilityExplorer({
               hint="点右上角刷新按钮重试。"
             />
           ) : (
-            <QuietState loading title="正在读取目录…" />
+            <TreeSkeleton />
           )}
         </nav>
 
@@ -1172,6 +1209,7 @@ export function CapabilityExplorer({
             <Button
               variant="secondary"
               size="sm"
+              className="h-9 px-3 rounded-md"
               data-focus-key="entry-new-skill"
               onClick={() => {
                 captureFocusKey('entry-new-skill')
@@ -1184,6 +1222,7 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
+              className="h-9 px-3 rounded-md"
               data-focus-key="entry-mcp"
               onClick={() => onOpenMcp()}
             >
@@ -1193,6 +1232,7 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
+              className="h-9 px-3 rounded-md"
               data-focus-key="entry-schedule"
               onClick={onOpenSchedule}
             >
@@ -1202,19 +1242,20 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
+              className="h-9 px-3 rounded-md"
               data-focus-key="entry-memory"
               onClick={onOpenMemory}
             >
               <Brain className="h-3.5 w-3.5" />
               记忆
             </Button>
-            <div className="ml-auto flex items-center rounded-sm border border-border p-0.5">
+            <div className="ml-auto flex items-center rounded-md border border-border p-0.5">
               <button
                 type="button"
                 aria-pressed={viewMode === 'grid'}
                 aria-label="图标砖视图"
                 className={cn(
-                  'grid h-7 w-7 place-items-center rounded-xs transition-colors',
+                  'grid h-9 w-9 place-items-center rounded-xs transition-colors',
                   viewMode === 'grid'
                     ? 'bg-surface-muted text-ink'
                     : 'text-ink-muted hover:text-ink-subtle',
@@ -1228,7 +1269,7 @@ export function CapabilityExplorer({
                 aria-pressed={viewMode === 'list'}
                 aria-label="列表视图"
                 className={cn(
-                  'grid h-7 w-7 place-items-center rounded-xs transition-colors',
+                  'grid h-9 w-9 place-items-center rounded-xs transition-colors',
                   viewMode === 'list'
                     ? 'bg-surface-muted text-ink'
                     : 'text-ink-muted hover:text-ink-subtle',
@@ -1245,24 +1286,43 @@ export function CapabilityExplorer({
             className="scrollbar-subtle relative min-h-0 flex-1 overflow-y-auto p-4"
             onMouseDown={onContentMouseDown}
           >
+            {isSearching && (
+              <div className="mb-3 flex items-center gap-3 text-small text-ink-subtle">
+                <span>
+                  搜索结果：<span className="font-medium text-ink">{query}</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-caption"
+                  onClick={() => setQuery('')}
+                >
+                  清空
+                </Button>
+              </div>
+            )}
             {listingLoading ? (
-              <QuietState loading title="正在读取能力…" />
+              viewMode === 'grid' ? (
+                <GridSkeleton />
+              ) : (
+                <ListSkeleton />
+              )
             ) : filteredItems.length === 0 ? (
-              <QuietState
-                icon={SearchX}
-                title={
-                  isSearching
-                    ? '没有匹配的能力。'
-                    : '这个目录下还没有可直接寻址的能力。'
-                }
-                hint={
-                  isSearching
-                    ? '换个关键词，或按 Esc 清空搜索。'
-                    : '换个目录看看，或在上方搜索。'
-                }
-              />
+              isSearching ? (
+                <QuietState
+                  icon={SearchX}
+                  title="没找到匹配的能力"
+                  hint="换个词试试，或按 Esc 回到当前目录。"
+                />
+              ) : (
+                <QuietState
+                  icon={FolderOpen}
+                  title="这个文件夹是空的"
+                  hint="在这里创建 skill，或切换到别的目录。"
+                />
+              )
             ) : viewMode === 'grid' ? (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-4">
                 {filteredItems.map((item) => (
                   <CapabilityTile
                     key={item.path}
@@ -1343,26 +1403,21 @@ export function CapabilityExplorer({
           </div>
 
           <footer className="flex shrink-0 items-center justify-between border-t border-border/60 bg-surface px-4 py-2 text-caption text-ink-muted">
-            <div className="flex items-center gap-2">
-              <span>{(listing?.items ?? []).length} 项</span>
-              <span>·</span>
+            <div className="flex items-center gap-4">
+              <span>共 {(listing?.items ?? []).length} 项</span>
               <span>选中 {selection.size} 项</span>
               {selectedNode && Object.keys(selectedNode.stats).length > 0 && (
                 <>
-                  <span>·</span>
-                  <span>
-                    {Object.entries(selectedNode.stats)
-                      .map(
-                        ([key, value]) =>
-                          `${STAT_LABELS[key] ?? key} ${formatStat(key, value)}`,
-                      )
-                      .join(' · ')}
-                  </span>
+                  {Object.entries(selectedNode.stats).map(([key, value]) => (
+                    <span key={key}>
+                      {STAT_LABELS[key] ?? key} {formatStat(key, value)}
+                    </span>
+                  ))}
                 </>
               )}
             </div>
             {problems.length > 0 && (
-              <span className="text-warning">{problems.length} 个扫描问题</span>
+              <Badge tone="warning">{problems.length} 个问题</Badge>
             )}
           </footer>
         </section>
@@ -1453,23 +1508,25 @@ function CapabilityTile({
       onClick={onClick}
       onContextMenu={onContextMenu}
       className={cn(
-        'group flex flex-col items-center gap-2 rounded-md border border-transparent p-3 text-left transition-colors duration-fast',
-        'hover:bg-surface-muted focus-visible:outline-none focus-visible:shadow-focus',
-        cut && 'opacity-50',
+        'group flex flex-col gap-3 rounded-md border border-transparent p-4 text-left transition-colors duration-fast',
+        'focus-visible:outline-none focus-visible:shadow-focus',
+        'active:scale-[0.985] motion-reduce:transform-none',
+        selected
+          ? 'bg-surface-muted ring-1 ring-primary ring-offset-2 ring-offset-surface-raised'
+          : 'hover:bg-surface-muted hover:shadow-raised',
       )}
     >
       <span
         className={cn(
-          'grid h-12 w-12 place-items-center rounded-xl',
+          'grid h-14 w-14 place-items-center rounded-xl',
           kind.tileClass,
-          selected
-            ? 'ring-[1.5px] ring-primary ring-offset-2 ring-offset-surface-raised'
-            : riskEdge,
+          riskEdge,
+          cut && 'opacity-60 outline outline-1 outline-dashed outline-border',
         )}
       >
-        <kind.Icon className="h-6 w-6" />
+        <kind.Icon className="h-7 w-7" />
       </span>
-      <div className="grid min-w-0 gap-0.5 text-center">
+      <div className="grid min-w-0 gap-0.5 text-left">
         {renaming ? (
           <RenameInput
             value={renameDraft ?? item.name}
@@ -1483,7 +1540,7 @@ function CapabilityTile({
           </span>
         )}
         {item.description && (
-          <span className="line-clamp-2 text-[12.5px] leading-relaxed text-ink-subtle">
+          <span className="line-clamp-1 text-[12.5px] leading-relaxed text-ink-subtle">
             {item.description}
           </span>
         )}
@@ -1533,24 +1590,24 @@ function CapabilityRow({
       onClick={onClick}
       onContextMenu={onContextMenu}
       className={cn(
-        'flex items-center gap-3 rounded-md px-3 py-2 text-left transition-colors duration-fast',
-        'hover:bg-surface-muted focus-visible:outline-none focus-visible:shadow-focus',
-        cut && 'opacity-50',
+        'flex items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors duration-fast',
+        'focus-visible:outline-none focus-visible:shadow-focus',
+        'active:scale-[0.995] motion-reduce:transform-none',
+        selected ? 'bg-surface-muted' : 'hover:bg-surface-muted',
       )}
     >
       <span
         className={cn(
           'grid h-9 w-9 shrink-0 place-items-center rounded-lg',
           kind.tileClass,
-          selected
-            ? 'ring-[1.5px] ring-primary ring-offset-2 ring-offset-surface-raised'
-            : riskEdge,
+          riskEdge,
+          cut && 'opacity-60 outline outline-1 outline-dashed outline-border',
         )}
       >
         <kind.Icon className="h-4 w-4" />
       </span>
       <div className="grid min-w-0 flex-1 gap-0.5">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
           {renaming ? (
             <RenameInput
               value={renameDraft ?? item.name}
@@ -1622,34 +1679,55 @@ function RenameInput({
       />
       {!valid && value.trim().length > 0 && (
         <span className="text-caption text-danger">
-          仅小写、数字、-、_
+          仅小写、数字、短横线、下划线
         </span>
       )}
     </div>
   )
 }
 
-function StatusLine({ item }: { item: CapabilityAdminItem }) {
-  if (item.shadowedBy !== null) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-        <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-        被遮蔽
-      </span>
-    )
-  }
-  if (item.availability && item.availability !== 'available') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-        <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-        {item.availabilityReason ?? item.availability}
-      </span>
-    )
-  }
+function TreeSkeleton() {
   return (
-    <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-      <span className="h-1.5 w-1.5 rounded-full bg-success" />
-      可用
-    </span>
+    <div className="flex flex-col gap-2 px-2 py-1">
+      {Array.from({ length: 7 }).map((_, index) => (
+        <div key={index} className="flex items-center gap-2">
+          <span className="w-5 shrink-0" aria-hidden="true" />
+          <span
+            className="h-5 rounded bg-surface-muted animate-pulse"
+            style={{ width: `${60 + ((index * 17) % 35)}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function GridSkeleton() {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-4">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div key={index} className="flex flex-col gap-3 rounded-md border border-transparent p-4">
+          <span className="h-14 w-14 rounded-xl bg-surface-muted animate-pulse" />
+          <span className="h-4 w-20 rounded bg-surface-muted animate-pulse" />
+          <span className="h-3.5 w-14 rounded bg-surface-muted animate-pulse" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ListSkeleton() {
+  return (
+    <div className="grid gap-1">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className="flex items-center gap-3 rounded-md px-3 py-2.5">
+          <span className="h-9 w-9 shrink-0 rounded-lg bg-surface-muted animate-pulse" />
+          <div className="grid flex-1 gap-1">
+            <span className="h-4 w-32 rounded bg-surface-muted animate-pulse" />
+            <span className="h-3 w-24 rounded bg-surface-muted animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }

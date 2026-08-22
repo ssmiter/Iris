@@ -3,14 +3,17 @@ import {
   useId,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
 export interface ContextMenuItem {
   key: string
   label: ReactNode
+  icon?: LucideIcon
   danger?: boolean
   disabled?: boolean
   onSelect?: () => void
@@ -35,7 +38,7 @@ const VIEWPORT_PAD = 8
  *
  * 设计语言对齐 Tooltip 暗色胶囊：近墨色底、反转文字、紧凑项高；
  * fixed 定位在触发点，视口边缘自动压入；键盘 ↑↓ 循环焦点、Enter 选中、
- * Esc / 点外关闭；单次 opacity 淡入（duration-fast），无位移动画。
+ * Esc / 点外关闭；opacity + scale 淡入（duration-fast），无位移动画。
  */
 export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
   const id = useId()
@@ -56,11 +59,11 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
       if (!menu) return
       const rect = menu.getBoundingClientRect()
       const left = Math.min(
-        Math.max(x, VIEWPORT_PAD),
+        Math.max(x + 2, VIEWPORT_PAD),
         Math.max(VIEWPORT_PAD, window.innerWidth - rect.width - VIEWPORT_PAD),
       )
       const top = Math.min(
-        Math.max(y, VIEWPORT_PAD),
+        Math.max(y + 2, VIEWPORT_PAD),
         Math.max(VIEWPORT_PAD, window.innerHeight - rect.height - VIEWPORT_PAD),
       )
       setPosition({ left, top })
@@ -98,7 +101,7 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
     }
   }, [open, onClose])
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const menu = menuRef.current
     if (!menu) return
     const options = Array.from(
@@ -130,11 +133,11 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
       onKeyDown={handleKeyDown}
       style={position ?? { left: -9999, top: -9999 }}
       className={cn(
-        'fixed z-[70] min-w-[11rem] overflow-hidden',
+        'fixed z-[70] min-w-[11rem] origin-top-left overflow-hidden',
         'rounded-md border border-tooltip-foreground/10 bg-tooltip p-1',
         'text-small text-tooltip-foreground shadow-raised',
-        'transition-opacity duration-fast ease-standard motion-reduce:transition-none',
-        visible ? 'opacity-100' : 'opacity-0',
+        'transition-[opacity,transform] duration-fast ease-standard motion-reduce:transition-none',
+        visible ? 'scale-100 opacity-100' : 'scale-[0.97] opacity-0',
       )}
     >
       {items.map((slot) => {
@@ -143,12 +146,13 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
             <div
               key={slot.key}
               role="separator"
-              className="my-1 h-px bg-tooltip-foreground/10"
+              className="my-1.5 h-px bg-tooltip-foreground/10"
             />
           )
         }
         // interface 可被声明合并，'type' in 守卫无法窄化联合，此处显式断言
         const item = slot as ContextMenuItem
+        const Icon = item.icon
         return (
           <button
             key={item.key}
@@ -163,16 +167,22 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
               onClose()
             }}
             className={cn(
-              'flex w-full items-center rounded-sm px-2.5 py-1.5 text-left',
+              'flex min-h-[2rem] w-full items-center rounded-sm px-3 py-2 text-left',
               'transition-colors duration-fast motion-reduce:transition-none',
-              item.disabled && 'pointer-events-none opacity-45',
-              item.danger
-                ? 'text-danger hover:bg-danger/10 focus-visible:bg-danger/10'
-                : 'text-tooltip-foreground hover:bg-tooltip-foreground/10 focus-visible:bg-tooltip-foreground/10',
               'focus-visible:outline-none',
+              item.disabled && 'pointer-events-none opacity-45',
+              item.danger && !item.disabled
+                ? 'text-danger hover:bg-danger/10 focus-visible:bg-danger/10'
+                : !item.disabled &&
+                    'text-tooltip-foreground hover:bg-tooltip-foreground/10 focus-visible:bg-tooltip-foreground/10',
             )}
           >
-            {item.label}
+            {Icon ? (
+              <Icon className="mr-2 h-4 w-4 shrink-0 opacity-80" />
+            ) : (
+              <span className="mr-2 w-5 shrink-0" aria-hidden="true" />
+            )}
+            <span className="truncate">{item.label}</span>
           </button>
         )
       })}

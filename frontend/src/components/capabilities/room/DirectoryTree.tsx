@@ -1,9 +1,10 @@
 import {
   useState,
+  type CSSProperties,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { ChevronRight, GripVertical, Pin } from 'lucide-react'
+import { ChevronRight, GripVertical } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { CapabilityPin, CapabilityTreeNode } from '@/api/irisApi'
 
@@ -112,7 +113,7 @@ function PinSection({
 
   return (
     <div className="mb-2">
-      <div className="px-2 py-1 text-caption font-medium text-ink-muted">
+      <div className="px-3 py-1.5 text-caption font-medium text-ink-muted">
         收藏
       </div>
       <ul>
@@ -129,21 +130,18 @@ function PinSection({
                 onDrop={handleDrop(index)}
                 onDragEnd={handleDragEnd}
                 className={cn(
-                  'flex cursor-grab items-center gap-0.5 rounded-sm text-small transition-colors duration-fast',
+                  'group flex cursor-grab items-center gap-0.5 rounded-md py-1.5 text-small transition-colors duration-fast',
                   'active:cursor-grabbing',
                   isSelected
-                    ? 'bg-primary-soft font-semibold text-ink'
+                    ? 'bg-primary-soft font-medium text-ink'
                     : 'text-ink-subtle hover:bg-surface-muted',
                   isDropTarget && 'bg-primary/10',
                 )}
               >
-                <span className="grid h-6 w-5 shrink-0 place-items-center text-ink-muted">
-                  <Pin className="h-3 w-3" />
-                </span>
                 <button
                   type="button"
                   aria-current={isSelected ? 'true' : undefined}
-                  className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
+                  className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs px-3 py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
                   onClick={() => onPinClick?.(pin.path)}
                   onContextMenu={(event) => {
                     event.preventDefault()
@@ -152,7 +150,7 @@ function PinSection({
                 >
                   <span className="truncate break-keep">{title}</span>
                 </button>
-                <span className="grid h-6 w-5 shrink-0 place-items-center text-ink-muted/60">
+                <span className="grid h-6 w-5 shrink-0 place-items-center text-ink-muted/60 opacity-0 transition-opacity duration-fast group-hover:opacity-100">
                   <GripVertical className="h-3 w-3" />
                 </span>
               </div>
@@ -160,7 +158,7 @@ function PinSection({
           )
         })}
       </ul>
-      <div className="mx-2 my-2 h-px bg-border/60" />
+      <div className="mx-3 my-2 h-px bg-border/30" />
     </div>
   )
 }
@@ -185,23 +183,26 @@ function TreeNode({
   const hasChildren = node.children.length > 0
   const isExpanded = expanded.has(node.path)
   const isSelected = selectedPath === node.path
+  const indent = depth * 0.625 + 0.25
 
   return (
     <li>
       <div
         className={cn(
-          'flex items-center gap-0.5 rounded-sm text-small transition-colors duration-fast',
+          'relative flex items-center gap-0.5 rounded-md py-1.5 text-small transition-colors duration-fast',
           isSelected
-            ? 'bg-primary-soft font-semibold text-ink'
+            ? 'bg-primary-soft font-medium text-ink'
             : 'text-ink-subtle hover:bg-surface-muted',
+          depth > 0 &&
+            "before:absolute before:left-[calc(var(--indent)_-_0.5rem)] before:top-1.5 before:bottom-1.5 before:w-px before:bg-border/40 before:content-['']",
         )}
-        style={{ paddingLeft: `${depth * 0.75}rem` }}
+        style={{ '--indent': `${indent}rem`, paddingLeft: `${indent}rem` } as CSSProperties}
       >
         {hasChildren ? (
           <button
             type="button"
             aria-label={isExpanded ? `收起 ${node.name}` : `展开 ${node.name}`}
-            className="grid h-6 w-5 shrink-0 place-items-center rounded-xs text-ink-muted focus-visible:outline-none focus-visible:shadow-focus"
+            className="grid h-7 w-6 shrink-0 place-items-center rounded-xs text-ink-muted focus-visible:outline-none focus-visible:shadow-focus"
             onClick={() => onToggle(node.path)}
           >
             <ChevronRight
@@ -212,7 +213,7 @@ function TreeNode({
             />
           </button>
         ) : (
-          <span className="w-5 shrink-0" aria-hidden="true" />
+          <span className="w-6 shrink-0" aria-hidden="true" />
         )}
         <button
           type="button"
