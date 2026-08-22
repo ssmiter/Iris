@@ -36,7 +36,7 @@ public class ReadCapabilityTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.capabilities.read",
-                "5",
+                "6",
                 "read_capability",
                 "读取一个精确能力路径的版本化定义、参数 schema、当前可用性与稳定代理调用身份；调用非驻留能力前使用",
                 inputSchema(),

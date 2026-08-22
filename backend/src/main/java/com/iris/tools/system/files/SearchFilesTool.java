@@ -54,7 +54,7 @@ public class SearchFilesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.files.search_files",
-                "5",
+                "6",
                 "search_files",
                 "搜索工作区文本或能力目录描述；不知道事实或能力位于何处时按命名空间定位",
                 inputSchema(),
