@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
 } from 'react'
-import { ArrowDown } from 'lucide-react'
 import { Virtuoso } from 'react-virtuoso'
 import type {
   AttentionAction,
@@ -147,7 +146,7 @@ export const ConversationTimeline = memo(forwardRef<
               {boundary.trigger === 'auto'
                 ? '此前上下文已自动整理'
                 : '此前上下文已整理'}
-              {' · '}
+              {'，'}
               {boundary.coveredCount} 个 Turn 仍保留在历史中
             </span>
             <span className="h-px flex-1 bg-border" />
@@ -238,9 +237,8 @@ export const ConversationTimeline = memo(forwardRef<
             className="pointer-events-auto animate-node-enter rounded-full border-border/80 bg-surface-raised/96 shadow-floating backdrop-blur-md motion-reduce:animate-none"
             onClick={jumpToLatest}
           >
-            <ArrowDown aria-hidden="true" className="h-4 w-4" />
             {unseenTurnCount > 0
-              ? `${unseenTurnCount} 个新轮次 · 回到最新`
+              ? `${unseenTurnCount} 个新轮次，回到最新`
               : '回到最新'}
           </Button>
         </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { AttentionAction, AttentionNode } from '@/domain/chat/models'
-import { Badge, Button } from '@/components/ui'
+import { Button } from '@/components/ui'
 import { cn } from '@/lib/cn'
 
 /**
@@ -32,20 +32,6 @@ interface PendingApprovalStackProps {
   nodes: AttentionNode[]
   onDecide: (node: AttentionNode, action: AttentionAction) => void
 }
-
-const riskTone = {
-  read_only: 'success',
-  standard: 'neutral',
-  elevated: 'warning',
-  destructive: 'danger',
-} as const
-
-const riskLabel = {
-  read_only: '只读',
-  standard: '标准',
-  elevated: '提权',
-  destructive: '破坏性',
-} as const
 
 function useNow(intervalMs: number) {
   const [now, setNow] = useState(() => Date.now())
@@ -309,7 +295,7 @@ function ApprovalCard({
               {node.approval.toolName}
               {expiry && (
                 <span className={expiry.urgent ? 'text-warning' : undefined}>
-                  {' · '}{expiry.text}
+                  {'，'}{expiry.text}
                 </span>
               )}
             </p>
@@ -318,11 +304,6 @@ function ApprovalCard({
             {node.impact}
           </p>
         </div>
-        {node.approval && (
-          <Badge tone={riskTone[node.approval.riskLevel]}>
-            {riskLabel[node.approval.riskLevel]}
-          </Badge>
-        )}
       </div>
       {/* 操作行：参数 + approve/reject 紧凑排列；Tab 提示仅在首卡显示 */}
       <div

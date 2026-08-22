@@ -8,7 +8,6 @@ import {
   ArrowUp,
   GitBranch,
   Paperclip,
-  Quote,
   Square,
   Upload,
   X,
@@ -264,7 +263,6 @@ export function ComposerDock({
                   key={quote.id}
                   className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-primary/25 bg-primary-soft px-2 py-1 text-caption text-ink"
                 >
-                  <Quote aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
                   <span className="truncate">{quote.text}</span>
                   <button
                     type="button"
@@ -281,7 +279,6 @@ export function ComposerDock({
                   key={attachment.artifactRef}
                   className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-muted px-2 py-1 text-caption text-ink"
                 >
-                  <Paperclip aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
                   <span className="truncate">{attachment.name}</span>
                   <button
                     type="button"
@@ -332,7 +329,7 @@ export function ComposerDock({
             {activeTurn && (
               <span className="hidden min-w-0 shrink truncate px-1 py-2 text-caption text-ink-muted sm:block">
                 {supplementReady
-                  ? 'Enter 补充 · Shift+Enter 换行'
+                  ? 'Enter 发送补充，Shift+Enter 换行'
                   : '任务已开始…'}
               </span>
             )}

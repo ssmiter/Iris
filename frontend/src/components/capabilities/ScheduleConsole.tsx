@@ -211,9 +211,10 @@ export function ScheduleConsole({ onBack }: { onBack: () => void }) {
                       {schedule.enabled
                         ? `下次触发 ${formatInstant(schedule.nextFireAt)}`
                         : '已停用，不再触发'}
-                      {' · '}已触发 {schedule.fireCount} 次
+                      。已触发 {schedule.fireCount} 次
                       {schedule.lastFireAt &&
-                        ` · 上次 ${formatInstant(schedule.lastFireAt)}`}
+                        `，上次在 ${formatInstant(schedule.lastFireAt)}`}
+                      。
                     </p>
                   </button>
                   <div className="flex flex-col items-end gap-2">

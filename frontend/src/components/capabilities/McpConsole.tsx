@@ -231,7 +231,7 @@ export function McpConsole({
                             'mt-1 truncate text-small text-ink-muted',
                           )}
                         >
-                          {server.toolCount} 个工具 · {server.transport === 'stdio' ? server.command ?? 'stdio' : server.endpoint}
+                          {server.toolCount} 个工具，{server.transport === 'stdio' ? server.command ?? 'stdio 本地进程' : server.endpoint}
                         </p>
                       </button>
                       <div className="flex items-center gap-1">

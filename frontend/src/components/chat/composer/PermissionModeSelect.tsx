@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ShieldCheck } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import {
   permissionModeOptions,
   type PermissionMode,
@@ -81,7 +81,6 @@ export function PermissionModeSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <ShieldCheck aria-hidden="true" className="h-3 w-3" />
         <span>{current.label}</span>
         <ChevronDown aria-hidden="true" className="h-3 w-3 opacity-60" />
       </button>

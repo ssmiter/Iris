@@ -22,7 +22,7 @@ export function ConversationWidthToggle() {
   }
 
   return (
-    <Tooltip content={`对话列宽 ${width}px · 点击在 640 / 760 / 920 间循环`}>
+    <Tooltip content={`对话列宽 ${width}px，点击在 640 / 760 / 920 间循环`}>
       <button
         type="button"
         className="inline-flex h-8 items-center rounded-xs px-1.5 font-mono text-caption tabular-nums text-ink-muted hover:bg-surface-muted hover:text-ink-subtle focus-visible:outline-none focus-visible:shadow-focus"

@@ -162,9 +162,9 @@ function statusText(node: RenderNode): React.ReactNode {
     && node.status === 'completed'
     && node.durationMs != null
   ) {
-    return `${base} · ${formatMs(node.durationMs)}`
+    return `${base}，${formatMs(node.durationMs)}`
   }
-  // tool 节点 meta：状态 · mono 耗时 · 摘要首行摘录
+  // tool 节点 meta：状态，mono 耗时，摘要首行摘录
   if (node.type === 'tool') {
     const duration =
       node.durationMs != null && node.durationMs > 0
@@ -179,13 +179,13 @@ function statusText(node: RenderNode): React.ReactNode {
         {base}
         {duration && (
           <>
-            {' · '}
+            {'，'}
             <span className="font-mono tabular-nums">{duration}</span>
           </>
         )}
         {excerpt && (
           <>
-            {' · '}
+            {'，'}
             <span className="truncate">{excerpt}</span>
           </>
         )}
@@ -325,7 +325,7 @@ function NodeBody({
             <p>{node.summary}</p>
             {node.detailRef && (
               <p className="text-caption text-ink-muted">
-                详细记录可按需读取 · {node.detailRef}
+                详细记录可按需读取：{node.detailRef}
               </p>
             )}
           </div>

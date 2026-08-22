@@ -1,4 +1,4 @@
-import { Clock3, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { PendingSupplement } from '@/domain/chat/input'
 
 interface SupplementQueueTrayProps {
@@ -19,7 +19,6 @@ export function SupplementQueueTray({
           key={item.clientRequestId}
           className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary-soft px-3 py-1.5 text-small text-primary"
         >
-          <Clock3 aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
           <span className="shrink-0 text-caption">
             {item.state === 'submitting' ? '正在提交' : '待送入'}
           </span>

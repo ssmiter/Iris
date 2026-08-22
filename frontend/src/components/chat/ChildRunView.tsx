@@ -66,12 +66,12 @@ function runStatsText(run: RunView) {
   const rounds = counts?.rounds ?? run.roundIds.length
   const tools = counts?.toolCalls
   return [
-    `${rounds} 轮`,
+    `共 ${rounds} 轮`,
     tools != null ? `${tools} 个工具` : null,
-    formatRunElapsed(run),
+    `历时 ${formatRunElapsed(run)}`,
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join('，')
 }
 
 /** 已发送补充的会话级留痕：关面板再开不丢，直到页面刷新。 */
@@ -483,7 +483,7 @@ export function ChildRunCard({
       <div className="space-y-1">
         <p>{fallbackSummary}</p>
         <p className="font-mono text-caption text-ink-muted">
-          child run · {childRunId}
+          子运行 {childRunId}
         </p>
       </div>
     )

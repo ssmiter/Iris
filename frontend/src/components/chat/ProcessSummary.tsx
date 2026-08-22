@@ -49,19 +49,19 @@ export function ProcessSummary({
       />
       <span>第 {round.index + 1} 轮过程</span>
       {round.stats.toolCallCount > 0 && (
-        <span>· {round.stats.toolCallCount} 个工具</span>
+        <span>，{round.stats.toolCallCount} 个工具</span>
       )}
       {round.phase !== 'active' && (
-        <span>· {formatDuration(round.stats.durationMs)}</span>
+        <span>，{formatDuration(round.stats.durationMs)}</span>
       )}
       {pendingCount > 0 && (
-        <span className="ml-1 text-warning">· {pendingCount} 项待处理</span>
+        <span className="ml-1 text-warning">，{pendingCount} 项待处理</span>
       )}
       {round.phase === 'failed' && (
-        <span className="ml-1 text-danger">· 失败</span>
+        <span className="ml-1 text-danger">，失败</span>
       )}
       {round.phase === 'stopped' && (
-        <span className="ml-1 text-warning">· 已停止</span>
+        <span className="ml-1 text-warning">，已停止</span>
       )}
     </button>
   )

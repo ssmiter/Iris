@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { FileText } from 'lucide-react'
 import {
   artifactContentUrl,
   getArtifactMetadata,
@@ -56,7 +55,6 @@ export function UserAttachmentList({
               href={artifactContentUrl(item.artifactRef) ?? undefined}
               className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-caption text-ink shadow-hairline hover:border-border-strong"
             >
-              <FileText aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
               <span className="truncate">{item.name}</span>
               <span className="shrink-0 text-ink-muted">
                 {byteLabel(item.byteCount)}

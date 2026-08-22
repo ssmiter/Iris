@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useShellOverlayStore } from '@/stores/shellOverlayStore'
 import { pushEscLayer } from '@/lib/escLayerStack'
@@ -140,11 +140,7 @@ export function SearchPalette() {
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => choose(index)}
               >
-                <MessageSquare
-                  aria-hidden="true"
-                  className="h-4 w-4 shrink-0 text-ink-muted"
-                />
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 pl-0.5">
                   <span className="block truncate text-small font-medium">
                     {item.title}
                   </span>

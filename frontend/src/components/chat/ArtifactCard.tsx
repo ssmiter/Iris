@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Box, Download, Eye, ImageOff, LoaderCircle } from 'lucide-react'
+import { Download, ImageOff, LoaderCircle } from 'lucide-react'
 import {
   getArtifactPreview,
   type ArtifactPreviewView,
@@ -47,38 +47,37 @@ export function ArtifactCard({ node }: ArtifactCardProps) {
 
   return (
     <>
-      <div className="overflow-hidden rounded-md border border-border bg-surface-raised">
+      <div className="group overflow-hidden rounded-md border border-border bg-surface-raised">
         <div className="flex items-center gap-3 px-3.5 py-2.5">
-          <Box aria-hidden="true" className="h-5 w-5 shrink-0 text-primary" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-small font-medium text-ink">{node.title}</p>
             <p className="text-caption text-ink-muted">
               {node.kind}
               {node.byteCount != null
-                ? ` · ${formatByteCount(node.byteCount)}`
+                ? `，${formatByteCount(node.byteCount)}`
                 : ''}
             </p>
           </div>
-          {node.previewRef ? (
-            <button
-              type="button"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-ink-subtle transition-colors hover:bg-surface-muted hover:text-ink"
-              onClick={() => setOpen(true)}
-            >
-              <Eye aria-hidden="true" className="h-4 w-4" />
-              查看
-            </button>
-          ) : null}
-          {node.downloadRef ? (
-            <a
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-primary transition-colors hover:bg-primary-soft"
-              href={node.downloadRef}
-              download
-            >
-              <Download aria-hidden="true" className="h-4 w-4" />
-              下载
-            </a>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {node.previewRef ? (
+              <button
+                type="button"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-ink-subtle opacity-0 transition-opacity hover:bg-surface-muted hover:text-ink focus-visible:opacity-100 motion-reduce:opacity-100 group-hover:opacity-100"
+                onClick={() => setOpen(true)}
+              >
+                查看
+              </button>
+            ) : null}
+            {node.downloadRef ? (
+              <a
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-1 text-small text-primary opacity-0 transition-opacity hover:bg-primary-soft focus-visible:opacity-100 motion-reduce:opacity-100 group-hover:opacity-100"
+                href={node.downloadRef}
+                download
+              >
+                下载
+              </a>
+            ) : null}
+          </div>
         </div>
         {inlineImage && (
           <button
@@ -114,7 +113,7 @@ export function ArtifactCard({ node }: ArtifactCardProps) {
         description={[
           node.kind,
           node.byteCount == null ? null : formatByteCount(node.byteCount),
-        ].filter(Boolean).join(' · ')}
+        ].filter(Boolean).join('，')}
         size="lg"
         footer={node.downloadRef ? (
           <a

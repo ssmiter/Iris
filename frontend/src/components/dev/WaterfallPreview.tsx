@@ -172,7 +172,7 @@ export function WaterfallPreview() {
   return (
     <ConversationShell
       hasActiveTurn={Boolean(activeTurn)}
-      badge={<Badge appearance="outline">大陆 1 · Preview</Badge>}
+      badge={<Badge appearance="outline">大陆 1 Preview</Badge>}
       headerActions={
         <>
           <Button

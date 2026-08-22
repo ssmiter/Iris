@@ -106,7 +106,7 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
       <div className="flex h-[var(--topbar-height)] shrink-0 items-center justify-between gap-1 px-3">
         <span className="text-small font-semibold text-ink">对话</span>
         <span className="flex items-center">
-          <Tooltip content="搜索对话 · Ctrl+K">
+          <Tooltip content="搜索对话（Ctrl+K）">
             <Button
               variant="ghost"
               size="icon"
@@ -207,9 +207,6 @@ function SidebarContent({ mobile = false }: { mobile?: boolean }) {
             </span>
           </span>
         </button>
-        <p className="px-3 pb-1 pt-2 text-caption text-ink-muted">
-          本地工作集 · 历史不会因归档而删除
-        </p>
       </div>
 
       {menu && (
@@ -334,13 +331,6 @@ function ConversationItem({
             onMenu(event.clientX, event.clientY)
           }}
         >
-          <MessageSquare
-            aria-hidden="true"
-            className={cn(
-              'mt-0.5 h-4 w-4 shrink-0',
-              active ? 'text-primary' : 'text-ink-muted',
-            )}
-          />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-small font-medium">
               {conversation.title}

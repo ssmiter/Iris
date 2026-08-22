@@ -232,7 +232,7 @@ function WaterfallTurnView({
               />
               <div className="mt-1.5 flex items-center justify-end gap-2">
                 <span className="text-caption text-ink-muted">
-                  Esc 取消 · Ctrl+Enter 重发
+                  Esc 取消，Ctrl+Enter 重发
                 </span>
                 <Button
                   variant="ghost"
@@ -337,7 +337,8 @@ function WaterfallTurnView({
                   `traceId ${turn.failure.traceId.slice(0, 8)}`,
                 ]
                   .filter(Boolean)
-                  .join(' · ')}
+                  .join('。')}
+                {turn.failure.sideEffectOutcome || turn.failure.recoveryAction ? '。' : ''}
               </p>
             </div>
           </div>
@@ -354,18 +355,6 @@ function WaterfallTurnView({
           )}
         >
           <span
-            aria-hidden="true"
-            className={cn(
-              'h-1.5 w-1.5 rounded-full bg-border-strong',
-              turn.phase === 'active' && 'bg-primary',
-              turn.phase === 'failed' &&
-                !closureNeedsAttention &&
-                'bg-danger',
-              (turn.phase === 'stopped' || closureNeedsAttention) &&
-                'bg-warning',
-            )}
-          />
-          <span
             className={cn(
               turn.phase === 'active' && 'text-primary',
               turn.phase === 'failed' &&
@@ -377,18 +366,18 @@ function WaterfallTurnView({
           >
             {visiblePhaseLabel(turn, rootRun)}
           </span>
-          {' · '}
+          {'，'}
           <span className="font-mono tabular-nums">
             {formatTime(turn.stats.startedAt)}
           </span>
-          <span>· {turn.stats.roundCount} 轮</span>
-          <span>· {turn.stats.toolCallCount} 个工具</span>
+          <span>，共 {turn.stats.roundCount} 轮</span>
+          <span>，{turn.stats.toolCallCount} 个工具</span>
           {turn.stats.childRunCount > 0 && (
-            <span>· {turn.stats.childRunCount} 个子运行</span>
+            <span>，{turn.stats.childRunCount} 个子运行</span>
           )}
           {turn.phase !== 'active' && (
             <span className="inline-flex items-center gap-1">
-              <Clock3 aria-hidden="true" className="h-3 w-3" />
+              ，<Clock3 aria-hidden="true" className="h-3 w-3" />
               {formatElapsed(turn)}
             </span>
           )}

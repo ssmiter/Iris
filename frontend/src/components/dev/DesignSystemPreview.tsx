@@ -127,7 +127,7 @@ export function DesignSystemPreview() {
             <BrandMark />
             <div>
               <p className="text-small font-semibold leading-tight text-ink">Iris</p>
-              <p className="text-caption text-ink-muted">Design foundation · 1.1</p>
+              <p className="text-caption text-ink-muted">Design foundation 1.1</p>
             </div>
           </div>
           <Button
