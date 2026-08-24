@@ -8,11 +8,13 @@ import type {
 } from '@/domain/chat/models'
 import { Badge } from '@/components/ui'
 import { RoundSection } from './RoundSection'
+import { answerNodeForRound } from '@/domain/chat/selectors'
 
 interface RunSectionProps {
   run: RunView
   roundsById: Record<string, RoundView>
   nodesById: Record<string, RenderNode>
+  answerNodeIdsByRoundId: ReadonlyMap<string, string>
   expandedRoundIds: ReadonlySet<string>
   expandedNodeIds: ReadonlySet<string>
   onToggleRound: (roundId: string, nodeIds: string[]) => void
@@ -29,6 +31,7 @@ export const RunSection = memo(function RunSection({
   run,
   roundsById,
   nodesById,
+  answerNodeIdsByRoundId,
   expandedRoundIds,
   expandedNodeIds,
   onToggleRound,
@@ -64,6 +67,7 @@ export const RunSection = memo(function RunSection({
           key={round.roundId}
           round={round}
           nodesById={nodesById}
+          answerNodeIdsByRoundId={answerNodeIdsByRoundId}
           processExpanded={expandedRoundIds.has(round.roundId)}
           expandedNodeIds={expandedNodeIds}
           onToggleProcess={(nodeIds) =>
@@ -81,6 +85,9 @@ export const RunSection = memo(function RunSection({
   )
 }, (previous, next) => {
   if (previous.run !== next.run) return false
+  if (previous.answerNodeIdsByRoundId !== next.answerNodeIdsByRoundId) {
+    return false
+  }
   if (!sameExpandedIds(previous.expandedRoundIds, next.expandedRoundIds)) {
     return false
   }
@@ -97,14 +104,19 @@ export const RunSection = memo(function RunSection({
       if (previous.nodesById[nodeId] !== next.nodesById[nodeId]) return false
     }
 
-    const previousAnswer = answerNodeForRound(previousRound, previous.nodesById)
-    const nextAnswer = answerNodeForRound(nextRound, next.nodesById)
-    if (
-      previousAnswer?.nodeId !== nextAnswer?.nodeId
-      || previousAnswer?.status !== nextAnswer?.status
-    ) {
-      return false
-    }
+    const previousAnswer = answerNodeForRound(
+      previousRound,
+      previous.nodesById,
+      previous.answerNodeIdsByRoundId,
+    )
+    const nextAnswer = answerNodeForRound(
+      nextRound,
+      next.nodesById,
+      next.answerNodeIdsByRoundId,
+    )
+    // 与 WaterfallTurn 同款流式铁律：answer 内容经对象引用比较，
+    // 否则流式 delta 被 memo 挡死，completed 时一次性崩出全文。
+    if (previousAnswer !== nextAnswer) return false
   }
   return (
     previous.onToggleRound === next.onToggleRound
@@ -114,16 +126,6 @@ export const RunSection = memo(function RunSection({
     && previous.onOpenChildRun === next.onOpenChildRun
   )
 })
-
-function answerNodeForRound(
-  round: RoundView,
-  nodesById: Record<string, RenderNode>,
-) {
-  if (round.answerNodeId) return nodesById[round.answerNodeId]
-  return Object.values(nodesById).find(
-    (node) => node.type === 'answer' && node.roundId === round.roundId,
-  )
-}
 
 function sameExpandedIds(
   a: ReadonlySet<string>,

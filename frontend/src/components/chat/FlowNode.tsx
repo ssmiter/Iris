@@ -1,10 +1,8 @@
-import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  X,
 } from 'lucide-react'
 import type {
   AttentionAction,
@@ -29,6 +27,8 @@ interface FlowNodeProps {
   isFirst: boolean
   /** 链上最后一个节点：去路线段渐隐到透明，给链条一个收尾 */
   isLast: boolean
+  /** 前序节点已沉淀（完成/失败/取消）：来路线段染淡主色，形成"水流过"的进度感 */
+  segFlowed: boolean
   /** 回合活跃且过程区可见：此时挂载的新节点播出生动画（线段生长+淡入微升） */
   chainLive: boolean
   onAttentionAction?: (
@@ -63,8 +63,11 @@ export function StallProvider({ children }: { children: ReactNode }) {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
+  // value 记忆化：否则每次 Provider 渲染都产生新对象，
+  // 所有 StallBanner 消费者跟着白渲染（流式期间 20Hz）
+  const value = useMemo(() => ({ lastEventAt, now }), [lastEventAt, now])
   return (
-    <StallContext.Provider value={{ lastEventAt, now }}>
+    <StallContext.Provider value={value}>
       {children}
     </StallContext.Provider>
   )
@@ -74,22 +77,80 @@ function useStall() {
   return useContext(StallContext)
 }
 
-/** 行内状态点：活跃呼吸、完成打勾、失败叉——图标承载状态，不再整列类型图标 */
-function StatusDot({ node }: { node: RenderNode }) {
-  if (isActive(node)) {
-    return (
+/**
+ * 脊柱轨道（WonWork wf-rail 同构）：来路段 → 状态点 → 去路段。
+ * 点线同轴由 flex column + items-center 保证；轨道贯穿节点全高（含展开体），
+ * 去路段随节点体延伸，链条视觉连续不断。
+ */
+function Spine({
+  node,
+  isFirst,
+  isLast,
+  segFlowed,
+  born,
+}: {
+  node: RenderNode
+  isFirst: boolean
+  isLast: boolean
+  segFlowed: boolean
+  born: boolean
+}) {
+  const active = isActive(node)
+  const failed = isFailed(node)
+  const settled = !active
+
+  // 来路段：活跃节点渐变（上淡下浓），前序沉淀染淡主色，否则常规发丝线
+  const segUpClass = active
+    ? 'bg-gradient-to-b from-primary/15 to-primary/45'
+    : segFlowed
+      ? 'bg-primary/15'
+      : 'bg-border'
+
+  // 状态点：活跃=白底主色描边+光环呼吸；等待处理=警告色光环；
+  // 失败=白底红描边；其余=柔色实心点（WonWork 终态染色同款）
+  const attentionWaiting = node.type === 'attention' && node.status === 'waiting'
+  const dotClass = attentionWaiting
+    ? 'border-warning bg-canvas motion-safe:animate-halo-warn'
+    : active
+      ? 'border-primary bg-canvas motion-safe:animate-halo'
+      : failed
+        ? 'border-danger bg-canvas'
+        : 'border-transparent bg-ink-muted'
+
+  // 去路段：本节点沉淀后染淡主色；末节点渐隐收尾
+  const segDownClass = isLast
+    ? settled && !failed
+      ? 'bg-gradient-to-b from-primary/15 to-transparent'
+      : 'bg-gradient-to-b from-border to-transparent'
+    : settled && !failed
+      ? 'bg-primary/15'
+      : 'bg-border'
+
+  return (
+    <div aria-hidden="true" className="flex w-5 shrink-0 flex-col items-center">
       <span
         className={cn(
-          'h-2 w-2 shrink-0 rounded-full motion-safe:animate-pulse',
-          node.type === 'attention' ? 'bg-warning' : 'bg-primary',
+          'w-0.5 shrink-0 basis-3 rounded-full transition-colors duration-500',
+          segUpClass,
+          isFirst && 'invisible',
+          born && !isFirst && 'origin-top animate-seg-grow motion-reduce:animate-none',
         )}
       />
-    )
-  }
-  if (isFailed(node)) {
-    return <X aria-hidden="true" className="h-3 w-3 shrink-0 text-danger" />
-  }
-  return <Check aria-hidden="true" className="h-3 w-3 shrink-0 text-success" />
+      <span
+        className={cn(
+          'h-[9px] w-[9px] shrink-0 rounded-full border-[1.5px]',
+          'transition-[background-color,border-color] duration-500 motion-reduce:transition-none',
+          dotClass,
+        )}
+      />
+      <span
+        className={cn(
+          'w-0.5 min-h-1.5 flex-1 rounded-full transition-colors duration-500',
+          segDownClass,
+        )}
+      />
+    </div>
+  )
 }
 
 function isActive(node: RenderNode) {
@@ -107,6 +168,11 @@ function isFailed(node: RenderNode) {
     node.status === 'outcome_unknown' ||
     node.status === 'unavailable'
   )
+}
+
+/** 节点已沉淀（不再处于活跃态）：前序沉淀时本节点来路段染淡主色（水流感） */
+export function isFlowNodeSettled(node: RenderNode) {
+  return !isActive(node)
 }
 
 function nodeTitle(node: RenderNode) {
@@ -390,8 +456,9 @@ export const FlowNode = memo(function FlowNode({
   node,
   expanded,
   onToggle,
-  isFirst: _isFirst,
-  isLast: _isLast,
+  isFirst,
+  isLast,
+  segFlowed,
   chainLive,
   onAttentionAction,
   onOpenChildRun,
@@ -412,72 +479,85 @@ export const FlowNode = memo(function FlowNode({
   const bodyId = `flow-node-body-${node.nodeId}`
 
   return (
-    <div className={cn(born && 'animate-node-enter motion-reduce:animate-none')}>
-      <button
-        type="button"
-        className={cn(
-          'flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left',
-          'transition-colors duration-fast ease-standard',
-          'hover:bg-surface-muted/70',
-          'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
-        )}
-        aria-expanded={expanded}
-        aria-controls={bodyId}
-        onClick={onToggle}
-      >
-        <StatusDot node={node} />
-        <span
+    <div
+      className={cn(
+        'flex items-stretch',
+        born && 'animate-node-enter motion-reduce:animate-none',
+      )}
+    >
+      <Spine
+        node={node}
+        isFirst={isFirst}
+        isLast={isLast}
+        segFlowed={segFlowed}
+        born={born}
+      />
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
           className={cn(
-            'min-w-0 flex-1 truncate text-small',
-            failed
-              ? 'text-danger'
-              : active
-                ? 'font-medium text-ink-subtle'
-                : 'text-ink-muted',
+            'flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left',
+            'transition-colors duration-fast ease-standard',
+            'hover:bg-surface-muted/70',
+            'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
           )}
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          onClick={onToggle}
         >
-          {nodeTitle(node)}
-        </span>
-        <span
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-small',
+              failed
+                ? 'text-danger'
+                : active
+                  ? 'font-medium text-ink-subtle'
+                  : 'text-ink-muted',
+            )}
+          >
+            {nodeTitle(node)}
+          </span>
+          <span
+            className={cn(
+              'min-w-0 max-w-[50%] inline-block truncate text-caption',
+              failed
+                ? 'text-danger'
+                : active
+                  ? 'text-ink-subtle'
+                  : 'text-ink-muted/80',
+            )}
+          >
+            {statusText(node)}
+          </span>
+          <ChevronRight
+            aria-hidden="true"
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
+              expanded && 'rotate-90',
+              'motion-reduce:transition-none',
+            )}
+          />
+        </button>
+        <div
+          id={bodyId}
           className={cn(
-            'min-w-0 max-w-[50%] inline-block truncate text-caption',
-            failed
-              ? 'text-danger'
-              : active
-                ? 'text-ink-subtle'
-                : 'text-ink-muted/80',
-          )}
-        >
-          {statusText(node)}
-        </span>
-        <ChevronRight
-          aria-hidden="true"
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
-            expanded && 'rotate-90',
+            'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
+            expanded
+              ? 'grid-rows-[1fr] opacity-100'
+              : 'grid-rows-[0fr] opacity-0',
             'motion-reduce:transition-none',
           )}
-        />
-      </button>
-      <div
-        id={bodyId}
-        className={cn(
-          'grid transition-[grid-template-rows,opacity] duration-fold ease-flow',
-          expanded
-            ? 'grid-rows-[1fr] opacity-100'
-            : 'grid-rows-[0fr] opacity-0',
-          'motion-reduce:transition-none',
-        )}
-      >
-        <div className="overflow-hidden">
-          <div className="px-2 pb-3 pt-1 text-small text-ink-subtle">
-            <NodeBody
-              node={node}
-              expanded={expanded}
-              onAttentionAction={onAttentionAction}
-              onOpenChildRun={onOpenChildRun}
-            />
-            {chainLive && isActive(node) && <StallBanner />}
+        >
+          <div className="overflow-hidden">
+            <div className="px-2 pb-3 pt-1 text-small text-ink-subtle">
+              <NodeBody
+                node={node}
+                expanded={expanded}
+                onAttentionAction={onAttentionAction}
+                onOpenChildRun={onOpenChildRun}
+              />
+              {chainLive && isActive(node) && <StallBanner />}
+            </div>
           </div>
         </div>
       </div>
@@ -488,6 +568,7 @@ export const FlowNode = memo(function FlowNode({
   && previous.expanded === next.expanded
   && previous.isFirst === next.isFirst
   && previous.isLast === next.isLast
+  && previous.segFlowed === next.segFlowed
   && previous.chainLive === next.chainLive
   && previous.onToggle === next.onToggle
   && previous.onAttentionAction === next.onAttentionAction

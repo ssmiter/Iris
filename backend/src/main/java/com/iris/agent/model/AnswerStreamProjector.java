@@ -294,7 +294,7 @@ public class AnswerStreamProjector {
     private void applyDelta(StreamState state, String append) {
         Instant now = clock.instant();
         if (!state.nodeCreated) {
-            state.ordinal = nextOrdinal(state.run.turnId());
+            state.ordinal = nextOrdinal(state.run.conversationId(), state.run.turnId());
             state.createdAt = now;
             ObjectNode projection = baseNode(state, 1, now, now);
             projection.put("content", state.content.toString());
@@ -441,12 +441,13 @@ public class AnswerStreamProjector {
         }
     }
 
-    private int nextOrdinal(String turnId) {
+    private int nextOrdinal(String conversationId, String turnId) {
         return jdbc.sql("""
                 SELECT COALESCE(MAX(ordinal), -1) + 1
                 FROM render_node_projection
-                WHERE turn_id = :turnId
+                WHERE conversation_id = :conversationId AND turn_id = :turnId
                 """)
+                .param("conversationId", conversationId)
                 .param("turnId", turnId)
                 .query(Integer.class)
                 .single();

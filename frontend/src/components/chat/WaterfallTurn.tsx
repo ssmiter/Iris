@@ -11,6 +11,7 @@ import type {
 } from '@/domain/chat/models'
 import { Button } from '@/components/ui'
 import { RunSection } from './RunSection'
+import { answerNodeForRound } from '@/domain/chat/selectors'
 import { cn } from '@/lib/cn'
 import { UserAttachmentList } from './UserAttachmentList'
 import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
@@ -20,6 +21,7 @@ interface WaterfallTurnProps {
   runsById: Record<string, RunView>
   roundsById: Record<string, RoundView>
   nodesById: Record<string, RenderNode>
+  answerNodeIdsByRoundId: ReadonlyMap<string, string>
   expandedRoundIds: ReadonlySet<string>
   expandedNodeIds: ReadonlySet<string>
   onToggleRound: (roundId: string, nodeIds: string[]) => void
@@ -101,6 +103,7 @@ function WaterfallTurnView({
   runsById,
   roundsById,
   nodesById,
+  answerNodeIdsByRoundId,
   expandedRoundIds,
   expandedNodeIds,
   onToggleRound,
@@ -298,6 +301,7 @@ function WaterfallTurnView({
             run={rootRun}
             roundsById={roundsById}
             nodesById={nodesById}
+            answerNodeIdsByRoundId={answerNodeIdsByRoundId}
             expandedRoundIds={expandedRoundIds}
             expandedNodeIds={expandedNodeIds}
             onToggleRound={onToggleRound}
@@ -387,24 +391,13 @@ function WaterfallTurnView({
   )
 }
 
-function answerNodeForRound(
-  round: RoundView,
-  nodesById: Record<string, RenderNode>,
-) {
-  if (round.answerNodeId) return nodesById[round.answerNodeId]
-  return Object.values(nodesById).find(
-    (node) =>
-      node.type === 'answer'
-      && node.roundId === round.roundId,
-  )
-}
-
 function sameTurnProjection(
   previous: WaterfallTurnProps,
   next: WaterfallTurnProps,
 ) {
   if (
     previous.turn !== next.turn
+    || previous.answerNodeIdsByRoundId !== next.answerNodeIdsByRoundId
     || previous.onToggleRound !== next.onToggleRound
     || previous.onToggleNode !== next.onToggleNode
     || previous.onRevealNewRoundNodes !== next.onRevealNewRoundNodes
@@ -443,14 +436,20 @@ function sameTurnProjection(
       }
     }
 
-    const previousAnswer = answerNodeForRound(previousRound, previous.nodesById)
-    const nextAnswer = answerNodeForRound(nextRound, next.nodesById)
-    if (
-      previousAnswer?.nodeId !== nextAnswer?.nodeId
-      || previousAnswer?.status !== nextAnswer?.status
-    ) {
-      return false
-    }
+    const previousAnswer = answerNodeForRound(
+      previousRound,
+      previous.nodesById,
+      previous.answerNodeIdsByRoundId,
+    )
+    const nextAnswer = answerNodeForRound(
+      nextRound,
+      next.nodesById,
+      next.answerNodeIdsByRoundId,
+    )
+    // 流式铁律：answer 节点每次 delta 都是新对象（chatStore 展开拷贝），
+    // 引用相等才代表内容没变；只比 nodeId/status 会把流式增量挡在 memo 外，
+    // 直到 completed 一次性放出全文（0dd9963 引入的"整块崩出"回归）。
+    if (previousAnswer !== nextAnswer) return false
   }
 
   return true

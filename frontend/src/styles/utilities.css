@@ -86,6 +86,12 @@
     margin-top: 0;
   }
 
+  /* 流式期间：pretty 精排让位于流畅追加，落定后恢复（AnswerBlock 控制） */
+  .answer-prose-streaming {
+    text-wrap: wrap;
+    hanging-punctuation: none;
+  }
+
   .answer-prose > :last-child {
     margin-bottom: 0;
   }

@@ -8,8 +8,9 @@ import type {
 } from '@/domain/chat/models'
 import { AnswerBlock } from './AnswerBlock'
 import { ArtifactZone } from './ArtifactZone'
-import { FlowNode } from './FlowNode'
+import { FlowNode, isFlowNodeSettled } from './FlowNode'
 import { ProcessSummary } from './ProcessSummary'
+import { answerNodeForRound } from '@/domain/chat/selectors'
 import { cn } from '@/lib/cn'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
@@ -20,6 +21,7 @@ const summaryFadedRoundIds = new Set<string>()
 interface RoundSectionProps {
   round: RoundView
   nodesById: Record<string, RenderNode>
+  answerNodeIdsByRoundId: ReadonlyMap<string, string>
   processExpanded: boolean
   expandedNodeIds: ReadonlySet<string>
   onToggleProcess: (nodeIds: string[]) => void
@@ -35,6 +37,7 @@ interface RoundSectionProps {
 export const RoundSection = memo(function RoundSection({
   round,
   nodesById,
+  answerNodeIdsByRoundId,
   processExpanded,
   expandedNodeIds,
   onToggleProcess,
@@ -76,17 +79,11 @@ export const RoundSection = memo(function RoundSection({
       (node): node is Extract<RenderNode, { type: 'supplement' }> =>
         node?.type === 'supplement',
     )
-  const linkedAnswerNode = round.answerNodeId
-    ? nodesById[round.answerNodeId]
-    : undefined
-  const projectedAnswerNode = linkedAnswerNode
-    ? undefined
-    : Object.values(nodesById).find(
-        (node) =>
-          node.type === 'answer'
-          && node.roundId === round.roundId,
-      )
-  const answerNode = linkedAnswerNode ?? projectedAnswerNode
+  const answerNode = answerNodeForRound(
+    round,
+    nodesById,
+    answerNodeIdsByRoundId,
+  )
   const pendingCount = chainNodes.filter(
     (node) => node.type === 'attention' && node.status === 'waiting',
   ).length
@@ -170,6 +167,7 @@ export const RoundSection = memo(function RoundSection({
                     onToggle={() => onToggleNode(node.nodeId)}
                     isFirst={index === 0}
                     isLast={index === chainNodes.length - 1}
+                    segFlowed={index > 0 && isFlowNodeSettled(chainNodes[index - 1])}
                     chainLive={roundActive && processVisible}
                     onAttentionAction={onAttentionAction}
                     onOpenChildRun={onOpenChildRun}
@@ -200,12 +198,29 @@ export const RoundSection = memo(function RoundSection({
 }, (previous, next) => {
   if (previous.round !== next.round) return false
   if (previous.processExpanded !== next.processExpanded) return false
+  if (previous.answerNodeIdsByRoundId !== next.answerNodeIdsByRoundId) {
+    return false
+  }
   if (!sameExpandedNodeIds(previous.expandedNodeIds, next.expandedNodeIds)) {
     return false
   }
   for (const nodeId of next.round.processNodeIds) {
     if (previous.nodesById[nodeId] !== next.nodesById[nodeId]) return false
   }
+  // answer 节点不在 processNodeIds（后端按 node_type <> 'answer' 投影），
+  // 必须单独比较：流式期间每次 delta 都是新节点对象，引用不同即放行渲染，
+  // 否则 AnswerBlock 拿不到增量，completed 时一次性崩出全文。
+  const previousAnswer = answerNodeForRound(
+    previous.round,
+    previous.nodesById,
+    previous.answerNodeIdsByRoundId,
+  )
+  const nextAnswer = answerNodeForRound(
+    next.round,
+    next.nodesById,
+    next.answerNodeIdsByRoundId,
+  )
+  if (previousAnswer !== nextAnswer) return false
   return (
     previous.onToggleProcess === next.onToggleProcess
     && previous.onToggleNode === next.onToggleNode

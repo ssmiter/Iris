@@ -151,6 +151,15 @@ export default {
           from: { transform: 'scaleY(0)' },
           to: { transform: 'scaleY(1)' },
         },
+        // 脊柱状态点光环呼吸（WonWork wf-halo）：活跃=主色，等待处理=警告色
+        halo: {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgb(var(--color-primary) / 0.28)' },
+          '50%': { boxShadow: '0 0 0 6px rgb(var(--color-primary) / 0)' },
+        },
+        'halo-warn': {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgb(var(--color-warning) / 0.3)' },
+          '50%': { boxShadow: '0 0 0 6px rgb(var(--color-warning) / 0)' },
+        },
         spin: {
           to: { transform: 'rotate(360deg)' },
         },
@@ -162,6 +171,8 @@ export default {
         'dialog-out': 'dialog-out var(--motion-normal) var(--ease-exit)',
         'node-enter': 'node-enter var(--motion-deliberate) var(--ease-enter) both',
         'seg-grow': 'seg-grow var(--motion-deliberate) var(--ease-enter) both',
+        halo: 'halo 1.7s ease-in-out infinite',
+        'halo-warn': 'halo-warn 1.2s ease-in-out infinite',
         spin: 'spin .8s linear infinite',
       },
     },

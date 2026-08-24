@@ -157,6 +157,7 @@ export const ConversationTimeline = memo(forwardRef<
           runsById={projection.runsById}
           roundsById={projection.roundsById}
           nodesById={projection.renderNodesById}
+          answerNodeIdsByRoundId={projection.answerNodeIdsByRoundId}
           expandedRoundIds={expandedRoundIds}
           expandedNodeIds={expandedNodeIds}
           onToggleRound={toggleRound}
@@ -184,6 +185,7 @@ export const ConversationTimeline = memo(forwardRef<
       projection.runsById,
       projection.roundsById,
       projection.renderNodesById,
+      projection.answerNodeIdsByRoundId,
     ],
   )
 

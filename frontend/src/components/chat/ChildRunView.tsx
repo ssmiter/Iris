@@ -15,6 +15,7 @@ import type {
   RunView,
 } from '@/domain/chat/models'
 import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
+import { indexAnswerNodesByRoundId } from '@/domain/chat/selectors'
 import { Badge, Button, notify } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { useChatStore } from '@/stores/chatStore'
@@ -137,6 +138,7 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
   )
   const roundsById = useChatStore((state) => state.roundsById)
   const nodesById = useChatStore((state) => state.renderNodesById)
+  const answerNodeIdsByRoundId = indexAnswerNodesByRoundId(nodesById)
   const [expandedRoundIds, setExpandedRoundIds] = useState<ReadonlySet<string>>(
     new Set(),
   )
@@ -330,6 +332,7 @@ const ChildRunPanelView = memo(function ChildRunPanelView({
                 run={run}
                 roundsById={roundsById}
                 nodesById={nodesById}
+                answerNodeIdsByRoundId={answerNodeIdsByRoundId}
                 expandedRoundIds={expandedRoundIds}
                 expandedNodeIds={expandedNodeIds}
                 onToggleRound={(roundId, nodeIds) => {

@@ -131,6 +131,15 @@ interface MarkdownCache {
   chunks: MarkdownChunk[]
 }
 
+/**
+ * 流式密封安全窗口：normalizer 的修正都是行局部的，只有靠近尾部、
+ * 行尚未写齐的区域可能被后续文本改写。距尾部不足窗口的块不密封，
+ * 已密封的前缀块因此永远稳定，不再参与重解析（25Hz 全量解析的卡顿根因）。
+ * 万一 normalizer 改动了已密封区域，startsWith 前缀守卫会整缓存重置，
+ * 退化为一次全量解析——安全而非错误。
+ */
+const STREAMING_SEAL_TAIL_WINDOW = 200
+
 const listMarker = /^(?:[-+*]|\d+[.)])\s/
 
 function canSealAtBlankLine(before: string, after: string) {
@@ -203,7 +212,7 @@ export function IncrementalMarkdown({
   streaming = false,
 }: {
   content: string
-  /** 流式期间走单树渲染：normalizer 会改写尾部文本，分块密封会失配导致整树重挂 */
+  /** 流式期间尾部留安全窗口不密封（normalizer 只会改写尾部未写齐的行） */
   streaming?: boolean
 }) {
   const cacheRef = useRef<MarkdownCache>({
@@ -211,12 +220,6 @@ export function IncrementalMarkdown({
     sealedLength: 0,
     chunks: [],
   })
-
-  if (streaming) {
-    return (
-      <MarkdownStreaming key="streaming" content={content} />
-    )
-  }
 
   const cache = cacheRef.current
 
@@ -228,9 +231,16 @@ export function IncrementalMarkdown({
 
   const unsealed = content.slice(cache.sealedLength)
   const partition = findSealedChunks(unsealed, cache.sealedLength)
-  if (partition.chunks.length > 0) {
-    cache.chunks = [...cache.chunks, ...partition.chunks]
-    cache.sealedLength += partition.consumed
+  const sealLimit = streaming
+    ? content.length - STREAMING_SEAL_TAIL_WINDOW
+    : Number.POSITIVE_INFINITY
+  const sealable = partition.chunks.filter(
+    (chunk) => chunk.offset + chunk.content.length <= sealLimit,
+  )
+  if (sealable.length > 0) {
+    const last = sealable[sealable.length - 1]
+    cache.chunks = [...cache.chunks, ...sealable]
+    cache.sealedLength = last.offset + last.content.length
   }
   cache.source = content
 
@@ -248,21 +258,3 @@ export function IncrementalMarkdown({
     </>
   )
 }
-
-/**
- * 流式单树渲染：整段规范化文本每次交给同一棵 ReactMarkdown。
- * remarkPlugins 与 markdownComponents 均为模块级稳定引用，React 只增量更新尾部节点，
- * 已渲染的块不会卸载重挂——WonWork MessageBubble 的同款机制。
- */
-const MarkdownStreaming = memo(function MarkdownStreaming({
-  content,
-}: {
-  content: string
-}) {
-  if (!content) return null
-  return (
-    <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-      {content}
-    </ReactMarkdown>
-  )
-})

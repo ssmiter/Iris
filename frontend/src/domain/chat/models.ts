@@ -325,6 +325,12 @@ export interface ConversationProjection {
   runsById: Record<string, RunView>
   roundsById: Record<string, RoundView>
   renderNodesById: Record<string, RenderNode>
+  /**
+   * roundId → answer nodeId 的派生索引（后端 answer_node_id 链接前的兜底）。
+   * 在投影构建时一次扫描生成，answer 节点集合不变时引用保持稳定——
+   * 流式 delta 只改 answer 内容不改集合，比较器可安全用引用比较。
+   */
+  answerNodeIdsByRoundId: ReadonlyMap<string, string>
   compactBoundaries: CompactBoundaryView[]
 }
 

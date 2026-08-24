@@ -485,6 +485,14 @@ export const mockConversation: ConversationProjection = {
   renderNodesById: Object.fromEntries(
     allNodes.map((node) => [node.nodeId, node]),
   ),
+  answerNodeIdsByRoundId: new Map(
+    allNodes
+      .filter(
+        (node): node is Extract<typeof node, { type: 'answer' }> =>
+          node.type === 'answer' && node.roundId != null,
+      )
+      .map((node) => [node.roundId as string, node.nodeId]),
+  ),
   compactBoundaries: [
     {
       boundaryId: 'compact-before-travel',

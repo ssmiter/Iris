@@ -18,6 +18,10 @@ spring:
         journal_mode: WAL
         synchronous: NORMAL
         foreign_keys: true
+        # 流式 flush 高频小写会把 WAL 快速推到默认 1000 页（约 4MB）触发
+        # 自动 checkpoint，checkpoint 期间写者短暂阻塞，表现为周期性抖动；
+        # 放大到 10000 页摊薄 checkpoint 频次（崩溃恢复成本可忽略）。
+        wal_autocheckpoint: 10000
   sql:
     init:
       mode: always

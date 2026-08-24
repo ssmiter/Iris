@@ -91,7 +91,14 @@ export const AnswerBlock = memo(function AnswerBlock({ node }: AnswerBlockProps)
           </Button>
         </Tooltip>
       )}
-      <div className="answer-prose prose prose-sm max-w-none text-ink">
+      <div
+        className={cn(
+          'answer-prose prose prose-sm max-w-none text-ink',
+          // 流式期间关掉 pretty 精排：文本每 40ms 增长，pretty 的多段平衡
+          // 算法会让整个区块每帧全量重排；落定后再由 .answer-prose 精修一次
+          streaming && 'answer-prose-streaming',
+        )}
+      >
         <IncrementalMarkdown content={renderContent} streaming={streaming} />
       </div>
       {showStoppedEyebrow && (
