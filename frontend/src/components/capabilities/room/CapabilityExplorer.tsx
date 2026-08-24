@@ -9,165 +9,46 @@ import {
 } from 'react'
 import {
   Brain,
-  ChevronLeft,
   Clock3,
-  ClipboardPaste,
-  Copy,
-  FolderOpen,
-  Grid3X3,
-  Link,
-  List,
-  Pencil,
-  Pin,
-  PinOff,
   Plug,
   Plus,
   RefreshCw,
-  Scissors,
   Search,
   SearchX,
-  TextCursor,
-  Trash2,
 } from 'lucide-react'
+import type { CapabilityAdminItem, SkillView } from '@/api/irisApi'
+import { Button, ContextMenu, Input } from '@/components/ui'
+import { RoomSide, RoomStage, RoomTopBar } from '@/components/room'
 import {
-  capabilityAdminApi,
-  capabilityManagementApi,
-  IrisApiError,
-  type CapabilityAdminItem,
-  type CapabilityAdminListing,
-  type CapabilityAdminProblem,
-  type CapabilityFileOperationResult,
-  type CapabilityPin,
-  type CapabilityTreeNode,
-  type SkillView,
-} from '@/api/irisApi'
-import { Badge, Button, ContextMenu, Input, Modal, ModalClose, notify, type ContextMenuSlot } from '@/components/ui'
-import { cn } from '@/lib/cn'
-import { kindMeta } from '@/domain/capability/kindMeta'
-import { riskMeta, type BadgeTone } from '@/domain/capability/riskMeta'
-import {
-  cacheCapabilityDetail,
-  cacheCapabilityListing,
-  cacheCapabilityPins,
   invalidateAll,
-  makeCapabilityDetailKey,
   readCapabilityCenterCache,
-  readCapabilityDetail,
   readCapabilityListing,
-  syncWithGeneration,
-  writeCapabilityCenterCache,
 } from '@/domain/capability/capabilityCenterCache'
+import {
+  ancestorsOf,
+  fileNameOf,
+  findNode,
+  parentPathOf,
+} from '@/domain/capability/treeUtils'
 import { QuietState, useFocusReturn } from '../controls'
 import { SkillEditor } from '../SkillEditor'
-import { DirectoryTree } from './DirectoryTree'
-import { CapabilityDetailPanel } from './CapabilityDetailPanel'
-import { StatusLine } from './StatusLine'
+import { DirectoryTree, TreeSkeleton } from './DirectoryTree'
+import { StageView, type StageSearch } from './StageView'
+import { DetailLayer } from './DetailLayer'
+import { MoveToPopover } from './MoveToPopover'
+import { DeleteConfirmModal } from './DeleteConfirmModal'
+import { useCapabilityData } from './useCapabilityData'
+import { useCapabilityFileOps } from './useCapabilityFileOps'
+import { useExplorerMenus } from './useExplorerMenus'
+import { useDragSelect } from './useDragSelect'
+import { useCapabilityDetail } from './useCapabilityDetail'
+import { useCapabilitySearch } from './useCapabilitySearch'
 
-const RISK_EDGE: Record<BadgeTone, string> = {
-  neutral: '',
-  info: '',
-  success: '',
-  warning: 'ring-[1.5px] ring-inset ring-warning',
-  danger: 'ring-[1.5px] ring-inset ring-danger',
-  violet: '',
-  teal: '',
-}
-
-const STAT_LABELS: Record<string, string> = {
-  tool_count: '工具数',
-  success_rate_7d: '7 日成功率',
-  p50_ms_7d: '7 日 p50',
-}
-
-function formatStat(key: string, value: unknown): string {
-  if (key === 'success_rate_7d') {
-    const rate = Number(value)
-    return Number.isFinite(rate)
-      ? `${Math.round((rate > 1 ? rate : rate * 100) * 10) / 10}%`
-      : String(value)
-  }
-  if (key === 'p50_ms_7d') return `${String(value)} ms`
-  return String(value)
-}
-
-function findNode(
-  node: CapabilityTreeNode,
-  path: string,
-): CapabilityTreeNode | null {
-  if (node.path === path) return node
-  for (const child of node.children) {
-    const found = findNode(child, path)
-    if (found) return found
-  }
-  return null
-}
-
-function ancestorsOf(path: string): string[] {
-  const result = ['/']
-  const segments = path.split('/').filter(Boolean)
-  let current = ''
-  for (const segment of segments.slice(0, -1)) {
-    current += `/${segment}`
-    result.push(current)
-  }
-  return result
-}
-
-function parentPathOf(path: string): string {
-  if (path === '/') return '/'
-  const idx = path.lastIndexOf('/')
-  return idx <= 0 ? '/' : path.slice(0, idx)
-}
-
-function fuzzyMatch(haystack: string, needle: string): boolean {
-  const text = haystack.toLowerCase()
-  const tokens = needle
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-  return tokens.every((token) => text.includes(token))
-}
-
-function intersects(
-  a: { left: number; top: number; right: number; bottom: number },
-  b: { left: number; top: number; right: number; bottom: number },
-): boolean {
-  return (
-    a.left < b.right &&
-    a.right > b.left &&
-    a.top < b.bottom &&
-    a.bottom > b.top
-  )
-}
-
-const FILE_TRUTH_KINDS = new Set(['process', 'template', 'skill', 'knowledge'])
-
-function isFileTruth(item: CapabilityAdminItem): boolean {
-  return FILE_TRUTH_KINDS.has(item.kind) && item.sourceFile != null
-}
-
-function isDbTruth(item: CapabilityAdminItem): boolean {
-  return ['skill_store', 'mcp', 'schedule', 'pipeline'].includes(item.origin)
-}
-
-function isKernelTool(item: CapabilityAdminItem): boolean {
-  return (
-    item.kind === 'kernel_tool' ||
-    item.origin === 'kernel' ||
-    item.path.startsWith('/system/')
-  )
-}
-
-function isValidMachineName(value: string): boolean {
-  return /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(value) && value.length > 0
-}
-
-function fileNameOf(path: string): string {
-  if (path === '/') return ''
-  const idx = path.lastIndexOf('/')
-  return idx < 0 ? path : path.slice(idx + 1)
-}
-
+/**
+ * 能力房壳（docs/39 §6 拆分后）：键盘层栈、选择/剪贴板留在壳，数据加载 /
+ * 文件操作 / 右键菜单 / 框选 / 详情 / 搜索各归其 hook；
+ * 舞台渲染在 StageView，详情在 DetailLayer，搜索纯函数在 CapabilitySearch。
+ */
 export function CapabilityExplorer({
   consumeEscRef,
   onOpenMcp,
@@ -181,258 +62,104 @@ export function CapabilityExplorer({
   onOpenSchedule: () => void
   onClose: () => void
 }) {
-  const snapshot = useMemo(readCapabilityCenterCache, [])
-  const [tree, setTree] = useState<CapabilityTreeNode | null>(snapshot.tree)
-  const [treeFailed, setTreeFailed] = useState(snapshot.treeFailed)
-  const [selectedPath, setSelectedPath] = useState(snapshot.selectedPath)
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
-    () => new Set(snapshot.expanded),
-  )
-  const [listing, setListing] = useState<CapabilityAdminListing | null>(
-    snapshot.listings[snapshot.selectedPath]?.data ?? null,
-  )
-  const [listingLoading, setListingLoading] = useState(
-    !snapshot.listings[snapshot.selectedPath]?.data,
-  )
-  const [skills, setSkills] = useState<SkillView[]>(snapshot.skills)
-  const [problems, setProblems] = useState<CapabilityAdminProblem[]>(
-    snapshot.problems,
-  )
-  const [query, setQuery] = useState('')
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
-  const [detailPath, setDetailPath] = useState<string | null>(null)
-  const [detailStatus, setDetailStatus] = useState<
-    Record<string, 'loading' | 'error'>
-  >({})
+  const { rootRef, captureFocusKey, restoreFocus } =
+    useFocusReturn<HTMLDivElement>()
   const [editingSkill, setEditingSkill] = useState<
     SkillView | undefined | null
   >(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [generationSynced, setGenerationSynced] = useState(false)
+
+  const data = useCapabilityData()
+  const {
+    tree,
+    treeFailed,
+    selectedPath,
+    listing,
+    skills,
+    problems,
+    pins,
+    listingsVersion,
+  } = data
+
+  // ===== 选择 / 剪贴板（壳保留） =====
+
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set())
   const [cursorPath, setCursorPath] = useState<string | null>(null)
-  const [rotation, setRotation] = useState(0)
-  const [contextMenu, setContextMenu] = useState<{
-    open: boolean
-    x: number
-    y: number
-    target: 'item' | 'tree' | 'pin'
-    path: string | null
-  }>({ open: false, x: 0, y: 0, target: 'item', path: null })
   const [clipboard, setClipboard] = useState<{
     mode: 'cut' | 'copy'
     paths: string[]
   } | null>(null)
-  const [renamingPath, setRenamingPath] = useState<string | null>(null)
-  const [renameDraft, setRenameDraft] = useState('')
-  const [deleteCandidates, setDeleteCandidates] = useState<string[] | null>(
-    null,
-  )
-  const [pins, setPins] = useState<CapabilityPin[]>(snapshot.pins)
+
   const searchRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  const consumeEsc = useCallback(() => {
-    if (contextMenu.open) {
-      setContextMenu((current) => ({ ...current, open: false }))
-      return true
-    }
-    if (renamingPath) {
-      setRenamingPath(null)
-      setRenameDraft('')
-      return true
-    }
-    if (query.trim().length > 0) {
-      setQuery('')
-      return true
-    }
-    if (detailPath) {
-      setDetailPath(null)
-      return true
-    }
-    if (selection.size > 0) {
-      setSelection(new Set())
-      setCursorPath(null)
-      return true
-    }
-    return false
-  }, [query, detailPath, selection, contextMenu.open, renamingPath])
+  const treeTitleOf = useCallback(
+    (path: string): string => {
+      if (path === '/') return '全部能力'
+      const found = tree ? findNode(tree, path) : null
+      return found ? found.title || found.name : fileNameOf(path)
+    },
+    [tree],
+  )
 
-  useEffect(() => {
-    if (!consumeEscRef) return
-    consumeEscRef.current = consumeEsc
-    return () => {
-      consumeEscRef.current = () => false
-    }
-  }, [consumeEscRef, consumeEsc])
+  /** 目录的完整标题链（搜索分组头用）：全部能力 / 域 / 子目录。 */
+  const chainTitleOf = useCallback(
+    (path: string): string => {
+      if (path === '/') return '全部能力'
+      return [...ancestorsOf(path), path].map(treeTitleOf).join(' / ')
+    },
+    [treeTitleOf],
+  )
 
-  const [drag, setDrag] = useState<
-    | {
-        start: { x: number; y: number }
-        current: { x: number; y: number }
-      }
-    | null
-  >(null)
-  const { rootRef, captureFocusKey, restoreFocus } =
-    useFocusReturn<HTMLDivElement>()
+  // ===== 详情 / 搜索 / 文件操作 / 菜单 / 框选 =====
 
-  const reloadTree = () =>
-    capabilityAdminApi
-      .tree()
-      .then(({ generation, root }) => {
-        setTree(root)
-        setTreeFailed(false)
-        writeCapabilityCenterCache({
-          tree: root,
-          treeGeneration: generation,
-          treeFailed: false,
-          treeLoaded: true,
-        })
-      })
-      .catch((error: Error) => {
-        setTreeFailed(true)
-        writeCapabilityCenterCache({ treeFailed: true, treeLoaded: true })
-        notify.error('能力目录暂时不可用', { description: error.message })
-      })
+  const detail = useCapabilityDetail({ listing, listingsVersion })
 
-  const reloadSkills = () =>
-    capabilityManagementApi
-      .listSkills()
-      .then((next) => {
-        setSkills(next)
-        writeCapabilityCenterCache({ skills: next, skillsLoaded: true })
-      })
-      .catch(() => setSkills([]))
+  const search = useCapabilitySearch({
+    tree,
+    listing,
+    listingsVersion,
+    chainTitleOf,
+    onListingsChanged: data.bumpListings,
+  })
 
-  const reloadProblems = () =>
-    capabilityAdminApi
-      .problems()
-      .then((next) => {
-        setProblems(next)
-        writeCapabilityCenterCache({ problems: next, problemsLoaded: true })
-      })
-      .catch(() => setProblems([]))
-
-  const reloadPins = () =>
-    capabilityAdminApi
-      .pins()
-      .then(({ pins: next }) => {
-        setPins(next)
-        cacheCapabilityPins(next)
-      })
-      .catch(() => {
-        setPins([])
-        cacheCapabilityPins([])
-      })
-
-  const reloadListing = (path: string, force = false) => {
-    if (!force) {
-      const cached = readCapabilityListing(path)
-      if (cached) {
-        setListing(cached)
-        setListingLoading(false)
-        return Promise.resolve()
-      }
-    }
-    setListingLoading(true)
-    return capabilityAdminApi
-      .items(path)
-      .then((next) => {
-        setListing(next)
-        cacheCapabilityListing(path, next)
-      })
-      .catch((error: Error) =>
-        notify.error('没有读到该目录的能力', { description: error.message }),
-      )
-      .finally(() => setListingLoading(false))
-  }
-
-  const refreshAll = () => {
-    setRefreshing(true)
-    setRotation((r) => r + 360)
+  const afterMutation = async () => {
     invalidateAll()
-    void Promise.allSettled([
-      reloadTree(),
-      reloadSkills(),
-      reloadProblems(),
-      reloadPins(),
-      reloadListing(selectedPath),
-    ]).finally(() => setRefreshing(false))
+    search.resetScope()
+    data.bumpListings()
+    await Promise.all([
+      data.reloadTree(),
+      data.reloadPins(),
+      data.reloadListing(selectedPath, true),
+    ])
   }
 
-  useEffect(() => {
-    let cancelled = false
-    const probe = async () => {
-      try {
-        const { generation } = await capabilityAdminApi.generation()
-        if (cancelled) return
-        syncWithGeneration(generation)
-      } catch {
-        // 探针失败时回退到 loaded 标志，避免阻塞已有缓存的渲染。
-      }
-      if (!cancelled) setGenerationSynced(true)
+  const fileOps = useCapabilityFileOps({
+    clipboard,
+    setClipboard,
+    selectedPath,
+    treeTitleOf,
+    afterMutation,
+    setSelection,
+    setCursorPath,
+    closeDetail: detail.closeDetail,
+  })
+
+  const toggleDetail = (item: CapabilityAdminItem) => {
+    if (detail.detailPath === item.path) {
+      detail.closeDetail()
+      return
     }
-    probe()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    writeCapabilityCenterCache({ selectedPath })
-    setQuery('')
-    setDetailPath(null)
-    setCursorPath(null)
-    if (!generationSynced) return
-    const after = readCapabilityCenterCache()
-    if (!after.treeLoaded) void reloadTree()
-    if (!after.skillsLoaded) void reloadSkills()
-    if (!after.problemsLoaded) void reloadProblems()
-    if (!after.pinsLoaded) void reloadPins()
-    void reloadListing(selectedPath)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generationSynced, selectedPath])
-
-  useEffect(() => {
-    writeCapabilityCenterCache({ expanded: [...expanded] })
-  }, [expanded])
-
-  const selectPath = (path: string, alt = false) => {
-    setSelectedPath(path)
-    setExpanded((current) => {
-      const chain = ancestorsOf(path)
-      if (alt) {
-        const next = new Set(current)
-        for (const ancestor of chain) next.add(ancestor)
-        next.add(path)
-        return next
-      }
-      return new Set([...chain, path])
-    })
-    setQuery('')
-    setDetailPath(null)
-    setCursorPath(null)
+    detail.openDetail(item)
+    setCursorPath(item.path)
   }
 
-  const toggleExpanded = (path: string) => {
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }
-
-  // ===== 右键菜单 / 剪切板 / 文件操作 / 收藏 =====
-
-  const copyText = async (text: string, description?: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      notify.success(description ?? '已复制到剪贴板')
-    } catch {
-      notify.error('复制失败', { description: text })
-    }
-  }
+  const skillOf = (item: CapabilityAdminItem) =>
+    item.origin === 'skill_store'
+      ? skills.find(
+          (skill) =>
+            skill.skillId === item.id || skill.capabilityPath === item.path,
+        )
+      : undefined
 
   const openDetailOrEdit = (item: CapabilityAdminItem) => {
     if (item.origin === 'skill_store') {
@@ -446,403 +173,159 @@ export function CapabilityExplorer({
     toggleDetail(item)
   }
 
-  const cutItems = (paths: string[]) => {
-    setClipboard({ mode: 'cut', paths })
-    setSelection(new Set(paths))
-    setCursorPath(paths[paths.length - 1])
-  }
-
-  const copyItems = (paths: string[]) => {
-    setClipboard({ mode: 'copy', paths })
-    notify.success(`已复制 ${paths.length} 项`)
-  }
-
-  const handleFileOpError = (error: Error, operation: string) => {
-    if (error instanceof IrisApiError) {
-      if (error.code === 'already_exists') {
-        notify.error('名称冲突', {
-          description: '目标位置已存在同名能力，请手动改名后再试。',
-        })
-        return
-      }
-      if (error.code === 'not_file_truth') {
-        notify.error('无法操作该对象', {
-          description: '只有文件真相对象才能移动、复制或重命名。',
-        })
-        return
-      }
-      if (error.code === 'out_of_extension_root') {
-        notify.error('超出允许范围', {
-          description: '操作越过了已登记的能力拓展根目录。',
-        })
-        return
-      }
-    }
-    notify.error(`${operation}失败`, { description: error.message })
-  }
-
-  const pasteTo = async (targetDir: string) => {
-    if (!clipboard || clipboard.paths.length === 0) return
-    const ops: Promise<CapabilityFileOperationResult>[] = []
-    for (const sourcePath of clipboard.paths) {
-      const sourceDir = parentPathOf(sourcePath)
-      const isSameDir = sourceDir === targetDir
-      if (clipboard.mode === 'cut' && !isSameDir) {
-        ops.push(capabilityAdminApi.moveFile(sourcePath, targetDir))
-      } else {
-        ops.push(capabilityAdminApi.copyFile(sourcePath, targetDir))
-      }
-    }
-    try {
-      await Promise.all(ops)
-      if (clipboard.mode === 'cut') setClipboard(null)
-      invalidateAll()
-      await Promise.all([
-        reloadTree(),
-        reloadPins(),
-        reloadListing(selectedPath, true),
-      ])
-    } catch (error) {
-      handleFileOpError(error as Error, '粘贴')
-    }
-  }
-
-  const startRename = (item: CapabilityAdminItem) => {
-    setRenamingPath(item.path)
-    setRenameDraft(item.name)
-  }
-
-  const commitRename = async () => {
-    if (!renamingPath) return
-    const trimmed = renameDraft.trim()
-    if (trimmed === fileNameOf(renamingPath)) {
-      setRenamingPath(null)
-      return
-    }
-    if (!isValidMachineName(trimmed)) {
-      notify.error('名称格式不对', {
-        description: '请使用小写、数字、短横线或下划线的机器名（如 my-tool）。',
+  /** 目录跳转的唯一入口：清搜索/详情/光标（树、面包屑、详情层共用）。 */
+  const selectPath = useCallback(
+    (path: string, alt = false) => {
+      data.setSelectedPath(path)
+      data.setExpanded((current) => {
+        const chain = ancestorsOf(path)
+        if (alt) {
+          const next = new Set(current)
+          for (const ancestor of chain) next.add(ancestor)
+          next.add(path)
+          return next
+        }
+        return new Set([...chain, path])
       })
-      return
+      search.clear()
+      detail.closeDetail()
+      setCursorPath(null)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.setSelectedPath, data.setExpanded, search.clear, detail.closeDetail],
+  )
+
+  const menus = useExplorerMenus({
+    selection,
+    setSelection,
+    setCursorPath,
+    clipboard,
+    cutItems: fileOps.cutItems,
+    copyItems: fileOps.copyItems,
+    pasteTo: (dir) => void fileOps.pasteTo(dir),
+    requestMove: fileOps.requestMove,
+    startRename: fileOps.startRename,
+    confirmDelete: fileOps.confirmDelete,
+    isPinned: data.isPinned,
+    togglePin: (path) => void data.togglePin(path),
+    openDetailOrEdit,
+    toggleDetail,
+    selectPath,
+  })
+
+  const { drag, onContentMouseDown } = useDragSelect({
+    contentRef,
+    setSelection,
+    setCursorPath,
+    closeDetail: detail.closeDetail,
+  })
+
+  // ===== Esc 层栈：弹窗/浮层 → 详情 → 搜索 → 选择 → 房 =====
+
+  const consumeEsc = useCallback(() => {
+    // 删除确认是 Radix Dialog（不入全局层栈），window capture 阶段的层栈
+    // 会抢在 Radix 之前收到 Esc——在这里替它消费，否则会一路关到房间。
+    if (fileOps.deleteCandidates) {
+      fileOps.dismissDelete()
+      return true
     }
-    try {
-      await capabilityAdminApi.renameFile(renamingPath, trimmed)
-      setRenamingPath(null)
-      invalidateAll()
-      await Promise.all([
-        reloadTree(),
-        reloadPins(),
-        reloadListing(selectedPath, true),
-      ])
-    } catch (error) {
-      handleFileOpError(error as Error, '重命名')
+    if (menus.contextMenu.open) {
+      menus.closeMenu()
+      return true
     }
-  }
-
-  const confirmDelete = (paths: string[]) => setDeleteCandidates(paths)
-
-  const doDelete = async () => {
-    if (!deleteCandidates || deleteCandidates.length === 0) return
-    try {
-      await Promise.all(
-        deleteCandidates.map((path) => capabilityAdminApi.deleteFile(path)),
-      )
-      setDeleteCandidates(null)
-      invalidateAll()
-      await Promise.all([
-        reloadTree(),
-        reloadPins(),
-        reloadListing(selectedPath, true),
-      ])
-    } catch (error) {
-      handleFileOpError(error as Error, '删除')
+    if (fileOps.moveTarget) {
+      fileOps.closeMove()
+      return true
     }
-  }
-
-  const togglePin = async (path: string) => {
-    const nextPaths = pins.some((p) => p.path === path)
-      ? pins.filter((p) => p.path !== path).map((p) => p.path)
-      : [...pins.map((p) => p.path), path]
-    try {
-      const { pins: updated } = await capabilityAdminApi.setPins(nextPaths)
-      setPins(updated)
-      cacheCapabilityPins(updated)
-    } catch (error) {
-      notify.error('收藏更新失败', { description: (error as Error).message })
+    if (fileOps.renamingPath) {
+      fileOps.cancelRename()
+      return true
     }
-  }
-
-  const reorderPins = async (paths: string[]) => {
-    try {
-      const { pins: updated } = await capabilityAdminApi.setPins(paths)
-      setPins(updated)
-      cacheCapabilityPins(updated)
-    } catch (error) {
-      notify.error('收藏排序失败', { description: (error as Error).message })
+    if (detail.detailPath) {
+      detail.closeDetail()
+      return true
     }
-  }
-
-  const isPinned = (path: string) => pins.some((p) => p.path === path)
-
-  const buildPinMenu = (path: string): ContextMenuSlot[] => {
-    return [
-      {
-        key: 'open-location',
-        label: '打开所在位置',
-        icon: FolderOpen,
-        onSelect: () => selectPath(parentPathOf(path)),
-      },
-      {
-        key: 'unpin',
-        label: '取消钉选',
-        icon: PinOff,
-        onSelect: () => togglePin(path),
-      },
-      { type: 'separator', key: 'sep-1' },
-      {
-        key: 'copy-path',
-        label: '复制路径',
-        icon: Link,
-        onSelect: () => copyText(path),
-      },
-    ]
-  }
-
-  const buildTreeMenu = (path: string): ContextMenuSlot[] => {
-    return [
-      {
-        key: 'paste',
-        label: '粘贴',
-        icon: ClipboardPaste,
-        disabled: !clipboard,
-        onSelect: () => pasteTo(path),
-      },
-      { type: 'separator', key: 'sep-1' },
-      {
-        key: 'copy-path',
-        label: '复制路径',
-        icon: Link,
-        onSelect: () => copyText(path),
-      },
-    ]
-  }
-
-  const buildItemMenu = (item: CapabilityAdminItem): ContextMenuSlot[] => {
-    const pinned = isPinned(item.path)
-    const commonFooter: ContextMenuSlot[] = [
-      { type: 'separator', key: 'sep-pin' },
-      {
-        key: 'pin',
-        label: pinned ? '取消钉选' : '钉到收藏',
-        icon: pinned ? PinOff : Pin,
-        onSelect: () => togglePin(item.path),
-      },
-    ]
-
-    if (isFileTruth(item)) {
-      return [
-        {
-          key: 'open',
-          label: '编辑',
-          icon: Pencil,
-          onSelect: () => openDetailOrEdit(item),
-        },
-        {
-          key: 'cut',
-          label: '剪切',
-          icon: Scissors,
-          onSelect: () => cutItems([item.path]),
-        },
-        {
-          key: 'copy',
-          label: '复制',
-          icon: Copy,
-          onSelect: () => copyItems([item.path]),
-        },
-        {
-          key: 'paste',
-          label: '粘贴',
-          icon: ClipboardPaste,
-          disabled: !clipboard,
-          onSelect: () => pasteTo(parentPathOf(item.path)),
-        },
-        {
-          key: 'rename',
-          label: '重命名',
-          icon: TextCursor,
-          onSelect: () => startRename(item),
-        },
-        { type: 'separator', key: 'sep-1' },
-        {
-          key: 'delete',
-          label: '删除',
-          icon: Trash2,
-          danger: true,
-          onSelect: () => confirmDelete([item.path]),
-        },
-        {
-          key: 'copy-path',
-          label: '复制路径',
-          icon: Link,
-          onSelect: () => copyText(item.path),
-        },
-        ...commonFooter,
-      ]
+    if (search.query.trim().length > 0) {
+      search.clear()
+      return true
     }
-
-    if (isDbTruth(item)) {
-      return [
-        {
-          key: 'open',
-          label: '编辑',
-          icon: Pencil,
-          onSelect: () => openDetailOrEdit(item),
-        },
-        { type: 'separator', key: 'sep-1' },
-        {
-          key: 'copy-path',
-          label: '复制路径',
-          icon: Link,
-          onSelect: () => copyText(item.path),
-        },
-        ...commonFooter,
-      ]
+    if (selection.size > 0) {
+      setSelection(new Set())
+      setCursorPath(null)
+      return true
     }
+    return false
+  }, [menus, fileOps, search, detail, selection])
 
-    if (isKernelTool(item)) {
-      return [
-        {
-          key: 'detail',
-          label: '详情',
-          onSelect: () => toggleDetail(item),
-        },
-        {
-          key: 'copy-name',
-          label: '复制名称',
-          icon: Copy,
-          onSelect: () => copyText(item.path),
-        },
-        { type: 'separator', key: 'sep-1' },
-        {
-          key: 'copy-path',
-          label: '复制路径',
-          icon: Link,
-          onSelect: () => copyText(item.path),
-        },
-        ...commonFooter,
-      ]
+  useEffect(() => {
+    if (!consumeEscRef) return
+    consumeEscRef.current = consumeEsc
+    return () => {
+      consumeEscRef.current = () => false
     }
+  }, [consumeEscRef, consumeEsc])
 
-    return [
-      {
-        key: 'copy-path',
-        label: '复制路径',
-        icon: Link,
-        onSelect: () => copyText(item.path),
-      },
-      ...commonFooter,
-    ]
-  }
-
-  const buildMultiMenu = (paths: string[]): ContextMenuSlot[] => {
-    return [
-      {
-        key: 'cut',
-        label: '剪切',
-        icon: Scissors,
-        onSelect: () => cutItems(paths),
-      },
-      { type: 'separator', key: 'sep-1' },
-      {
-        key: 'delete',
-        label: '删除',
-        icon: Trash2,
-        danger: true,
-        onSelect: () => confirmDelete(paths),
-      },
-    ]
-  }
-
-  const openItemContextMenu = (
-    event: ReactMouseEvent,
-    item: CapabilityAdminItem,
-  ) => {
-    event.preventDefault()
-    if (selection.size > 1 && !selection.has(item.path)) {
-      setSelection(new Set([item.path]))
-      setCursorPath(item.path)
-    }
-    setContextMenu({
-      open: true,
-      x: event.clientX,
-      y: event.clientY,
-      target: 'item',
-      path: item.path,
+  const toggleExpanded = (path: string) => {
+    data.setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
     })
   }
 
-  const openTreeContextMenu = (event: ReactMouseEvent, path: string) => {
-    event.preventDefault()
-    setContextMenu({
-      open: true,
-      x: event.clientX,
-      y: event.clientY,
-      target: 'tree',
-      path,
-    })
+  /** 搜索命中：跳到所在目录并直接开详情（清空搜索，与蓝图一致）。 */
+  const openSearchHit = (item: CapabilityAdminItem) => {
+    const dir = parentPathOf(item.path)
+    if (dir !== selectedPath) selectPath(dir)
+    search.clear()
+    setSelection(new Set([item.path]))
+    setCursorPath(item.path)
+    detail.openDetail(item)
   }
 
-  const openPinContextMenu = (event: ReactMouseEvent, path: string) => {
-    event.preventDefault()
-    setContextMenu({
-      open: true,
-      x: event.clientX,
-      y: event.clientY,
-      target: 'pin',
-      path,
-    })
-  }
-
-  const selectedNode = tree ? findNode(tree, selectedPath) : null
-
-  const filteredItems = useMemo(() => {
-    const needle = query.trim()
-    const items = listing?.items ?? []
-    if (!needle) return items
-    return items.filter((item) =>
-      fuzzyMatch(
-        `${item.name} ${item.description ?? ''} ${item.path}`,
-        needle,
-      ),
-    )
-  }, [listing, query])
-
-  const isSearching = query.trim().length > 0
-
-  let contextMenuItems: ContextMenuSlot[] = []
-  if (contextMenu.open) {
-    if (contextMenu.target === 'tree' && contextMenu.path) {
-      contextMenuItems = buildTreeMenu(contextMenu.path)
-    } else if (contextMenu.target === 'pin' && contextMenu.path) {
-      contextMenuItems = buildPinMenu(contextMenu.path)
-    } else if (
-      selection.size > 1 &&
-      contextMenu.path &&
-      selection.has(contextMenu.path)
-    ) {
-      contextMenuItems = buildMultiMenu([...selection])
-    } else {
-      const item = filteredItems.find((i) => i.path === contextMenu.path)
-      contextMenuItems = item ? buildItemMenu(item) : []
+  /** 键盘导航/右键菜单作用的对象集：搜索时为平铺命中，否则当前目录。 */
+  const activeItems = useMemo(() => {
+    if (search.result) {
+      return search.result.groups.flatMap((group) => group.items)
     }
-  }
+    return listing?.items ?? []
+  }, [search.result, listing])
 
-  // 全局键盘：搜索聚焦、上下移动、Enter 打开详情、Backspace 回上级、菜单键开右键菜单。
+  const stageSearch: StageSearch | null =
+    search.isSearching && search.result
+      ? {
+          query: search.query.trim(),
+          result: search.result,
+          searchedAll: search.searchedAll,
+          searchingAll: search.searchingAll,
+          onSearchAll: search.searchAllDirs,
+          onClear: search.clear,
+          onOpenDir: (path) => selectPath(path),
+          onOpenItem: openSearchHit,
+        }
+      : null
+
+  // ===== 键盘层（壳保留）：聚焦、上下移动、Enter 详情、Backspace 回上级 =====
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (contextMenu.open) return
+      if (menus.contextMenu.open) return
+      // Skill 编辑器打开时键盘全归编辑器（此时搜索框已卸载，全局快捷键无意义）。
+      if (editingSkill !== null) return
 
-      if (event.key === '/' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f')) {
+      const target = event.target as HTMLElement
+      const isTyping =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+
+      // 正在输入时只有 Ctrl/Cmd 系快捷键可抢焦点；裸「/」必须能打进输入框。
+      if (
+        (!isTyping && event.key === '/') ||
+        ((event.ctrlKey || event.metaKey) &&
+          ['f', 'k'].includes(event.key.toLowerCase()))
+      ) {
         event.preventDefault()
         searchRef.current?.focus()
         return
@@ -851,8 +334,8 @@ export function CapabilityExplorer({
       if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
         event.preventDefault()
         const item = cursorPath
-          ? filteredItems.find((i) => i.path === cursorPath)
-          : filteredItems[0]
+          ? activeItems.find((i) => i.path === cursorPath)
+          : activeItems[0]
         if (item) {
           const el = contentRef.current?.querySelector<HTMLElement>(
             `[data-item="${CSS.escape(item.path)}"]`,
@@ -860,27 +343,16 @@ export function CapabilityExplorer({
           const rect = el?.getBoundingClientRect()
           const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2
           const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2
-          setContextMenu({
-            open: true,
-            x,
-            y,
-            target: 'item',
-            path: item.path,
-          })
+          menus.openMenu({ open: true, x, y, target: 'item', path: item.path })
         }
         return
       }
 
-      const target = event.target as HTMLElement
-      const isTyping =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
       if (isTyping) return
 
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
-        const items = filteredItems
+        const items = activeItems
         if (items.length === 0) return
         const idx = items.findIndex((item) => item.path === cursorPath)
         const delta = event.key === 'ArrowDown' ? 1 : -1
@@ -898,16 +370,16 @@ export function CapabilityExplorer({
         event.preventDefault()
         const item =
           cursorPath != null
-            ? filteredItems.find((i) => i.path === cursorPath)
-            : filteredItems[0]
+            ? activeItems.find((i) => i.path === cursorPath)
+            : activeItems[0]
         if (item) toggleDetail(item)
         return
       }
 
       if (event.key === 'Backspace') {
         event.preventDefault()
-        if (detailPath) {
-          setDetailPath(null)
+        if (detail.detailPath) {
+          detail.closeDetail()
         } else {
           selectPath(parentPathOf(selectedPath))
         }
@@ -918,89 +390,7 @@ export function CapabilityExplorer({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursorPath, detailPath, filteredItems, selectedPath, contextMenu.open])
-
-  const toggleDetail = (item: CapabilityAdminItem) => {
-    const path = item.path
-    if (detailPath === path) {
-      setDetailPath(null)
-      return
-    }
-    setDetailPath(path)
-    setCursorPath(path)
-    const hash = item.manifestHash
-    if (hash) {
-      const cached = readCapabilityDetail(makeCapabilityDetailKey(path, hash))
-      if (cached) return
-    }
-    setDetailStatus((current) => ({ ...current, [path]: 'loading' }))
-    capabilityAdminApi
-      .detail(path)
-      .then((detail) => {
-        if (hash) {
-          cacheCapabilityDetail(makeCapabilityDetailKey(path, hash), detail)
-        }
-        setDetailStatus((current) => {
-          const next = { ...current }
-          delete next[path]
-          return next
-        })
-      })
-      .catch(() =>
-        setDetailStatus((current) => ({ ...current, [path]: 'error' })),
-      )
-  }
-
-  const detailStateOf = (item: CapabilityAdminItem) => {
-    const status = detailStatus[item.path]
-    if (status === 'loading') return { status: 'loading' as const }
-    if (status === 'error') return { status: 'error' as const }
-    const hash = item.manifestHash
-    if (hash) {
-      const cached = readCapabilityDetail(makeCapabilityDetailKey(item.path, hash))
-      if (cached) return { status: 'ready' as const, detail: cached }
-    }
-    return undefined
-  }
-
-  const skillOf = (item: CapabilityAdminItem) =>
-    item.origin === 'skill_store'
-      ? skills.find(
-          (skill) =>
-            skill.skillId === item.id || skill.capabilityPath === item.path,
-        )
-      : undefined
-
-  const toggleSkillEnabled = async (
-    item: CapabilityAdminItem,
-    skill: SkillView,
-  ) => {
-    const next = { ...skill, enabled: !skill.enabled }
-    setSkills((items) =>
-      items.map((entry) => (entry.skillId === skill.skillId ? next : entry)),
-    )
-    try {
-      const updated = await capabilityManagementApi.setSkillEnabled(
-        skill,
-        !skill.enabled,
-      )
-      setSkills((items) => {
-        const nextItems = items.map((entry) =>
-          entry.skillId === skill.skillId ? updated : entry,
-        )
-        writeCapabilityCenterCache({ skills: nextItems })
-        return nextItems
-      })
-      await reloadListing(selectedPath, true)
-    } catch (error) {
-      setSkills((items) =>
-        items.map((entry) => (entry.skillId === skill.skillId ? skill : entry)),
-      )
-      notify.error('没有改变 Skill 状态', {
-        description: (error as Error).message,
-      })
-    }
-  }
+  }, [cursorPath, detail.detailPath, activeItems, selectedPath, menus.contextMenu.open, editingSkill])
 
   const handleItemClick = (
     item: CapabilityAdminItem,
@@ -1019,8 +409,7 @@ export function CapabilityExplorer({
     }
 
     if (event.shiftKey && cursorPath) {
-      event.preventDefault()
-      const items = filteredItems
+      const items = activeItems
       const from = items.findIndex((i) => i.path === cursorPath)
       const to = items.findIndex((i) => i.path === item.path)
       if (from >= 0 && to >= 0) {
@@ -1036,83 +425,36 @@ export function CapabilityExplorer({
     toggleDetail(item)
   }
 
-  // 框选
-  useEffect(() => {
-    if (!drag) return
-    const onMove = (event: globalThis.MouseEvent) => {
-      const container = contentRef.current
-      if (!container) return
-      const rect = container.getBoundingClientRect()
-      setDrag((current) =>
-        current
-          ? {
-              ...current,
-              current: {
-                x: event.clientX - rect.left,
-                y: event.clientY - rect.top,
-              },
-            }
-          : null,
-      )
-    }
-    const onUp = (event: globalThis.MouseEvent) => {
-      const container = contentRef.current
-      if (container) {
-        const rect = container.getBoundingClientRect()
-        const end = {
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top,
-        }
-        const box = {
-          left: Math.min(drag.start.x, end.x),
-          top: Math.min(drag.start.y, end.y),
-          right: Math.max(drag.start.x, end.x),
-          bottom: Math.max(drag.start.y, end.y),
-        }
-        const paths: string[] = []
-        container.querySelectorAll<HTMLElement>('[data-item]').forEach((el) => {
-          const r = el.getBoundingClientRect()
-          const rel = {
-            left: r.left - rect.left,
-            top: r.top - rect.top,
-            right: r.right - rect.left,
-            bottom: r.bottom - rect.top,
-          }
-          if (intersects(box, rel)) {
-            const path = el.dataset.item
-            if (path) paths.push(path)
-          }
-        })
-        setSelection(new Set(paths))
-        if (paths.length > 0) setCursorPath(paths[paths.length - 1])
-      }
-      setDrag(null)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [drag])
+  /** 当前目录的一句话说明：来自父目录清单里的目录卡片。 */
+  const dirDescription = useMemo(() => {
+    if (selectedPath === '/') return null
+    void listingsVersion
+    const parent = readCapabilityListing(parentPathOf(selectedPath))
+    return (
+      parent?.directories.find((dir) => dir.path === selectedPath)
+        ?.description || null
+    )
+  }, [selectedPath, listingsVersion])
 
-  const onContentMouseDown = (event: ReactMouseEvent) => {
-    if (event.button !== 0) return
-    if (event.shiftKey || event.ctrlKey || event.metaKey) return
-    const target = event.target as HTMLElement
-    if (target.closest('[data-item]')) return
-    const container = contentRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    setDrag({ start, current: start })
-    setSelection(new Set())
-    setCursorPath(null)
+  /** 删除确认里的名称回退链：当前对象集 → 已缓存清单 → 路径末段。 */
+  const nameOf = (path: string): string => {
+    const inActive = activeItems.find((i) => i.path === path)
+    if (inActive) return inActive.name
+    const snap = readCapabilityCenterCache()
+    for (const entry of Object.values(snap.listings)) {
+      const found = entry.data.items.find((i) => i.path === path)
+      if (found) return found.name
+    }
+    return fileNameOf(path)
   }
 
-  const detailItem = useMemo(
-    () => filteredItems.find((item) => item.path === detailPath),
-    [filteredItems, detailPath],
+  const selectedNode = tree ? findNode(tree, selectedPath) : null
+  const detailItem = detail.detailItem
+  const moveTarget = fileOps.moveTarget
+  // 锚点坐标稳定化：内联对象会让浮层定位 effect 每次渲染都重跑。
+  const moveAnchor = useMemo(
+    () => (moveTarget ? { x: moveTarget.x, y: moveTarget.y } : null),
+    [moveTarget],
   )
 
   if (editingSkill !== null) {
@@ -1124,12 +466,12 @@ export function CapabilityExplorer({
             setEditingSkill(null)
             restoreFocus()
           }}
-          onSaved={(skill) => {
+          onSaved={() => {
             setEditingSkill(null)
             restoreFocus()
-            void reloadSkills()
-            void reloadTree()
-            void reloadListing(selectedPath, true)
+            void data.reloadSkills()
+            void data.reloadTree()
+            void data.reloadListing(selectedPath, true)
           }}
         />
       </div>
@@ -1138,78 +480,33 @@ export function CapabilityExplorer({
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b border-border/70 bg-surface-raised/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 px-3 rounded-md"
-            onClick={onClose}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            返回
-          </Button>
-          <h2 className="text-heading font-semibold text-ink">能力</h2>
-          <Input
-            ref={searchRef}
-            aria-label="搜索能力"
-            containerClassName="min-w-0 flex-1"
-            className="h-9"
-            leadingIcon={<Search className="h-3.5 w-3.5" />}
-            placeholder="搜索能力…"
-            title="按 / 或 Ctrl+F 聚焦搜索"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 rounded-md hover:bg-surface-muted"
-            aria-label="全量刷新能力数据"
-            disabled={refreshing}
-            onClick={refreshAll}
-          >
-            <RefreshCw
-              className="h-4 w-4 transition-transform duration-500 ease-flow motion-reduce:transition-none"
-              style={{ transform: `rotate(${rotation}deg)` }}
+      <RoomTopBar
+        title="能力"
+        onBack={onClose}
+        search={
+          <div className="relative">
+            <Input
+              ref={searchRef}
+              aria-label="搜索能力"
+              containerClassName="min-w-0"
+              className="h-9 pr-14"
+              leadingIcon={<Search className="h-3.5 w-3.5" />}
+              placeholder="找一个能力…"
+              title="按 / 或 Ctrl+K 聚焦搜索"
+              value={search.query}
+              onChange={(event) => search.setQuery(event.target.value)}
             />
-          </Button>
-        </div>
-      </header>
-
-      <div className="grid min-h-0 flex-1 grid-cols-[14rem_1fr] overflow-hidden">
-        <nav className="scrollbar-subtle flex min-h-0 flex-col border-r border-border/70 bg-surface px-2 py-3">
-          {tree ? (
-            <DirectoryTree
-              node={tree}
-              depth={0}
-              selectedPath={selectedPath}
-              expanded={expanded}
-              pins={pins}
-              onToggle={toggleExpanded}
-              onSelect={(path, alt) => selectPath(path, alt)}
-              onNodeContextMenu={openTreeContextMenu}
-              onPinClick={(path) => selectPath(parentPathOf(path))}
-              onPinContextMenu={openPinContextMenu}
-              onPinReorder={reorderPins}
-            />
-          ) : treeFailed ? (
-            <QuietState
-              icon={SearchX}
-              title="目录读取失败。"
-              hint="点右上角刷新按钮重试。"
-            />
-          ) : (
-            <TreeSkeleton />
-          )}
-        </nav>
-
-        <section className="flex min-h-0 flex-col bg-surface-raised">
-          <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-xs border border-border bg-surface-muted px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-muted">
+              Ctrl K
+            </kbd>
+          </div>
+        }
+        actions={
+          <>
             <Button
               variant="secondary"
               size="sm"
-              className="h-9 px-3 rounded-md"
+              className="press h-9 rounded-md"
               data-focus-key="entry-new-skill"
               onClick={() => {
                 captureFocusKey('entry-new-skill')
@@ -1222,7 +519,7 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 px-3 rounded-md"
+              className="press h-9 rounded-md"
               data-focus-key="entry-mcp"
               onClick={() => onOpenMcp()}
             >
@@ -1232,7 +529,7 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 px-3 rounded-md"
+              className="press h-9 rounded-md"
               data-focus-key="entry-schedule"
               onClick={onOpenSchedule}
             >
@@ -1242,492 +539,150 @@ export function CapabilityExplorer({
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 px-3 rounded-md"
+              className="press h-9 rounded-md"
               data-focus-key="entry-memory"
               onClick={onOpenMemory}
             >
               <Brain className="h-3.5 w-3.5" />
               记忆
             </Button>
-            <div className="ml-auto flex items-center rounded-md border border-border p-0.5">
-              <button
-                type="button"
-                aria-pressed={viewMode === 'grid'}
-                aria-label="图标砖视图"
-                className={cn(
-                  'grid h-9 w-9 place-items-center rounded-xs transition-colors',
-                  viewMode === 'grid'
-                    ? 'bg-surface-muted text-ink'
-                    : 'text-ink-muted hover:text-ink-subtle',
-                )}
-                onClick={() => setViewMode('grid')}
-              >
-                <Grid3X3 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-pressed={viewMode === 'list'}
-                aria-label="列表视图"
-                className={cn(
-                  'grid h-9 w-9 place-items-center rounded-xs transition-colors',
-                  viewMode === 'list'
-                    ? 'bg-surface-muted text-ink'
-                    : 'text-ink-muted hover:text-ink-subtle',
-                )}
-                onClick={() => setViewMode('list')}
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div
-            ref={contentRef}
-            className="scrollbar-subtle relative min-h-0 flex-1 overflow-y-auto p-4"
-            onMouseDown={onContentMouseDown}
-          >
-            {isSearching && (
-              <div className="mb-3 flex items-center gap-3 text-small text-ink-subtle">
-                <span>
-                  搜索结果：<span className="font-medium text-ink">{query}</span>
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-caption"
-                  onClick={() => setQuery('')}
-                >
-                  清空
-                </Button>
-              </div>
-            )}
-            {listingLoading ? (
-              viewMode === 'grid' ? (
-                <GridSkeleton />
-              ) : (
-                <ListSkeleton />
-              )
-            ) : filteredItems.length === 0 ? (
-              isSearching ? (
-                <QuietState
-                  icon={SearchX}
-                  title="没找到匹配的能力"
-                  hint="换个词试试，或按 Esc 回到当前目录。"
-                />
-              ) : (
-                <QuietState
-                  icon={FolderOpen}
-                  title="这个文件夹是空的"
-                  hint="在这里创建 skill，或切换到别的目录。"
-                />
-              )
-            ) : viewMode === 'grid' ? (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-4">
-                {filteredItems.map((item) => (
-                  <CapabilityTile
-                    key={item.path}
-                    item={item}
-                    selected={selection.has(item.path)}
-                    cut={
-                      clipboard?.mode === 'cut' &&
-                      clipboard.paths.includes(item.path)
-                    }
-                    renaming={renamingPath === item.path}
-                    renameDraft={renameDraft}
-                    onRenameDraftChange={setRenameDraft}
-                    onRenameCommit={commitRename}
-                    onRenameCancel={() => {
-                      setRenamingPath(null)
-                      setRenameDraft('')
-                    }}
-                    onClick={(event) => handleItemClick(item, event)}
-                    onContextMenu={(event) => openItemContextMenu(event, item)}
-                    showBreadcrumb={isSearching}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="grid gap-1">
-                {filteredItems.map((item) => (
-                  <CapabilityRow
-                    key={item.path}
-                    item={item}
-                    selected={selection.has(item.path)}
-                    cut={
-                      clipboard?.mode === 'cut' &&
-                      clipboard.paths.includes(item.path)
-                    }
-                    renaming={renamingPath === item.path}
-                    renameDraft={renameDraft}
-                    onRenameDraftChange={setRenameDraft}
-                    onRenameCommit={commitRename}
-                    onRenameCancel={() => {
-                      setRenamingPath(null)
-                      setRenameDraft('')
-                    }}
-                    onClick={(event) => handleItemClick(item, event)}
-                    onContextMenu={(event) => openItemContextMenu(event, item)}
-                    showBreadcrumb={isSearching}
-                  />
-                ))}
-              </div>
-            )}
-
-            {detailItem && (
-              <div className="mt-4 animate-node-enter border-t border-border/70 pt-4 motion-reduce:animate-none">
-                <CapabilityDetailPanel
-                  item={detailItem}
-                  state={detailStateOf(detailItem)}
-                  skill={skillOf(detailItem)}
-                  onEditSkill={(skill) => {
-                    captureFocusKey(`skill-edit-${detailItem.path}`)
-                    setEditingSkill(skill)
-                  }}
-                  onToggleSkill={(skill) => void toggleSkillEnabled(detailItem, skill)}
-                  onOpenMcp={onOpenMcp}
-                />
-              </div>
-            )}
-
-            {drag && (
-              <div
-                className="pointer-events-none absolute border border-primary bg-primary/10"
-                style={{
-                  left: Math.min(drag.start.x, drag.current.x),
-                  top: Math.min(drag.start.y, drag.current.y),
-                  width: Math.abs(drag.current.x - drag.start.x),
-                  height: Math.abs(drag.current.y - drag.start.y),
-                }}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="press h-9 w-9 rounded-md"
+              aria-label="全量刷新能力数据"
+              disabled={data.refreshing}
+              onClick={() => {
+                search.resetScope()
+                data.refreshAll()
+              }}
+            >
+              <RefreshCw
+                className="h-4 w-4 transition-transform duration-fold ease-flow motion-reduce:transition-none"
+                style={{ transform: `rotate(${data.rotation}deg)` }}
               />
-            )}
-          </div>
-
-          <footer className="flex shrink-0 items-center justify-between border-t border-border/60 bg-surface px-4 py-2 text-caption text-ink-muted">
-            <div className="flex items-center gap-4">
-              <span>共 {(listing?.items ?? []).length} 项</span>
-              <span>选中 {selection.size} 项</span>
-              {selectedNode && Object.keys(selectedNode.stats).length > 0 && (
-                <>
-                  {Object.entries(selectedNode.stats).map(([key, value]) => (
-                    <span key={key}>
-                      {STAT_LABELS[key] ?? key} {formatStat(key, value)}
-                    </span>
-                  ))}
-                </>
-              )}
-            </div>
-            {problems.length > 0 && (
-              <Badge tone="warning">{problems.length} 个问题</Badge>
-            )}
-          </footer>
-        </section>
-      </div>
-
-      <ContextMenu
-        open={contextMenu.open}
-        x={contextMenu.x}
-        y={contextMenu.y}
-        items={contextMenuItems}
-        onClose={() => setContextMenu((current) => ({ ...current, open: false }))}
-      />
-
-      <Modal
-        open={deleteCandidates != null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteCandidates(null)
-        }}
-        title="确认删除"
-        description="这些文件将从磁盘删除，但可通过 git 或文件系统恢复。"
-        size="sm"
-        footer={
-          <>
-            <ModalClose asChild>
-              <Button variant="ghost" size="sm">
-                取消
-              </Button>
-            </ModalClose>
-            <Button variant="danger" size="sm" onClick={() => void doDelete()}>
-              删除
             </Button>
           </>
         }
-      >
-        {deleteCandidates && (
-          <ul className="grid max-h-64 gap-2 overflow-auto">
-            {deleteCandidates.map((path) => {
-              const item = filteredItems.find((i) => i.path === path)
-              return (
-                <li
-                  key={path}
-                  className="rounded-sm border border-danger/20 bg-danger-soft px-3 py-2 text-small text-danger-foreground"
-                >
-                  <div className="font-medium">{item?.name ?? fileNameOf(path)}</div>
-                  <code className="text-caption text-ink-muted">{path}</code>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </Modal>
-    </div>
-  )
-}
+      />
 
-function CapabilityTile({
-  item,
-  selected,
-  cut,
-  renaming,
-  renameDraft,
-  onRenameDraftChange,
-  onRenameCommit,
-  onRenameCancel,
-  onClick,
-  onContextMenu,
-  showBreadcrumb,
-}: {
-  item: CapabilityAdminItem
-  selected: boolean
-  cut?: boolean
-  renaming?: boolean
-  renameDraft?: string
-  onRenameDraftChange?: (value: string) => void
-  onRenameCommit?: () => void
-  onRenameCancel?: () => void
-  onClick: (event: ReactMouseEvent) => void
-  onContextMenu: (event: ReactMouseEvent) => void
-  showBreadcrumb?: boolean
-}) {
-  const kind = kindMeta(item)
-  const risk = item.riskLevel ? riskMeta(item.riskLevel) : undefined
-  const riskEdge = risk ? RISK_EDGE[risk.tone] : ''
-  return (
-    <button
-      type="button"
-      data-item={item.path}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      className={cn(
-        'group flex flex-col gap-3 rounded-md border border-transparent p-4 text-left transition-colors duration-fast',
-        'focus-visible:outline-none focus-visible:shadow-focus',
-        'active:scale-[0.985] motion-reduce:transform-none',
-        selected
-          ? 'bg-surface-muted ring-1 ring-primary ring-offset-2 ring-offset-surface-raised'
-          : 'hover:bg-surface-muted hover:shadow-raised',
-      )}
-    >
-      <span
-        className={cn(
-          'grid h-14 w-14 place-items-center rounded-xl',
-          kind.tileClass,
-          riskEdge,
-          cut && 'opacity-60 outline outline-1 outline-dashed outline-border',
-        )}
-      >
-        <kind.Icon className="h-7 w-7" />
-      </span>
-      <div className="grid min-w-0 gap-0.5 text-left">
-        {renaming ? (
-          <RenameInput
-            value={renameDraft ?? item.name}
-            onChange={onRenameDraftChange ?? (() => {})}
-            onCommit={onRenameCommit ?? (() => {})}
-            onCancel={onRenameCancel ?? (() => {})}
-          />
-        ) : (
-          <span className="truncate text-[14px] font-medium text-ink">
-            {item.name}
-          </span>
-        )}
-        {item.description && (
-          <span className="line-clamp-1 text-[12.5px] leading-relaxed text-ink-subtle">
-            {item.description}
-          </span>
-        )}
-        <StatusLine item={item} />
-        {showBreadcrumb && (
-          <code className="truncate text-caption text-ink-muted">
-            {parentPathOf(item.path)}
-          </code>
-        )}
-      </div>
-    </button>
-  )
-}
-
-function CapabilityRow({
-  item,
-  selected,
-  cut,
-  renaming,
-  renameDraft,
-  onRenameDraftChange,
-  onRenameCommit,
-  onRenameCancel,
-  onClick,
-  onContextMenu,
-  showBreadcrumb,
-}: {
-  item: CapabilityAdminItem
-  selected: boolean
-  cut?: boolean
-  renaming?: boolean
-  renameDraft?: string
-  onRenameDraftChange?: (value: string) => void
-  onRenameCommit?: () => void
-  onRenameCancel?: () => void
-  onClick: (event: ReactMouseEvent) => void
-  onContextMenu: (event: ReactMouseEvent) => void
-  showBreadcrumb?: boolean
-}) {
-  const kind = kindMeta(item)
-  const risk = item.riskLevel ? riskMeta(item.riskLevel) : undefined
-  const riskEdge = risk ? RISK_EDGE[risk.tone] : ''
-  return (
-    <button
-      type="button"
-      data-item={item.path}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      className={cn(
-        'flex items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors duration-fast',
-        'focus-visible:outline-none focus-visible:shadow-focus',
-        'active:scale-[0.995] motion-reduce:transform-none',
-        selected ? 'bg-surface-muted' : 'hover:bg-surface-muted',
-      )}
-    >
-      <span
-        className={cn(
-          'grid h-9 w-9 shrink-0 place-items-center rounded-lg',
-          kind.tileClass,
-          riskEdge,
-          cut && 'opacity-60 outline outline-1 outline-dashed outline-border',
-        )}
-      >
-        <kind.Icon className="h-4 w-4" />
-      </span>
-      <div className="grid min-w-0 flex-1 gap-0.5">
-        <div className="flex items-center gap-2">
-          {renaming ? (
-            <RenameInput
-              value={renameDraft ?? item.name}
-              onChange={onRenameDraftChange ?? (() => {})}
-              onCommit={onRenameCommit ?? (() => {})}
-              onCancel={onRenameCancel ?? (() => {})}
+      <div className="flex min-h-0 flex-1">
+        <RoomSide>
+          {tree ? (
+            <DirectoryTree
+              node={tree}
+              depth={0}
+              selectedPath={selectedPath}
+              expanded={data.expanded}
+              pins={pins}
+              onToggle={toggleExpanded}
+              onSelect={(path, alt) => selectPath(path, alt)}
+              onNodeContextMenu={menus.openTreeContextMenu}
+              onPinClick={(path) => selectPath(parentPathOf(path))}
+              onPinContextMenu={menus.openPinContextMenu}
+              onPinReorder={(paths) => void data.reorderPins(paths)}
+            />
+          ) : treeFailed ? (
+            <QuietState
+              icon={SearchX}
+              title="目录读取失败。"
+              hint="点右上角刷新按钮重试。"
             />
           ) : (
-            <span className="truncate text-[14px] font-medium text-ink">
-              {item.name}
-            </span>
+            <TreeSkeleton />
           )}
-          <StatusLine item={item} />
-        </div>
-        {item.description && (
-          <span className="truncate text-[12.5px] leading-relaxed text-ink-subtle">
-            {item.description}
-          </span>
-        )}
-        {showBreadcrumb && (
-          <code className="truncate text-caption text-ink-muted">
-            {parentPathOf(item.path)}
-          </code>
-        )}
-      </div>
-    </button>
-  )
-}
+        </RoomSide>
 
-function RenameInput({
-  value,
-  onChange,
-  onCommit,
-  onCancel,
-}: {
-  value: string
-  onChange: (value: string) => void
-  onCommit: () => void
-  onCancel: () => void
-}) {
-  const valid = isValidMachineName(value.trim())
-  return (
-    <div className="grid gap-1">
-      <input
-        type="text"
-        value={value}
-        autoFocus
-        className={cn(
-          'w-full rounded-xs border bg-surface-raised px-2 py-1 text-[14px] font-medium text-ink',
-          'focus-visible:outline-none focus-visible:shadow-focus',
-          valid
-            ? 'border-border'
-            : 'border-danger focus-visible:border-danger',
-        )}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === 'Enter') {
-            if (valid) onCommit()
-          } else if (e.key === 'Escape') {
-            onCancel()
+        <RoomStage
+          contentRef={contentRef}
+          onContentMouseDown={onContentMouseDown}
+          overlay={
+            <DetailLayer
+              item={detailItem}
+              state={detailItem ? detail.detailStateOf(detailItem) : undefined}
+              skill={detailItem ? skillOf(detailItem) : undefined}
+              problems={problems}
+              titleOf={treeTitleOf}
+              onClose={detail.closeDetail}
+              onNavigate={selectPath}
+              onEditSkill={(skill) => {
+                if (detailItem) captureFocusKey(`skill-edit-${detailItem.path}`)
+                setEditingSkill(skill)
+              }}
+              onToggleSkill={(skill) => {
+                if (detailItem) void data.toggleSkillEnabled(detailItem, skill)
+              }}
+              onOpenMcp={onOpenMcp}
+              onMoveTo={(event) => {
+                if (!detailItem) return
+                const rect = event.currentTarget.getBoundingClientRect()
+                fileOps.requestMove(detailItem.path, rect.left, rect.bottom + 6)
+              }}
+              onDelete={() => {
+                if (detailItem) fileOps.confirmDelete([detailItem.path])
+              }}
+            />
           }
-        }}
-        onBlur={() => {
-          if (valid) onCommit()
-          else onCancel()
-        }}
-        onClick={(e) => e.stopPropagation()}
-      />
-      {!valid && value.trim().length > 0 && (
-        <span className="text-caption text-danger">
-          仅小写、数字、短横线、下划线
-        </span>
-      )}
-    </div>
-  )
-}
-
-function TreeSkeleton() {
-  return (
-    <div className="flex flex-col gap-2 px-2 py-1">
-      {Array.from({ length: 7 }).map((_, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <span className="w-5 shrink-0" aria-hidden="true" />
-          <span
-            className="h-5 rounded bg-surface-muted animate-pulse"
-            style={{ width: `${60 + ((index * 17) % 35)}%` }}
+        >
+          <StageView
+            selectedPath={selectedPath}
+            rootTree={tree}
+            node={selectedNode}
+            listing={listing}
+            listingLoading={data.listingLoading}
+            description={dirDescription}
+            problems={problems}
+            search={stageSearch}
+            selection={selection}
+            clipboard={clipboard}
+            renamingPath={fileOps.renamingPath}
+            renameDraft={fileOps.renameDraft}
+            onRenameDraftChange={fileOps.setRenameDraft}
+            onRenameCommit={() => void fileOps.commitRename()}
+            onRenameCancel={fileOps.cancelRename}
+            onItemClick={handleItemClick}
+            onItemContextMenu={menus.openItemContextMenu}
+            onSelectPath={selectPath}
+            onOpenDirMenu={(event) => menus.openDirMenu(event, selectedPath)}
           />
-        </div>
-      ))}
-    </div>
-  )
-}
+          {drag && (
+            <div
+              className="pointer-events-none absolute border border-primary bg-primary/10"
+              style={{
+                left: Math.min(drag.start.x, drag.current.x),
+                top: Math.min(drag.start.y, drag.current.y),
+                width: Math.abs(drag.current.x - drag.start.x),
+                height: Math.abs(drag.current.y - drag.start.y),
+              }}
+            />
+          )}
+        </RoomStage>
+      </div>
 
-function GridSkeleton() {
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-4">
-      {Array.from({ length: 8 }).map((_, index) => (
-        <div key={index} className="flex flex-col gap-3 rounded-md border border-transparent p-4">
-          <span className="h-14 w-14 rounded-xl bg-surface-muted animate-pulse" />
-          <span className="h-4 w-20 rounded bg-surface-muted animate-pulse" />
-          <span className="h-3.5 w-14 rounded bg-surface-muted animate-pulse" />
-        </div>
-      ))}
-    </div>
-  )
-}
+      {moveTarget && moveAnchor && tree && (
+        <MoveToPopover
+          anchor={moveAnchor}
+          tree={tree}
+          currentDir={parentPathOf(moveTarget.path)}
+          onSelect={(dir) => void fileOps.moveItemTo(moveTarget.path, dir)}
+          onClose={fileOps.closeMove}
+        />
+      )}
 
-function ListSkeleton() {
-  return (
-    <div className="grid gap-1">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <div key={index} className="flex items-center gap-3 rounded-md px-3 py-2.5">
-          <span className="h-9 w-9 shrink-0 rounded-lg bg-surface-muted animate-pulse" />
-          <div className="grid flex-1 gap-1">
-            <span className="h-4 w-32 rounded bg-surface-muted animate-pulse" />
-            <span className="h-3 w-24 rounded bg-surface-muted animate-pulse" />
-          </div>
-        </div>
-      ))}
+      <ContextMenu
+        open={menus.contextMenu.open}
+        x={menus.contextMenu.x}
+        y={menus.contextMenu.y}
+        items={menus.menuItemsFor(activeItems)}
+        onClose={menus.closeMenu}
+      />
+
+      <DeleteConfirmModal
+        candidates={fileOps.deleteCandidates}
+        nameOf={nameOf}
+        onDismiss={fileOps.dismissDelete}
+        onConfirm={() => void fileOps.doDelete()}
+      />
     </div>
   )
 }

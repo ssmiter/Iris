@@ -68,8 +68,10 @@ export default {
         },
       },
       fontFamily: {
-        // 与 styles/base.css body 栈保持一致（macOS 系统字体打头）
+        // 与 styles/base.css body 栈保持一致（docs/39 §8：Manrope + Noto Sans SC 打头）
         sans: [
+          'Manrope Variable',
+          'Noto Sans SC Variable',
           '-apple-system',
           'BlinkMacSystemFont',
           'Segoe UI Variable',

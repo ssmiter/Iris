@@ -20,8 +20,11 @@
     margin: 0;
     background: rgb(var(--color-canvas));
     color: rgb(var(--color-text));
-    /* macOS 优先使用系统字体与 PingFang SC；Hiragino Sans GB 作为旧版 macOS / 日中文字形的回退。 */
+    /* docs/39 §8：Manrope（西文/数字）+ Noto Sans SC（中文）统一视觉，
+       系统栈兜底（字体未加载完/极端环境）。与 tailwind fontFamily.sans 保持一致。 */
     font-family:
+      'Manrope Variable',
+      'Noto Sans SC Variable',
       -apple-system,
       BlinkMacSystemFont,
       'Segoe UI Variable',

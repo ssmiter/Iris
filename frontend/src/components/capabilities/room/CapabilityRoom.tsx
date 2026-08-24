@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useViewStateStore } from '@/stores/viewStateStore'
 import { pushEscLayer } from '@/lib/escLayerStack'
-import { cn } from '@/lib/cn'
+import { RoomShell } from '@/components/room'
 import { CapabilityExplorer } from './CapabilityExplorer'
 import { McpConsole } from '../McpConsole'
 import { MemoryConsole } from '../MemoryConsole'
@@ -9,7 +9,11 @@ import { ScheduleConsole } from '../ScheduleConsole'
 
 type RoomView = 'tree' | 'mcp' | 'memory' | 'schedule'
 
-/** 覆盖式能力房（docs/37 §1）：居中收敛大窗 + 下层对话压暗遮罩。 */
+/**
+ * 全屏覆盖式能力房（docs/39 §1 全屏裁决，取代 docs/37 的居中大窗）：
+ * fixed inset-0、bg-canvas 不透明、无圆角无遮罩，房间即应用；
+ * 下层对话只遮不卸（SSE/滚动/流式状态原位保留），Esc / ← 返回等价回家。
+ */
 export function CapabilityRoom() {
   const open = useViewStateStore((state) => state.capabilityRoomOpen)
   const setOpen = useViewStateStore((state) => state.setCapabilityRoomOpen)
@@ -18,9 +22,12 @@ export function CapabilityRoom() {
   const [focusServerId, setFocusServerId] = useState<string | null>(null)
   const consumeEscRef = useRef<() => boolean>(() => false)
 
-  // 开房时淡入；关房时立即卸载由 open 控制。
+  // 开房时淡入；关房复位 visible（二次开房才能再次淡入）；关房卸载由 open 控制。
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setVisible(false)
+      return
+    }
     const tick = requestAnimationFrame(() => setVisible(true))
     return () => cancelAnimationFrame(tick)
   }, [open])
@@ -34,7 +41,7 @@ export function CapabilityRoom() {
     }
   }
 
-  // Esc 逐层退出：先问 Explorer 是否消费（详情/选择），不消费再回树/关房。
+  // Esc 逐层退出：先问 Explorer 是否消费（浮层/详情/搜索/选择），不消费再回树/关房。
   useEffect(() => {
     if (!open) return
     return pushEscLayer({
@@ -55,55 +62,28 @@ export function CapabilityRoom() {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-label="能力"
-    >
-      <div
-        className={cn(
-          'absolute inset-0 bg-canvas/50 transition-opacity duration-fast ease-standard motion-reduce:transition-none',
-          visible ? 'opacity-100' : 'opacity-0',
-        )}
-        onMouseDown={closeOrBack}
-      />
-      <div
-        className="relative flex w-full items-center justify-center p-4"
-        onMouseDown={closeOrBack}
-      >
-        <div
-          className={cn(
-            'pointer-events-auto flex w-[min(1120px,92vw)] flex-col overflow-hidden rounded-2xl border border-border bg-surface-raised shadow-floating',
-            'h-[min(760px,82vh)]',
-            'transition-opacity duration-fast ease-standard motion-reduce:transition-none',
-            visible ? 'opacity-100' : 'opacity-0',
-          )}
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          {view === 'mcp' ? (
-            <McpConsole
-              focusServerId={focusServerId}
-              onBack={() => {
-                setView('tree')
-                setFocusServerId(null)
-              }}
-            />
-          ) : view === 'memory' ? (
-            <MemoryConsole onBack={() => setView('tree')} />
-          ) : view === 'schedule' ? (
-            <ScheduleConsole onBack={() => setView('tree')} />
-          ) : (
-            <CapabilityExplorer
-              consumeEscRef={consumeEscRef}
-              onOpenMcp={openMcp}
-              onOpenMemory={() => setView('memory')}
-              onOpenSchedule={() => setView('schedule')}
-              onClose={closeOrBack}
-            />
-          )}
-        </div>
-      </div>
-    </div>
+    <RoomShell label="能力" visible={visible}>
+      {view === 'mcp' ? (
+        <McpConsole
+          focusServerId={focusServerId}
+          onBack={() => {
+            setView('tree')
+            setFocusServerId(null)
+          }}
+        />
+      ) : view === 'memory' ? (
+        <MemoryConsole onBack={() => setView('tree')} />
+      ) : view === 'schedule' ? (
+        <ScheduleConsole onBack={() => setView('tree')} />
+      ) : (
+        <CapabilityExplorer
+          consumeEscRef={consumeEscRef}
+          onOpenMcp={openMcp}
+          onOpenMemory={() => setView('memory')}
+          onOpenSchedule={() => setView('schedule')}
+          onClose={closeOrBack}
+        />
+      )}
+    </RoomShell>
   )
 }

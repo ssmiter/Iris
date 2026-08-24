@@ -7,6 +7,7 @@ import {
 import { ChevronRight, GripVertical } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { CapabilityPin, CapabilityTreeNode } from '@/api/irisApi'
+import { findNode } from '@/domain/capability/treeUtils'
 
 export function DirectoryTree({
   node,
@@ -134,14 +135,14 @@ function PinSection({
                   'active:cursor-grabbing',
                   isSelected
                     ? 'bg-primary-soft font-medium text-ink'
-                    : 'text-ink-subtle hover:bg-surface-muted',
+                    : 'text-ink-subtle hover:bg-surface-raised',
                   isDropTarget && 'bg-primary/10',
                 )}
               >
                 <button
                   type="button"
                   aria-current={isSelected ? 'true' : undefined}
-                  className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs px-3 py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
+                  className="press flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs px-3 py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
                   onClick={() => onPinClick?.(pin.path)}
                   onContextMenu={(event) => {
                     event.preventDefault()
@@ -192,12 +193,19 @@ function TreeNode({
           'relative flex items-center gap-0.5 rounded-md py-1.5 text-small transition-colors duration-fast',
           isSelected
             ? 'bg-primary-soft font-medium text-ink'
-            : 'text-ink-subtle hover:bg-surface-muted',
+            : 'text-ink-subtle hover:bg-surface-raised',
           depth > 0 &&
             "before:absolute before:left-[calc(var(--indent)_-_0.5rem)] before:top-1.5 before:bottom-1.5 before:w-px before:bg-border/40 before:content-['']",
         )}
         style={{ '--indent': `${indent}rem`, paddingLeft: `${indent}rem` } as CSSProperties}
       >
+        {/* 当前目录：左侧 3px primary 圆角条（docs/39 §9，蓝图 tnode.on::before 手法） */}
+        {isSelected && (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-primary"
+          />
+        )}
         {hasChildren ? (
           <button
             type="button"
@@ -218,7 +226,7 @@ function TreeNode({
         <button
           type="button"
           aria-current={isSelected ? 'true' : undefined}
-          className="flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
+          className="press flex min-w-0 flex-1 items-baseline gap-1.5 rounded-xs py-1 pr-1.5 text-left focus-visible:outline-none focus-visible:shadow-focus"
           onClick={(event) => onSelect(node.path, event.altKey)}
           onContextMenu={(event) => {
             event.preventDefault()
@@ -256,14 +264,19 @@ function nodeTitle(root: CapabilityTreeNode, path: string): string {
   return found ? found.title || found.name : path
 }
 
-function findNode(
-  node: CapabilityTreeNode,
-  path: string,
-): CapabilityTreeNode | null {
-  if (node.path === path) return node
-  for (const child of node.children) {
-    const found = findNode(child, path)
-    if (found) return found
-  }
-  return null
+/** 树加载骨架（docs/39 §6：从壳挪到树文件，与树同处）。 */
+export function TreeSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 px-2 py-1">
+      {Array.from({ length: 7 }).map((_, index) => (
+        <div key={index} className="flex items-center gap-2">
+          <span className="w-5 shrink-0" aria-hidden="true" />
+          <span
+            className="h-5 rounded bg-surface-raised animate-pulse"
+            style={{ width: `${60 + ((index * 17) % 35)}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  )
 }

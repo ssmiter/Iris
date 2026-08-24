@@ -32,7 +32,7 @@ export function EnableSwitch({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'relative mt-0.5 h-5 w-9 rounded-full transition-colors duration-fast',
+        'press-tight relative mt-0.5 h-5 w-9 rounded-full transition-colors duration-fast',
         'focus-visible:outline-none focus-visible:shadow-focus',
         'disabled:opacity-50',
         checked ? 'bg-primary' : 'bg-border-strong',

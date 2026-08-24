@@ -1,4 +1,61 @@
 @layer utilities {
+  /* ── 按压反馈（docs/39 §7，对齐 WonWork wf-press）────────────
+     .press       按钮/chip/砖/树节点/菜单项：按压 scale(.98)
+     .press-row   卡片/行级大面积元素：不缩放（圆角边缘露底色），改亮度
+     .press-tight 开关等小控件：更小幅 scale(.92)
+     时长锁死 .12s——不是转场是生理反馈；motion-reduce 全关。 */
+  .press {
+    transition: transform 0.12s;
+  }
+
+  .press:active {
+    transform: scale(0.98);
+  }
+
+  .press-row {
+    transition: filter 0.12s;
+  }
+
+  .press-row:active {
+    filter: brightness(0.965);
+  }
+
+  .press-tight {
+    transition: transform 0.12s;
+  }
+
+  .press-tight:active {
+    transform: scale(0.92);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .press,
+    .press-row,
+    .press-tight {
+      transition: none;
+    }
+
+    .press:active,
+    .press-row:active,
+    .press-tight:active {
+      transform: none;
+      filter: none;
+    }
+  }
+
+  [data-motion='reduce'] .press,
+  [data-motion='reduce'] .press-row,
+  [data-motion='reduce'] .press-tight {
+    transition: none !important;
+  }
+
+  [data-motion='reduce'] .press:active,
+  [data-motion='reduce'] .press-row:active,
+  [data-motion='reduce'] .press-tight:active {
+    transform: none !important;
+    filter: none !important;
+  }
+
   .brand-spectrum {
     background-image: linear-gradient(
       115deg,

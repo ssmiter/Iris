@@ -167,7 +167,7 @@ export function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
               onClose()
             }}
             className={cn(
-              'flex min-h-[2rem] w-full items-center rounded-sm px-3 py-2 text-left',
+              'press flex min-h-[2rem] w-full items-center rounded-sm px-3 py-2 text-left',
               'transition-colors duration-fast motion-reduce:transition-none',
               'focus-visible:outline-none',
               item.disabled && 'pointer-events-none opacity-45',
