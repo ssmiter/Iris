@@ -11,7 +11,11 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolManifest.ConcurrencySemantics;
+import com.iris.tools.core.ToolManifest.ContextRetention;
+import com.iris.tools.core.ToolRegistry;
+import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.ToolRuntime;
+import com.iris.tools.core.ToolRuntimeException;
 import com.iris.conversation.application.RunEventEmitter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -34,6 +38,7 @@ import java.util.function.BooleanSupplier;
 public class RoundToolCoordinator {
     private final ModelAttemptRepository modelFacts;
     private final ToolRuntime toolRuntime;
+    private final ToolRegistry toolRegistry;
     private final ToolObservationService observations;
     private final RunRoundRepository runFacts;
     private final RunRoundService runRounds;
@@ -48,6 +53,7 @@ public class RoundToolCoordinator {
     public RoundToolCoordinator(
             ModelAttemptRepository modelFacts,
             ToolRuntime toolRuntime,
+            ToolRegistry toolRegistry,
             ToolObservationService observations,
             RunRoundRepository runFacts,
             RunRoundService runRounds,
@@ -63,6 +69,7 @@ public class RoundToolCoordinator {
     ) {
         this.modelFacts = modelFacts;
         this.toolRuntime = toolRuntime;
+        this.toolRegistry = toolRegistry;
         this.observations = observations;
         this.runFacts = runFacts;
         this.runRounds = runRounds;
@@ -269,12 +276,21 @@ public class RoundToolCoordinator {
                 workspaceRoot,
                 initiallyCancelled
         );
-        RuntimeResult execution = toolRuntime.invoke(
-                new Invocation(call.toolCallId(), call.toolName()),
-                call.arguments(),
-                context
-        );
-        return new CallExecution(call, execution);
+        try {
+            RuntimeResult execution = toolRuntime.invoke(
+                    new Invocation(call.toolCallId(), call.toolName()),
+                    call.arguments(),
+                    context
+            );
+            return new CallExecution(call, execution);
+        } catch (ToolRuntimeException exception) {
+            RuntimeResult synthetic = observations.recordSyntheticToolFailure(
+                    call,
+                    context,
+                    exception
+            );
+            return new CallExecution(call, synthetic);
+        }
     }
 
     private boolean parallelSafe(
@@ -306,6 +322,11 @@ public class RoundToolCoordinator {
         for (CallExecution item : executions) {
             RuntimeResult execution = item.execution();
             if (!execution.terminal()) {
+                continue;
+            }
+            // 与 ToolObservationMicroCompactor 对齐：PINNED 结果
+            // 以及无法按稳定 executionId 读回的结果不能被引用替换。
+            if (!canReplaceWithReference(execution)) {
                 continue;
             }
             ObservationSource source = observations.observationSource(
@@ -343,6 +364,22 @@ public class RoundToolCoordinator {
             referenceOnly.add(candidate.executionId());
         }
         return referenceOnly;
+    }
+
+    private boolean canReplaceWithReference(RuntimeResult execution) {
+        if (!"succeeded".equals(execution.outcomeKind())
+                || execution.executionId() == null
+                || execution.toolName() == null) {
+            return false;
+        }
+        ToolBinding binding = toolRegistry.find(execution.toolName())
+                .orElse(null);
+        if (binding == null
+                || binding.manifest().contextRetention()
+                != ContextRetention.REFETCHABLE) {
+            return false;
+        }
+        return modelFacts.payloadHash(execution.executionId()).isPresent();
     }
 
     private ToolContext context(

@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.iris.agent.model.ModelAttemptRepository.ObservationSource;
 import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
+import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
 import com.iris.tools.core.ToolRegistry;
+import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.ToolRuntimeRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -240,16 +242,14 @@ public class ToolObservationService {
             String executionId = call.executionId();
             if (executionId == null) {
                 ToolRegistry.ToolBinding binding = toolRegistry.find(call.toolName())
-                        .orElseThrow(() -> new IllegalStateException(
-                                "找不到工具绑定：" + call.toolName()
-                        ));
+                        .orElse(null);
                 String syntheticId = "execution_" + UUID.randomUUID()
                         .toString()
                         .replace("-", "");
                 String inputHash = hash(write(call.arguments()));
-                toolExecutions.insertSyntheticTerminalExecution(
+                insertSyntheticTerminalExecution(
                         syntheticId,
-                        call.toolCallId(),
+                        call,
                         conversationId,
                         turnId,
                         runId,
@@ -275,6 +275,97 @@ public class ToolObservationService {
             }
         }
         return recorded;
+    }
+
+    /**
+     * 为注册类错误（tool_not_found、tool_binding_changed 等）合成 failed 终态
+     * execution 与 observation。当前调用失败不应阻止同轮其余 ToolCall 继续处理。
+     */
+    public RuntimeResult recordSyntheticToolFailure(
+            RoundToolCall call,
+            ToolContext context,
+            ToolRuntimeException exception
+    ) {
+        String syntheticId = "execution_" + UUID.randomUUID()
+                .toString()
+                .replace("-", "");
+        String inputHash = hash(write(call.arguments()));
+        ToolRegistry.ToolBinding binding = toolRegistry.find(call.toolName())
+                .orElse(null);
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            message = exception.code();
+        }
+        insertSyntheticTerminalExecution(
+                syntheticId,
+                call,
+                context.conversationId(),
+                context.turnId(),
+                context.runId(),
+                context.roundId(),
+                binding,
+                inputHash,
+                "failed",
+                "failed",
+                exception.code(),
+                message,
+                clock.instant()
+        );
+        capture(call.toolCallId(), syntheticId);
+        return toolExecutions.findByExecutionId(syntheticId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Synthetic execution disappeared after insert: " + syntheticId
+                ));
+    }
+
+    private void insertSyntheticTerminalExecution(
+            String executionId,
+            RoundToolCall call,
+            String conversationId,
+            String turnId,
+            String runId,
+            String roundId,
+            ToolRegistry.ToolBinding binding,
+            String inputHash,
+            String phase,
+            String outcomeKind,
+            String errorCode,
+            String errorMessage,
+            Instant now
+    ) {
+        if (binding != null) {
+            toolExecutions.insertSyntheticTerminalExecution(
+                    executionId,
+                    call.toolCallId(),
+                    conversationId,
+                    turnId,
+                    runId,
+                    roundId,
+                    binding,
+                    inputHash,
+                    phase,
+                    outcomeKind,
+                    errorCode,
+                    errorMessage,
+                    now
+            );
+        } else {
+            toolExecutions.insertSyntheticTerminalExecution(
+                    executionId,
+                    call.toolCallId(),
+                    conversationId,
+                    turnId,
+                    runId,
+                    roundId,
+                    call.toolName(),
+                    inputHash,
+                    phase,
+                    outcomeKind,
+                    errorCode,
+                    errorMessage,
+                    now
+            );
+        }
     }
 
     private String defaultMessage(String phase) {
@@ -324,12 +415,11 @@ public class ToolObservationService {
                     "先读取目标的当前状态或调用 inspect_workspace_change；确认没有生效后，才能用新的工具调用重试"
             );
         }
-        if (errorCode.startsWith("browser_")
-                && errorCode.endsWith("not_applied")) {
+        if (errorCode.endsWith("_not_applied")) {
             return new Recovery(
                     "observe_then_retry",
                     true,
-                    "动作已确认没有生效；重新观察当前页面，根据新 ref 调整动作，不要原样复用旧页面引用"
+                    "动作已确认没有生效；重新读取目标当前状态，根据最新事实调整参数，不要原样复用旧引用"
             );
         }
         if ("rejected".equals(phase)) {
@@ -348,7 +438,8 @@ public class ToolObservationService {
             );
         }
         if ("capability_not_inspected".equals(errorCode)
-                || "capability_definition_changed".equals(errorCode)) {
+                || "capability_definition_changed".equals(errorCode)
+                || "pipeline_not_inspected".equals(errorCode)) {
             return new Recovery(
                     "read_definition_then_retry",
                     true,
@@ -383,7 +474,8 @@ public class ToolObservationService {
                     "目标状态已经变化；先重新读取相关资源，再基于新状态发起工具调用"
             );
         }
-        if (errorCode.startsWith("tool_timeout")) {
+        if (errorCode.startsWith("tool_timeout")
+                || errorCode.startsWith("process_timeout")) {
             return new Recovery(
                     "retry_if_still_needed",
                     true,
@@ -400,7 +492,9 @@ public class ToolObservationService {
     private boolean isCancellation(String errorCode) {
         return "tool_cancelled".equals(errorCode)
                 || "cancelled_before_commit".equals(errorCode)
-                || "run_stopped".equals(errorCode);
+                || "run_stopped".equals(errorCode)
+                || "cancelled".equals(errorCode)
+                || "process_cancelled".equals(errorCode);
     }
 
     private boolean isInvalidInput(String errorCode) {

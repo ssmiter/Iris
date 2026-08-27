@@ -28,6 +28,7 @@ class ExtensionScannerTest {
                   type: object
                   properties:
                     material: { type: string }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, "{pluginDir}/material.py", "--material", "{material}"]
                 """);
@@ -51,6 +52,7 @@ class ExtensionScannerTest {
                 kind: template
                 description: 合法工具
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, ok.py]
                 """);
@@ -59,6 +61,7 @@ class ExtensionScannerTest {
                 kind: template
                 description: 名字非法
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, bad.py]
                 """);
@@ -77,15 +80,64 @@ class ExtensionScannerTest {
                 kind: process
                 description: 常驻形态参数只能走 invoke 帧
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/resident.py", "{input}"]
+                """);
+        writeTool("code/python/missing-risk.tool.yml", """
+                name: missing_risk
+                kind: template
+                description: 缺 risk 块
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, risky.py]
                 """);
 
         ExtensionScanner.ScanResult result = scanner.scan(root);
 
         assertEquals(1, result.tools().size());
         assertEquals("ok_tool", result.tools().getFirst().definition().name());
+        assertEquals(4, result.problems().size(),
+                () -> result.problems().toString());
+    }
+
+    @Test
+    void rejectsMissingRiskBlockAndMissingFields() throws IOException {
+        writeTool("code/python/missing-risk-block.tool.yml", """
+                name: missing_risk_block
+                kind: template
+                description: 缺整个 risk 块
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, risky.py]
+                """);
+        writeTool("code/python/missing-risk-level.tool.yml", """
+                name: missing_risk_level
+                kind: template
+                description: 缺 risk.level
+                input_schema: { type: object, properties: {} }
+                risk: { side_effect: none }
+                runtime:
+                  entry: [python, risky.py]
+                """);
+        writeTool("code/python/missing-risk-side-effect.tool.yml", """
+                name: missing_risk_side_effect
+                kind: template
+                description: 缺 risk.side_effect
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only }
+                runtime:
+                  entry: [python, risky.py]
+                """);
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertTrue(result.tools().isEmpty());
         assertEquals(3, result.problems().size(),
+                () -> result.problems().toString());
+        assertTrue(result.problems().stream()
+                        .map(ExtensionScanner.ScanProblem::description)
+                        .allMatch(description -> description.contains("risk")),
                 () -> result.problems().toString());
     }
 
@@ -96,6 +148,7 @@ class ExtensionScannerTest {
                 kind: process
                 description: 读取当前时间
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/CurrentTime.java"]
                 """);

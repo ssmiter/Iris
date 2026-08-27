@@ -40,6 +40,11 @@ iris:
     compaction:
       warning-ratio: ${IRIS_COMPACTION_WARNING_RATIO:0.85}
       blocking-ratio: ${IRIS_COMPACTION_BLOCKING_RATIO:0.95}
+    # micro-compact：最近可重取Observation保留数、触发/目标水位；默认值为待标定初值。
+    micro-compact:
+      keep-recent: ${IRIS_MICRO_COMPACT_KEEP_RECENT:6}
+      trigger-ratio: ${IRIS_MICRO_COMPACT_TRIGGER_RATIO:0.70}
+      target-ratio: ${IRIS_MICRO_COMPACT_TARGET_RATIO:0.60}
     speculation:
       enabled: ${IRIS_AGENT_SPECULATION_ENABLED:true}
       max-parallel: ${IRIS_AGENT_SPECULATION_MAX_PARALLEL:2}

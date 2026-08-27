@@ -155,7 +155,12 @@ class ToolObservationServiceTest {
         assertThat(recorded).isEqualTo(0);
         verify(toolExecutions, never())
                 .insertSyntheticTerminalExecution(any(), any(), any(), any(),
-                        any(), any(), any(), any(), any(), any(), any(), any(), any());
+                        any(), any(), any(ToolRegistry.ToolBinding.class),
+                        any(), any(), any(), any(), any(), any());
+        verify(toolExecutions, never())
+                .insertSyntheticTerminalExecution(any(), any(), any(), any(),
+                        any(), any(), any(String.class),
+                        any(), any(), any(), any(), any(), any());
     }
 
     private ToolRegistry.ToolBinding binding(String name) {

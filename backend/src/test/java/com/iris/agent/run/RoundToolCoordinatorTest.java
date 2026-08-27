@@ -13,7 +13,11 @@ import com.iris.conversation.application.RunEventEmitter;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolExecutionViews.Invocation;
 import com.iris.tools.core.ToolExecutionViews.RuntimeResult;
+import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolManifest.ConcurrencySemantics;
+import com.iris.tools.core.ToolManifest.ContextRetention;
+import com.iris.tools.core.ToolRegistry;
+import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.ToolRuntime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,6 +55,8 @@ class RoundToolCoordinatorTest {
     @Mock
     private ToolRuntime toolRuntime;
     @Mock
+    private ToolRegistry toolRegistry;
+    @Mock
     private ToolObservationService observations;
     @Mock
     private RunRoundRepository runFacts;
@@ -70,6 +77,7 @@ class RoundToolCoordinatorTest {
         return new RoundToolCoordinator(
                 modelFacts,
                 toolRuntime,
+                toolRegistry,
                 observations,
                 runFacts,
                 runRounds,
@@ -168,6 +176,27 @@ class RoundToolCoordinatorTest {
         );
     }
 
+    private ToolBinding refetchableBinding(String toolName) {
+        ToolBinding binding = mock(ToolBinding.class);
+        ToolManifest manifest = mock(ToolManifest.class);
+        when(binding.manifest()).thenReturn(manifest);
+        when(manifest.contextRetention())
+                .thenReturn(ContextRetention.REFETCHABLE);
+        return binding;
+    }
+
+    private void stubReferenceEligibility(int... ordinals) {
+        for (int ordinal : ordinals) {
+            String toolName = "tool-" + ordinal;
+            String executionId = "execution-" + ordinal;
+            ToolBinding binding = refetchableBinding(toolName);
+            when(toolRegistry.find(toolName))
+                    .thenReturn(Optional.of(binding));
+            when(modelFacts.payloadHash(executionId))
+                    .thenReturn(Optional.of("payload-hash-" + ordinal));
+        }
+    }
+
     @Test
     void projectsOldestLargestResultsWhenAggregateBudgetExceeded() {
         RoundToolCoordinator coordinator = coordinator(1_500);
@@ -195,6 +224,7 @@ class RoundToolCoordinatorTest {
                 .thenReturn(execution(0, largeOutput))
                 .thenReturn(execution(1, mediumOutput))
                 .thenReturn(execution(2, smallOutput));
+        stubReferenceEligibility(0, 1, 2);
         when(observations.observationSource("tool-call-0", "execution-0"))
                 .thenReturn(source(0, largeOutput));
         when(observations.observationSource("tool-call-1", "execution-1"))
@@ -246,6 +276,7 @@ class RoundToolCoordinatorTest {
                 .thenReturn(ConcurrencySemantics.SERIAL);
         when(toolRuntime.invoke(any(Invocation.class), any(), any(ToolContext.class)))
                 .thenReturn(execution(0, "small output"));
+        stubReferenceEligibility(0);
         when(observations.observationSource("tool-call-0", "execution-0"))
                 .thenReturn(source(0, "small output"));
         when(tokenEstimator.estimateText("small output")).thenReturn(2);
@@ -260,6 +291,50 @@ class RoundToolCoordinatorTest {
                 false
         );
 
+        assertThat(progress.observationCount()).isEqualTo(1);
+        verify(observations).capture("tool-call-0", "execution-0", false);
+    }
+
+    private ToolBinding pinnedBinding(String toolName) {
+        ToolBinding binding = mock(ToolBinding.class);
+        ToolManifest manifest = mock(ToolManifest.class);
+        when(binding.manifest()).thenReturn(manifest);
+        when(manifest.contextRetention())
+                .thenReturn(ContextRetention.PINNED);
+        return binding;
+    }
+
+    @Test
+    void keepsPinnedResultsInlineEvenWhenBudgetExceeded() {
+        RoundToolCoordinator coordinator = coordinator(500);
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(awaitingToolsRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(run()));
+        List<RoundToolCall> calls = List.of(call(0, "ask_user"));
+        when(modelFacts.roundToolCalls(ROUND_ID)).thenReturn(calls);
+        when(toolRuntime.schedulingConcurrency(any(), any(), any(ToolContext.class)))
+                .thenReturn(ConcurrencySemantics.SERIAL);
+        String pinnedOutput = "x".repeat(1_000);
+        when(toolRuntime.invoke(any(Invocation.class), any(), any(ToolContext.class)))
+                .thenReturn(execution(0, pinnedOutput));
+        ToolBinding pinnedBinding = pinnedBinding("tool-0");
+        when(toolRegistry.find("tool-0"))
+                .thenReturn(Optional.of(pinnedBinding));
+        // PINNED 守卫短路后不再访问 payloadHash/observationSource/tokenEstimator，
+        // 故意不 stub：守卫失效时这些调用拿到 null 会让测试立刻失败。
+        when(runRounds.transitionRound(ROUND_ID, 1, RoundPhase.OBSERVATIONS_READY))
+                .thenReturn(completedRound());
+        when(runRounds.transitionRound(ROUND_ID, 2, RoundPhase.COMPLETED))
+                .thenReturn(completedRound());
+
+        RoundToolCoordinator.RoundToolProgress progress = coordinator.advance(
+                ROUND_ID,
+                WORKSPACE,
+                false
+        );
+
+        assertThat(progress.phase()).isEqualTo(RoundPhase.COMPLETED);
         assertThat(progress.observationCount()).isEqualTo(1);
         verify(observations).capture("tool-call-0", "execution-0", false);
     }

@@ -137,7 +137,7 @@ input_schema:                    # JSON Schema 受控子集
   type: object
   properties: { date: { type: string } }
   required: [date]
-risk: { level: read_only, side_effect: none }   # 四级风险 + 副作用，同 docs/03
+risk: { level: read_only, side_effect: none }   # 必填；四级风险 + 副作用，同 docs/03
 approval:
   mode: auto                     # auto | explicit；写操作必须 explicit
   impact_statement: null         # explicit 必填，支持 {date} 参数占位，运行时填充
@@ -147,6 +147,8 @@ runtime:
 limits: { timeout_ms: 30000, max_result_chars: 100000 }
 search_hint: 产量 日报 汇总       # 发现打分语料
 ```
+
+`risk.level` 与 `risk.side_effect` 必填，缺失时扫描器按 fail-closed 整件拒绝注册。
 
 `runtime.entry` 是 argv 数组。内核供给占位符：`{pluginDir}`（插件目录绝对路径，
 两种形态可用）、`{javaBin}`（当前 JVM 的 java 可执行文件，仅 process 形态的

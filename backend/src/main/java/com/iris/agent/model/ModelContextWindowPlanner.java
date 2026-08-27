@@ -16,9 +16,10 @@ public class ModelContextWindowPlanner {
     /**
      * Explicit drop-priority table for dynamic, non-required context sections.
      *
-     * <p>Lower ordinal = dropped first. The ordering is chosen so that the
-     * easiest-to-rediscover and oldest evidence is discarded before state that
-     * is harder to regenerate or more central to the current conversation.</p>
+     * <p>Lower ordinal = dropped first. When packing the window, candidates are
+     * considered in reverse priority order so that the easiest-to-rediscover
+     * and oldest evidence is discarded before state that is harder to
+     * regenerate or more central to the current conversation.</p>
      */
     private enum DropPriority {
         /**
@@ -161,13 +162,15 @@ public class ModelContextWindowPlanner {
                 candidateIndices.add(index);
             }
         }
+        // 高保留优先级先装入；同优先级内新组优先（从最新事实向前选择）。
         candidateIndices.sort(java.util.Comparator
                 .comparingInt(
                         (Integer index) -> dropPriority(
                                 groups.get(index)
                         ).ordinal()
                 )
-                .thenComparingInt(index -> index));
+                .reversed()
+                .thenComparing(java.util.Comparator.reverseOrder()));
         for (int index : candidateIndices) {
             AtomicGroup group = groups.get(index);
             int cost = tokens.estimate(group.items());

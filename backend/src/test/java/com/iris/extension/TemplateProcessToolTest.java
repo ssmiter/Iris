@@ -6,7 +6,9 @@ import com.iris.execution.WorkspaceProcessRunner;
 import com.iris.tools.catalog.CatalogGenerationService;
 import com.iris.tools.core.CommittedOperation;
 import com.iris.tools.core.PreparedOperation;
+import com.iris.tools.core.RiskLevel;
 import com.iris.tools.core.ToolContext;
+import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.ToolRegistry;
 import com.iris.tools.core.ToolRuntimeException;
@@ -115,6 +117,23 @@ class TemplateProcessToolTest {
                 objectMapper.createObjectNode(), context());
 
         assertTrue(prepared.resources().isEmpty());
+    }
+
+    @Test
+    void nullRiskDefaultsToFailClosedElevatedExternalWrite() throws Exception {
+        ProcessToolDefinition definition = definition("""
+                name: risky_tool
+                kind: template
+                description: 未声明 risk，验证防御性缺省
+                input_schema: { type: object, properties: {} }
+                runtime:
+                  entry: [python, risky.py]
+                """);
+        TemplateProcessTool tool = tool(definition);
+
+        assertEquals(RiskLevel.ELEVATED, tool.manifest().riskLevel());
+        assertEquals(ToolManifest.SideEffect.EXTERNAL_WRITE,
+                tool.manifest().sideEffect());
     }
 
     @Test

@@ -41,7 +41,7 @@ public final class InvokeCapabilityTool implements Tool, ToolCallResolver {
                 "iris.system.capabilities.invoke",
                 "1",
                 "invoke_capability",
-                "调用本次任务中已用 read_capability 读取的精确非驻留能力；原样填写其 path、manifestHash 与 arguments，真实风险和审批由目标能力决定",
+                "调用本次任务中已用 read_capability 读取的精确非驻留能力；原样填写其 path、manifestHash 与 arguments，真实风险和审批由目标能力决定。read_capability 必须发生在更早的轮次，同轮批量调用必然被拒",
                 inputSchema(),
                 outputSchema(),
                 RiskLevel.READ_ONLY,

@@ -391,7 +391,13 @@ public class AgenticRoundCoordinator {
     ) {
         Throwable cause = Exceptions.unwrap(error);
         if (attemptCommitted) {
-            answerStreams.discard(started.attempt().attemptId());
+            // commit 已把 ModelAttempt 事实持久化，但 complete() 抛错导致投影
+            // 仍停留在 streaming。仅当投影确未冻结时才 invalidate，避免误删
+            // 已经完成的节点。
+            answerStreams.invalidateIfStreaming(
+                    started.run().conversationId(),
+                    started.attempt().attemptId()
+            );
             return Mono.error(propagate(cause));
         }
         answerStreams.invalidate(

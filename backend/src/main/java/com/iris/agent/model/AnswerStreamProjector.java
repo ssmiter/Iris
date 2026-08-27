@@ -135,6 +135,23 @@ public class AnswerStreamProjector {
     }
 
     /**
+     * Attempt 已提交但投影未冻结时失败：仅当投影行仍在 streaming 才删除并通知前端。
+     * 防止 complete() 抛错后留下半截答案节点，同时避免误删已经冻结的节点。
+     */
+    public void invalidateIfStreaming(
+            String conversationId,
+            String attemptId
+    ) {
+        String nodeId = nodeIdFor(attemptId);
+        ObjectNode node = readNode(nodeId);
+        if (node == null || !"streaming".equals(text(node, "status"))) {
+            streams.remove(attemptId);
+            return;
+        }
+        invalidate(conversationId, attemptId);
+    }
+
+    /**
      * 把已经展示的流式节点原位冻结为持久化答案。没有产生过 delta 时返回 false，
      * 由 AnswerProjectionService 从已提交的 ModelAttempt 补建节点。
      */
@@ -264,9 +281,10 @@ public class AnswerStreamProjector {
     }
 
     /**
-     * 进程重启后，interrupted attempt 的半截 answer 与在线失败采用同一语义：
-     * 保留既有 delta/event 作为审计事实，删除当前投影并追加 invalidated 事件。
-     * 这样 SSE resume 和重新水合都不会把半截 provider 输出当成失败答案。
+     * 进程重启后，任何已经离开 streaming 状态却仍残留 streaming 投影的 answer
+     * 节点都是孤儿：保留既有 delta/event 作为审计事实，删除当前投影并追加
+     * invalidated 事件。这样 SSE resume 和重新水合都不会把半截 provider 输出
+     * 当成答案。
      */
     public int recoverInterrupted() {
         List<InterruptedAnswer> interrupted = jdbc.sql("""
@@ -274,9 +292,11 @@ public class AnswerStreamProjector {
                 FROM model_attempt ma
                 JOIN render_node_projection rp
                   ON rp.node_id = :nodePrefix || ma.attempt_id
-                WHERE ma.phase = 'interrupted'
-                  AND rp.node_type = 'answer'
+                JOIN agent_round ar
+                  ON ar.round_id = ma.round_id
+                WHERE rp.node_type = 'answer'
                   AND rp.node_status = 'streaming'
+                  AND (ma.phase != 'streaming' OR ar.phase != 'model_streaming')
                 ORDER BY ma.started_at
                 """)
                 .param("nodePrefix", "node_answer_")

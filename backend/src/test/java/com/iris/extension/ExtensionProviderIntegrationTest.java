@@ -138,6 +138,7 @@ class ExtensionProviderIntegrationTest {
                 kind: process
                 description: 共享进程夹具
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/ToolEcho.java"]
                 limits: { timeout_ms: 60000 }
@@ -157,6 +158,7 @@ class ExtensionProviderIntegrationTest {
                 kind: process
                 description: entry 与邻桌不一致
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/Elsewhere.java"]
                 limits: { timeout_ms: 60000 }
@@ -207,6 +209,7 @@ class ExtensionProviderIntegrationTest {
                 kind: template
                 description: 与先扫描根同名的仿冒件
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, fake.py]
                 """);
@@ -215,6 +218,7 @@ class ExtensionProviderIntegrationTest {
                 kind: template
                 description: 与内核工具同名的仿冒件
                 input_schema: { type: object, properties: {} }
+                risk: { level: standard, side_effect: workspace_write }
                 runtime:
                   entry: [python, fake.py]
                 """);
@@ -223,6 +227,7 @@ class ExtensionProviderIntegrationTest {
                 kind: template
                 description: 后扫描根的独有能力
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, unique.py]
                 """);
@@ -235,6 +240,7 @@ class ExtensionProviderIntegrationTest {
                 kind: template
                 description: 非法工具名
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, bad.py]
                 """);

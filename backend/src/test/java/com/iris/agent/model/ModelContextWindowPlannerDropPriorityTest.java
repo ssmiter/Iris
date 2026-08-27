@@ -147,6 +147,169 @@ class ModelContextWindowPlannerDropPriorityTest {
         assertThat(plan.droppedFactCount()).isEqualTo(1);
     }
 
+    @Test
+    void packsUserMessagesBeforeToolObservationTrajectories() {
+        String oldMessageId = "msg_old";
+        String latestMessageId = "msg_latest";
+        ModelInputItem.UserText oldUserMessage = new ModelInputItem.UserText(
+                oldMessageId,
+                "old request"
+        );
+        ModelInputItem.AssistantToolCall toolCall =
+                new ModelInputItem.AssistantToolCall(
+                        "attempt_old",
+                        "tc_old",
+                        "pc_old",
+                        "test_tool",
+                        argumentsOf("old-arg")
+                );
+        ModelInputItem.ToolResult toolObservation =
+                new ModelInputItem.ToolResult(
+                        "attempt_old",
+                        "obs_old",
+                        "tc_old",
+                        "pc_old",
+                        "exec_old",
+                        "success",
+                        "hash_old",
+                        "payload_old",
+                        new ObjectMapper().createObjectNode()
+                                .put("result", "old-result")
+                );
+        ModelInputItem.UserText latestUserMessage = new ModelInputItem.UserText(
+                latestMessageId,
+                "latest request"
+        );
+
+        List<ModelInputItem> facts = List.of(
+                oldUserMessage,
+                toolCall,
+                toolObservation,
+                latestUserMessage
+        );
+
+        // fixed = 10 (system) + 0 (tools) + 1 (reserved) + 512 (headroom) = 523
+        ModelContextWindowPlanner planner = planner();
+        fallbackListEstimate(30);
+        when(tokens.estimate(TOOLS)).thenReturn(0);
+        when(tokens.estimate(List.of(oldUserMessage))).thenReturn(300);
+        when(tokens.estimate(List.of(latestUserMessage))).thenReturn(300);
+        when(tokens.estimate(List.of(toolCall, toolObservation))).thenReturn(400);
+
+        // fixed = 523; available = 601
+        // required latest user = 300; old user = 300 fits; trajectory = 400 does not
+        ContextBudget budget = new ContextBudget(1124, 1);
+        ModelContextWindowPlanner.WindowPlan plan = planner.plan(
+                SYSTEM,
+                facts,
+                TOOLS,
+                budget,
+                Set.of(latestMessageId),
+                Set.of()
+        );
+
+        assertThat(plan.items())
+                .anyMatch(item -> item instanceof ModelInputItem.UserText user
+                        && user.messageId().equals(oldMessageId))
+                .anyMatch(item -> item instanceof ModelInputItem.UserText user
+                        && user.messageId().equals(latestMessageId))
+                .noneMatch(item -> item instanceof ModelInputItem.ToolResult)
+                .noneMatch(item -> item instanceof ModelInputItem.AssistantToolCall);
+        assertThat(plan.droppedFactCount()).isEqualTo(2);
+    }
+
+    @Test
+    void prefersNewerGroupWhenPrioritiesAreEqual() {
+        String latestMessageId = "msg_latest";
+        ModelInputItem.UserText latestUserMessage = new ModelInputItem.UserText(
+                latestMessageId,
+                "latest request"
+        );
+
+        ModelInputItem.AssistantToolCall oldToolCall =
+                new ModelInputItem.AssistantToolCall(
+                        "attempt_old",
+                        "tc_old",
+                        "pc_old",
+                        "test_tool",
+                        argumentsOf("old-arg")
+                );
+        ModelInputItem.ToolResult oldToolObservation =
+                new ModelInputItem.ToolResult(
+                        "attempt_old",
+                        "obs_old",
+                        "tc_old",
+                        "pc_old",
+                        "exec_old",
+                        "success",
+                        "hash_old",
+                        "payload_old",
+                        new ObjectMapper().createObjectNode()
+                                .put("result", "old-result")
+                );
+
+        ModelInputItem.AssistantToolCall newToolCall =
+                new ModelInputItem.AssistantToolCall(
+                        "attempt_new",
+                        "tc_new",
+                        "pc_new",
+                        "test_tool",
+                        argumentsOf("new-arg")
+                );
+        ModelInputItem.ToolResult newToolObservation =
+                new ModelInputItem.ToolResult(
+                        "attempt_new",
+                        "obs_new",
+                        "tc_new",
+                        "pc_new",
+                        "exec_new",
+                        "success",
+                        "hash_new",
+                        "payload_new",
+                        new ObjectMapper().createObjectNode()
+                                .put("result", "new-result")
+                );
+
+        List<ModelInputItem> facts = List.of(
+                oldToolCall,
+                oldToolObservation,
+                newToolCall,
+                newToolObservation,
+                latestUserMessage
+        );
+
+        // fixed = 10 (system) + 0 (tools) + 1 (reserved) + 512 (headroom) = 523
+        ModelContextWindowPlanner planner = planner();
+        fallbackListEstimate(30);
+        when(tokens.estimate(TOOLS)).thenReturn(0);
+        when(tokens.estimate(List.of(latestUserMessage))).thenReturn(300);
+        when(tokens.estimate(List.of(oldToolCall, oldToolObservation)))
+                .thenReturn(400);
+        when(tokens.estimate(List.of(newToolCall, newToolObservation)))
+                .thenReturn(400);
+
+        // fixed = 523; available = 701
+        // required latest user = 300; only one of the two tool groups fits
+        ContextBudget budget = new ContextBudget(1224, 1);
+        ModelContextWindowPlanner.WindowPlan plan = planner.plan(
+                SYSTEM,
+                facts,
+                TOOLS,
+                budget,
+                Set.of(latestMessageId),
+                Set.of()
+        );
+
+        assertThat(plan.items())
+                .anyMatch(item -> item instanceof ModelInputItem.ToolResult result
+                        && result.observationId().equals("obs_new"))
+                .noneMatch(item -> item instanceof ModelInputItem.ToolResult result
+                        && result.observationId().equals("obs_old"))
+                .anyMatch(item -> item instanceof ModelInputItem.UserText user
+                        && user.messageId().equals(latestMessageId));
+        assertThat(plan.droppedFactCount()).isEqualTo(2);
+    }
+
     private ObjectNode argumentsOf(String value) {
         return new ObjectMapper().createObjectNode().put("arg", value);
     }

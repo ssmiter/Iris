@@ -199,6 +199,7 @@ class ResidentProcessToolTest {
                 kind: process
                 description: 共享进程探针
                 input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/ToolEcho.java"]
                 limits: { timeout_ms: 60000 }
@@ -263,6 +264,7 @@ class ResidentProcessToolTest {
                 kind: process
                 description: 协议探针
                 input_schema: { type: object, properties: { text: { type: string } } }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: ["{javaBin}", "{pluginDir}/Probe.java"]
                 limits: { timeout_ms: 60000 }

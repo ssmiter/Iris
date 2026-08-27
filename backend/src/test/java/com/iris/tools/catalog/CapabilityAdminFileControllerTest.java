@@ -77,6 +77,7 @@ class CapabilityAdminFileControllerTest {
                   type: object
                   properties:
                     script: { type: string, description: 要执行的 Python 脚本 }
+                risk: { level: read_only, side_effect: none }
                 runtime:
                   entry: [python, "{pluginDir}/analysis.py"]
                 """);

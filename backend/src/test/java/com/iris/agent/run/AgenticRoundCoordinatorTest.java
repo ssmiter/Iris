@@ -38,6 +38,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -267,6 +268,25 @@ class AgenticRoundCoordinatorTest {
     private Flux<ModelStreamEvent> successStream() {
         return Flux.just(
                 new ModelStreamEvent.MessageStarted("msg_1", MODEL_ID),
+                new ModelStreamEvent.MessageCompleted("end_turn", 10, 5)
+        );
+    }
+
+    private Flux<ModelStreamEvent> textStream() {
+        return Flux.just(
+                new ModelStreamEvent.MessageStarted("msg_1", MODEL_ID),
+                new ModelStreamEvent.BlockStarted(
+                        0,
+                        ModelStreamEvent.BlockKind.TEXT,
+                        null,
+                        null
+                ),
+                new ModelStreamEvent.BlockDelta(
+                        0,
+                        "hello",
+                        ModelStreamEvent.FragmentMode.APPEND
+                ),
+                new ModelStreamEvent.BlockCompleted(0),
                 new ModelStreamEvent.MessageCompleted("end_turn", 10, 5)
         );
     }
@@ -665,6 +685,49 @@ class AgenticRoundCoordinatorTest {
                 eq(ROUND_ID),
                 any()
         );
+    }
+
+    @Test
+    void invalidatesStreamingNodeWhenCommitSucceedsButCompletionFails() {
+        AgenticRoundCoordinator coordinator = coordinator();
+        ModelProvider provider = provider();
+        when(runFacts.findRound(ROUND_ID))
+                .thenReturn(java.util.Optional.of(acceptedRound()));
+        when(runFacts.findRun(RUN_ID))
+                .thenReturn(java.util.Optional.of(rootRun()));
+        when(contexts.assemble(any(), any(), any()))
+                .thenReturn(context(ModelContextWindowPlanner.ContextBudget.defaults()));
+        when(attempts.begin(anyString(), anyLong(), anyString(), anyString(),
+                anyString(), anyString()))
+                .thenReturn(attempt(0));
+        when(attempts.commit(anyString(), anyLong(), any(ModelAttemptResult.class)))
+                .thenReturn(completedRound());
+        when(cancellations.whenCancelled(RUN_ID))
+                .thenReturn(Mono.never());
+        when(provider.stream(any()))
+                .thenReturn(textStream());
+        when(finalizationPolicy.evaluate(RUN_ID))
+                .thenReturn(new RunFinalizationPolicy.Decision(
+                        false, null, 0, null));
+        doThrow(new IllegalStateException("completion boom"))
+                .when(answerStreams)
+                .complete(any(), any(), anyString(), anyString(), anyString());
+
+        assertThatThrownBy(() -> coordinator.advance(
+                ROUND_ID,
+                PROFILE,
+                seed(),
+                WORKSPACE,
+                false
+        ).block(Duration.ofSeconds(5)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("completion boom");
+
+        verify(answerStreams).invalidateIfStreaming(
+                CONVERSATION_ID,
+                "attempt_0"
+        );
+        verify(answerStreams, never()).discard(anyString());
     }
 
     private String hash() {

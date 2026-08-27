@@ -11,6 +11,7 @@ import com.iris.tools.core.Tool;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
+import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.ToolRegistry.ToolBinding;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.VerificationResult;
@@ -62,7 +63,10 @@ public class ReadCapabilityTool implements Tool {
     public PreparedOperation prepare(JsonNode input, ToolContext context) {
         String path = input.path("path").asText().trim();
         if (path.isBlank()) {
-            throw new IllegalArgumentException("path 不能为空");
+            throw new ToolRuntimeException(
+                    "invalid_tool_input",
+                    "参数 path 不能为空"
+            );
         }
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("path", path);
@@ -91,7 +95,8 @@ public class ReadCapabilityTool implements Tool {
             }
             Definition extension = capabilities.getObject()
                     .readExtension(path, "personal")
-                    .orElseThrow(() -> new IllegalArgumentException(
+                    .orElseThrow(() -> new ToolRuntimeException(
+                            "capability_not_found",
                             "找不到能力 " + path
                     ));
             return ToolOutcome.succeeded(extensionDefinition(extension));

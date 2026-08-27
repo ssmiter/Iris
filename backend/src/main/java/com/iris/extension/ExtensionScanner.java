@@ -449,6 +449,28 @@ public class ExtensionScanner {
                 }
             }
         }
+        if (definition.risk() == null) {
+            return "必须声明 risk 块，例如 risk: { level: read_only, side_effect: none }；"
+                    + "level 取值 read_only | standard | elevated | destructive，"
+                    + "side_effect 取值 none | internal_state | workspace_write "
+                    + "| external_write | destructive";
+        }
+        if (definition.risk().level() == null
+                || definition.risk().level().isBlank()) {
+            return "risk.level 必填，取值 read_only | standard | elevated | destructive";
+        }
+        if (definition.risk().sideEffect() == null
+                || definition.risk().sideEffect().isBlank()) {
+            return "risk.side_effect 必填，取值 none | internal_state | "
+                    + "workspace_write | external_write | destructive";
+        }
+        ToolManifest.SideEffect sideEffect;
+        try {
+            TemplateProcessTool.riskLevel(definition);
+            sideEffect = TemplateProcessTool.sideEffect(definition);
+        } catch (RuntimeException exception) {
+            return exception.getMessage() + " " + file;
+        }
         String mode = definition.approval() == null
                 ? null
                 : definition.approval().mode();
@@ -459,13 +481,6 @@ public class ExtensionScanner {
                 && (definition.approval().impactStatement() == null
                         || definition.approval().impactStatement().isBlank())) {
             return "审批模式 explicit 必须提供 impact_statement 模板";
-        }
-        ToolManifest.SideEffect sideEffect;
-        try {
-            TemplateProcessTool.riskLevel(definition);
-            sideEffect = TemplateProcessTool.sideEffect(definition);
-        } catch (RuntimeException exception) {
-            return exception.getMessage() + " " + file;
         }
         if ("explicit".equals(mode)
                 && sideEffect == ToolManifest.SideEffect.NONE) {

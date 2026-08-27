@@ -65,7 +65,7 @@ Planner 从最新事实向前选择原子组：
 - **micro compact**发生在后续 attempt 组装时：只处理声明为可重取的 read/list/search
   等旧 Observation，保留工具名、输入摘要、executionId、payload hash 和结果状态。
 - 最近若干个 Tool Observation 必须保留原文；数量和 token 水位由真实数据决定，
-  不能把某个参考实现的常量写成产品真理。
+  不能把某个参考实现的常量写成产品真理。当前默认值为待标定初值，可调。
 - 写操作、`outcome_unknown`、审批、验证 evidence 与用户不可重新取得的外部返回，
   禁止自动 micro compact。
 - 结果替换决策一旦进入某个 Context Frame 就被冻结；后续组装不得因当前总长度变化

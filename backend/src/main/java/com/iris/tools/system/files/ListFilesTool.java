@@ -47,7 +47,7 @@ public class ListFilesTool implements Tool {
         this.fileService = fileService;
         this.manifest = new ToolManifest(
                 "iris.system.files.list_files",
-                "2",
+                "3",
                 "list_files",
                 "列出工作区目录结构；需要确认文件位置、名称或范围时使用",
                 inputSchema(),
@@ -78,7 +78,7 @@ public class ListFilesTool implements Tool {
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("path", path);
         normalized.put("recursive", recursive);
-        putOptionalText(normalized, "pattern", input.get("pattern"));
+        putOptionalText(normalized, "glob", input.get("glob"));
         return new PreparedOperation(
                 normalized,
                 "列出工作区目录 " + path
@@ -103,7 +103,7 @@ public class ListFilesTool implements Tool {
                         input.path("recursive").asBoolean()
                                 ? DEFAULT_RECURSIVE_DEPTH
                                 : 1,
-                        nullableText(input.get("pattern")),
+                        nullableText(input.get("glob")),
                         false,
                         false,
                         DEFAULT_RESULTS
@@ -128,7 +128,7 @@ public class ListFilesTool implements Tool {
         output.put("skippedEntries", result.skippedEntries());
         output.put("truncated", result.truncated());
         output.put("guidance", result.truncated()
-                ? "结果已到预算；请缩小 path、pattern 或改为非递归查看"
+                ? "结果已到预算；请缩小 path、glob 或改为非递归查看"
                 : result.entries().isEmpty()
                         ? "目录存在但当前条件下没有可见条目"
                         : "目录范围已列完");
@@ -172,7 +172,7 @@ public class ListFilesTool implements Tool {
                 .put("description", "工作区内相对目录；默认 . 表示根目录");
         properties.putObject("recursive").put("type", "boolean")
                 .put("description", "是否递归列出；默认 false");
-        properties.putObject("pattern").put("type", "string")
+        properties.putObject("glob").put("type", "string")
                 .put("description", "相对基础目录的可选 glob，如 **/*.java");
         return schema;
     }

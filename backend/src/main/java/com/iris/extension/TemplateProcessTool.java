@@ -388,7 +388,9 @@ public class TemplateProcessTool implements Tool {
                 ? null
                 : definition.risk().level();
         if (level == null) {
-            return RiskLevel.READ_ONLY;
+            // 防御性缺省：扫描器本应拒绝缺失 risk 的清单；若绕过扫描器直接构造，
+            // 按 fail-closed 视为最高警惕等级而非 read_only。
+            return RiskLevel.ELEVATED;
         }
         return switch (level) {
             case "read_only" -> RiskLevel.READ_ONLY;
@@ -409,7 +411,9 @@ public class TemplateProcessTool implements Tool {
                 ? null
                 : definition.risk().sideEffect();
         if (value == null) {
-            return ToolManifest.SideEffect.NONE;
+            // 防御性缺省：扫描器本应拒绝缺失 risk 的清单；若绕过扫描器直接构造，
+            // 按 fail-closed 视为外部写操作而非 none。
+            return ToolManifest.SideEffect.EXTERNAL_WRITE;
         }
         return switch (value) {
             case "none" -> ToolManifest.SideEffect.NONE;

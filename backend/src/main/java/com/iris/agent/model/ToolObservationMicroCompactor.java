@@ -19,23 +19,27 @@ import java.util.Set;
 public class ToolObservationMicroCompactor {
 
     private static final int PROTOCOL_HEADROOM_TOKENS = 512;
-    private static final double TRIGGER_WATERLINE = 0.70;
-    private static final double TARGET_WATERLINE = 0.60;
-    private static final int KEEP_RECENT_REFETCHABLE = 6;
 
     private final JdbcClient jdbc;
     private final ToolResultContextProjector contextProjector;
     private final ModelTokenEstimator tokens;
+    private final int keepRecentRefetchable;
+    private final double triggerWaterline;
+    private final double targetWaterline;
     private final Clock clock = Clock.systemUTC();
 
     public ToolObservationMicroCompactor(
             JdbcClient jdbc,
             ToolResultContextProjector contextProjector,
-            ModelTokenEstimator tokens
+            ModelTokenEstimator tokens,
+            ToolObservationMicroCompactProperties properties
     ) {
         this.jdbc = jdbc;
         this.contextProjector = contextProjector;
         this.tokens = tokens;
+        this.keepRecentRefetchable = properties.getKeepRecent();
+        this.triggerWaterline = properties.getTriggerRatio();
+        this.targetWaterline = properties.getTargetRatio();
     }
 
     public Projection project(
@@ -75,7 +79,7 @@ public class ToolObservationMicroCompactor {
                 definitions,
                 projected
         );
-        int trigger = (int) Math.floor(usableTokens * TRIGGER_WATERLINE);
+        int trigger = (int) Math.floor(usableTokens * triggerWaterline);
         if (estimated <= trigger) {
             return new Projection(
                     List.copyOf(projected),
@@ -99,9 +103,9 @@ public class ToolObservationMicroCompactor {
         }
         int eligibleEnd = Math.max(
                 0,
-                candidates.size() - KEEP_RECENT_REFETCHABLE
+                candidates.size() - keepRecentRefetchable
         );
-        int target = (int) Math.floor(usableTokens * TARGET_WATERLINE);
+        int target = (int) Math.floor(usableTokens * targetWaterline);
         int decisionsAdded = 0;
         for (int candidateIndex = 0;
                 candidateIndex < eligibleEnd && estimated > target;
