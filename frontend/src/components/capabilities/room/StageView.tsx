@@ -218,7 +218,7 @@ export function StageView({
           <QuietState
             icon={FolderOpen}
             title="这里还是空的"
-            hint="能力会在接入后住进对应的目录。"
+            hint="接入能力后，它们会按域住进各自的目录，每个能力有且只有一个家。"
           />
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3.5">
@@ -283,7 +283,7 @@ export function StageView({
             <QuietState
               icon={FolderOpen}
               title="这里还是空的"
-              hint="把能力移进来，它就多了一个家。打开任意能力的详情，用「移动到…」。"
+              hint="打开任意能力的详情层用「移动到」，它就搬来这里住了。"
             />
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2">
@@ -398,7 +398,7 @@ function SearchStage({ search }: { search: StageSearch }) {
         <QuietState
           icon={SearchX}
           title={`没有找到「${search.query}」`}
-          hint="换个词试试，或者回到目录里逛逛——它一定住在某个目录里。"
+          hint="换个词试试，或者回到目录里逛逛。它一定住在某个目录里。"
         />
       )}
     </div>
@@ -531,7 +531,7 @@ function CapabilityTile({
         {hasIssue && (
           <span
             aria-hidden="true"
-            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-canvas"
+            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-warning ring-[2.5px] ring-canvas"
           />
         )}
       </span>

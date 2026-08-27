@@ -422,6 +422,16 @@ public class ExtensionScanner {
         if (definition.description().length() > 500) {
             return "description 超过 500 字符";
         }
+        if (definition.searchHint() != null) {
+            // search_hint 可选；声明了就必须是 3-10 个词的发现短语
+            // （docs/42 §4 P0），与工具名正交。
+            String hint = definition.searchHint().trim();
+            int words = hint.isEmpty() ? 0 : hint.split("\\s+").length;
+            if (words < 3 || words > 10) {
+                return "search_hint 必须是 3 到 10 个词的短语，"
+                        + "用与工具名不重复的同义或领域词";
+            }
+        }
         if (definition.inputSchema() == null
                 || !definition.inputSchema().isObject()) {
             return "input_schema 必须是 JSON Schema 对象";

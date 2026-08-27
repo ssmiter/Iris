@@ -54,7 +54,7 @@ public class SearchFilesTool implements Tool {
         this.capabilities = capabilities;
         this.manifest = new ToolManifest(
                 "iris.system.files.search_files",
-                "6",
+                "7",
                 "search_files",
                 "搜索工作区文本或能力目录描述；不知道事实或能力位于何处时按命名空间定位",
                 inputSchema(),
@@ -67,7 +67,8 @@ public class SearchFilesTool implements Tool {
                 ToolManifest.EvidencePolicy.SUMMARY,
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
-                ToolManifest.CancellationSemantics.COOPERATIVE
+                ToolManifest.CancellationSemantics.COOPERATIVE,
+                "find grep locate keyword lookup"
         );
     }
 
@@ -101,6 +102,7 @@ public class SearchFilesTool implements Tool {
                 "case_sensitive",
                 input.path("case_sensitive").asBoolean(false)
         );
+        normalized.put("offset", Math.max(0, input.path("offset").asInt(0)));
         putOptionalText(normalized, "glob", input.get("glob"));
         return new PreparedOperation(
                 normalized,
@@ -124,6 +126,7 @@ public class SearchFilesTool implements Tool {
         )) {
             return executeCapabilitySearch(input);
         }
+        int offset = input.path("offset").asInt(0);
         SearchResult result = fileService.search(
                 context.workspaceRoot(),
                 new SearchRequest(
@@ -134,6 +137,7 @@ public class SearchFilesTool implements Tool {
                         nullableText(input.get("glob")),
                         false,
                         false,
+                        offset,
                         DEFAULT_RESULTS
                 ),
                 context::cancelled
@@ -149,17 +153,29 @@ public class SearchFilesTool implements Tool {
             item.put("line", match.line());
             item.put("column", match.column());
             item.put("preview", match.preview());
+            item.put("modifiedAt", match.modifiedAt().toString());
         }
         output.put("candidateFiles", result.candidateFiles());
         output.put("searchedFiles", result.searchedFiles());
         output.put("skippedFiles", result.skippedFiles());
         output.put("scannedEntries", result.scannedEntries());
-        output.put("truncated", result.truncated());
-        output.put("guidance", guidance(result));
+        // 截断信号仅在真正截断时出现，防模型把前一页当全集
+        boolean truncated = result.scanTruncated()
+                || result.unsearchedCandidates() > 0;
+        if (truncated) {
+            output.put("truncated", true);
+            output.put("appliedLimit", DEFAULT_RESULTS);
+            if (result.unsearchedCandidates() > 0
+                    && !result.matches().isEmpty()) {
+                output.put("nextOffset", offset + result.matches().size());
+            }
+        }
+        output.put("guidance", guidance(result, offset));
         return ToolOutcome.succeeded(output);
     }
 
     private ToolOutcome executeCapabilitySearch(JsonNode input) {
+        int offset = input.path("offset").asInt(0);
         CapabilityFileSearchResult result = capabilities.getObject()
                 .searchFiles(
                         input.path("query").asText(),
@@ -167,6 +183,7 @@ public class SearchFilesTool implements Tool {
                         input.path("regex").asBoolean(),
                         input.path("case_sensitive").asBoolean(),
                         nullableText(input.get("glob")),
+                        offset,
                         DEFAULT_RESULTS,
                         "personal"
                 );
@@ -202,7 +219,6 @@ public class SearchFilesTool implements Tool {
         output.put("searchedFiles", result.candidateFiles());
         output.put("skippedFiles", 0);
         output.put("scannedEntries", result.scannedEntries());
-        output.put("truncated", result.truncated());
         output.put("totalMatches", result.total());
         output.put("retrievalStrategy", result.retrievalStrategy());
         if (result.semanticModelIdentity() == null) {
@@ -213,7 +229,15 @@ public class SearchFilesTool implements Tool {
                     result.semanticModelIdentity()
             );
         }
-        output.put("guidance", capabilityGuidance(result));
+        // 截断信号仅在真正截断时出现，防模型把前一页当全集
+        if (result.truncated()) {
+            output.put("truncated", true);
+            output.put("appliedLimit", DEFAULT_RESULTS);
+            if (!result.matches().isEmpty()) {
+                output.put("nextOffset", offset + result.matches().size());
+            }
+        }
+        output.put("guidance", capabilityGuidance(result, offset));
         return ToolOutcome.succeeded(output);
     }
 
@@ -240,30 +264,63 @@ public class SearchFilesTool implements Tool {
         ));
     }
 
-    private String guidance(SearchResult result) {
-        if (result.truncated()) {
-            return "搜索已到预算；请缩小 path、glob 或使用更精确的 query";
-        }
-        if (result.matches().isEmpty()) {
-            if (result.searchedFiles() == 0) {
+    private String guidance(SearchResult result, int offset) {
+        int shown = result.matches().size();
+        if (shown == 0) {
+            if (offset > 0) {
+                return "offset 之后没有更多命中；用更小的 offset 翻页，"
+                        + "或换更精确的 query";
+            }
+            if (result.candidateFiles() == 0) {
                 return "没有可搜索的文本文件；请先用 list_files 确认路径和文件类型";
             }
-            return "已实际搜索 " + result.searchedFiles()
-                    + " 个文本文件且无命中；可调整关键词、大小写或 glob";
+            if (result.searchedFiles() == 0) {
+                return "候选文件都因大小或编码不可搜索；调整 glob 或换个目录";
+            }
+            if (result.scanTruncated() || result.unsearchedCandidates() > 0) {
+                return "已搜索的 " + result.searchedFiles()
+                        + " 个文本文件中未找到匹配，但还有候选文件未搜索；"
+                        + "缩小 path 或 glob 后重试";
+            }
+            return "未找到匹配的内容，已搜索 " + result.searchedFiles()
+                    + " 个文本文件；可调整关键词、大小写或 glob";
         }
-        return "命中已完整返回；可用 read_file 核对相邻原文";
+        if (result.scanTruncated()) {
+            return "扫描预算已用尽，按最近修改排序返回 " + shown
+                    + " 条命中，结果可能不全；缩小 path 或 glob 后重试";
+        }
+        if (result.unsearchedCandidates() > 0) {
+            return "结果已截断，按最近修改排序显示第 " + (offset + 1) + " 到 "
+                    + (offset + shown) + " 条命中，还有 "
+                    + result.unsearchedCandidates() + " 个候选文件未搜索；"
+                    + "用 offset=" + (offset + shown) + " 翻页，"
+                    + "或用更精确的 query、path 或 glob 收窄";
+        }
+        return "命中已完整返回，共 " + shown
+                + " 条；可用 read_file 核对相邻原文";
     }
 
-    private String capabilityGuidance(CapabilityFileSearchResult result) {
+    private String capabilityGuidance(
+            CapabilityFileSearchResult result,
+            int offset
+    ) {
+        int shown = result.matches().size();
         if (result.truncated()) {
-            return "能力命中已到预算；请缩小 path、glob 或使用更精确的 query";
+            return "共 " + result.total() + " 条能力命中，按相关度显示第 "
+                    + (offset + 1) + " 到 " + (offset + shown) + " 条；"
+                    + "用 offset=" + (offset + shown) + " 翻页，"
+                    + "或用更精确的 query 收窄";
         }
         if (result.matches().isEmpty()) {
+            if (offset > 0) {
+                return "offset 之后没有更多能力命中，共 " + result.total()
+                        + " 条；用更小的 offset 翻页";
+            }
             if (result.candidateFiles() == 0) {
                 return "该能力目录下没有可搜索条目；请用 list_capabilities 核对目录";
             }
-            return "已实际搜索 " + result.candidateFiles()
-                    + " 个能力描述且无命中；可改搜对象、动作或目录段";
+            return "未找到匹配的能力，已搜索 " + result.candidateFiles()
+                    + " 个能力描述；可改搜对象、动作或目录段";
         }
         if (result.matches().stream().allMatch(match ->
                 "unavailable".equals(match.availability()))) {
@@ -319,6 +376,8 @@ public class SearchFilesTool implements Tool {
                 .put("description", "是否区分大小写；默认 false");
         properties.putObject("glob").put("type", "string")
                 .put("description", "可选文件 glob，如 **/*.java");
+        properties.putObject("offset").put("type", "integer")
+                .put("description", "结果起始偏移，两个命名空间都按各自排序翻页；默认 0");
         schema.putArray("required").add("query");
         return schema;
     }
@@ -332,7 +391,8 @@ public class SearchFilesTool implements Tool {
                 .put("description", "实际搜索的逻辑目录");
         ObjectNode matches = properties.putObject("matches");
         matches.put("type", "array");
-        matches.put("description", "稳定路径顺序的首个逐行命中");
+        matches.put("description",
+                "capabilities 命中按相关度降序，workspace 命中按文件最近修改降序");
         ObjectNode item = matches.putObject("items");
         item.put("type", "object");
         ObjectNode itemProperties = item.putObject("properties");
@@ -342,6 +402,8 @@ public class SearchFilesTool implements Tool {
                 .put("description", "命中行号；仅 workspace 命中返回");
         itemProperties.putObject("column").put("type", "integer")
                 .put("description", "命中列号；仅 workspace 命中返回");
+        itemProperties.putObject("modifiedAt").put("type", "string")
+                .put("description", "命中文件的修改时间；仅 workspace 命中返回");
         itemProperties.putObject("preview").put("type", "string")
                 .put("description", "命中预览；capability 命中为限长 160 字符的能力描述");
         itemProperties.putObject("name").put("type", "string");
@@ -364,9 +426,13 @@ public class SearchFilesTool implements Tool {
         properties.putObject("scannedEntries").put("type", "integer")
                 .put("description", "为完成搜索实际检查的目录条目数");
         properties.putObject("truncated").put("type", "boolean")
-                .put("description", "是否因候选或命中预算提前结束");
+                .put("description", "结果未完整时才出现，恒为 true；不出现即全集");
+        properties.putObject("appliedLimit").put("type", "integer")
+                .put("description", "每页命中数上限；仅截断时出现");
+        properties.putObject("nextOffset").put("type", "integer")
+                .put("description", "下一页的 offset；仅当后面还有命中时出现");
         properties.putObject("guidance").put("type", "string")
-                .put("description", "扫描证据与下一步收窄或核对建议");
+                .put("description", "扫描证据与下一步收窄、翻页或核对建议");
         properties.putObject("totalMatches").put("type", "integer")
                 .put("description", "能力搜索在截断前的总命中数；工作区搜索不返回");
         properties.putObject("retrievalStrategy").put("type", "string")
@@ -377,8 +443,7 @@ public class SearchFilesTool implements Tool {
         schema.putArray("required")
                 .add("namespace").add("path").add("matches").add("candidateFiles")
                 .add("searchedFiles").add("skippedFiles")
-                .add("scannedEntries")
-                .add("truncated").add("guidance");
+                .add("scannedEntries").add("guidance");
         return schema;
     }
 }

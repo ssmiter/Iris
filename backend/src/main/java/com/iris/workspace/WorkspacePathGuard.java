@@ -4,9 +4,13 @@ import com.iris.tools.core.ToolRuntimeException;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -26,6 +30,13 @@ public class WorkspacePathGuard {
             "lpt1", "lpt2", "lpt3", "lpt4", "lpt5",
             "lpt6", "lpt7", "lpt8", "lpt9"
     );
+
+    private static final Set<String> GENERATED_DIRECTORIES = Set.of(
+            ".git", ".svn", ".idea", "node_modules", "target",
+            "dist", "build", "coverage", ".next", ".gradle"
+    );
+    private static final int MAX_SUGGESTION_ENTRIES = 2_000;
+    private static final int MAX_SUGGESTION_DEPTH = 6;
 
     public String normalizeFile(String rawPath) {
         return normalize(rawPath, false);
@@ -161,7 +172,7 @@ public class WorkspacePathGuard {
         if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
-                    "工作区路径不存在：" + logicalPath
+                    missingPathMessage(root, logicalPath)
             );
         }
 
@@ -287,7 +298,116 @@ public class WorkspacePathGuard {
         return new ToolRuntimeException(
                 "workspace_path_outside_fence",
                 "路径越界：" + detail
+                        + "。Iris 只允许操作工作区根目录内的相对路径，"
+                        + "越界请求一律拒绝，不会读写任何文件"
         );
+    }
+
+    /**
+     * 给「路径不存在」失败分支用的完整教学消息：
+     * 说明当前工作区根，并在工作区内找最接近的真实路径作为建议。
+     */
+    public String describeMissingPath(Path configuredRoot, String logicalPath)
+            throws IOException {
+        return missingPathMessage(realRoot(configuredRoot), logicalPath);
+    }
+
+    private String missingPathMessage(Path root, String logicalPath) {
+        StringBuilder message = new StringBuilder()
+                .append("工作区内找不到路径 ").append(logicalPath)
+                .append("；当前工作区根是 ").append(root)
+                .append("。请先用 list_files 确认实际路径再重试");
+        List<String> similar = findSimilarPaths(root, logicalPath);
+        if (!similar.isEmpty()) {
+            message.append("。最接近的现有路径：")
+                    .append(String.join("、", similar));
+        }
+        return message.toString();
+    }
+
+    private List<String> findSimilarPaths(Path root, String logicalPath) {
+        List<String> paths = new ArrayList<>();
+        collectPaths(root, root, 0, paths);
+        String target = logicalPath.toLowerCase(Locale.ROOT);
+        int threshold = Math.max(2, target.length() / 3);
+        return paths.stream()
+                .filter(path -> Math.abs(path.length() - target.length())
+                        <= threshold)
+                .map(path -> new SimilarPath(
+                        path,
+                        editDistance(
+                                target,
+                                path.toLowerCase(Locale.ROOT)
+                        )
+                ))
+                .filter(candidate -> candidate.distance() <= threshold)
+                .sorted(Comparator.comparingInt(SimilarPath::distance))
+                .limit(3)
+                .map(SimilarPath::path)
+                .toList();
+    }
+
+    private void collectPaths(
+            Path root,
+            Path directory,
+            int depth,
+            List<String> paths
+    ) {
+        if (depth > MAX_SUGGESTION_DEPTH
+                || paths.size() >= MAX_SUGGESTION_ENTRIES) {
+            return;
+        }
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(directory)) {
+            for (Path child : stream) {
+                if (paths.size() >= MAX_SUGGESTION_ENTRIES) {
+                    return;
+                }
+                String name = child.getFileName().toString();
+                boolean isDirectory = Files.isDirectory(
+                        child,
+                        LinkOption.NOFOLLOW_LINKS
+                );
+                if (isDirectory && GENERATED_DIRECTORIES.contains(
+                        name.toLowerCase(Locale.ROOT)
+                )) {
+                    continue;
+                }
+                String relative = root.relativize(child).toString()
+                        .replace('\\', '/');
+                paths.add(isDirectory ? relative + "/" : relative);
+                if (isDirectory) {
+                    collectPaths(root, child, depth + 1, paths);
+                }
+            }
+        } catch (IOException ignored) {
+            // 相似路径只是提示；列不出来时退回不带建议的消息
+        }
+    }
+
+    private int editDistance(String left, String right) {
+        int[] previous = new int[right.length() + 1];
+        for (int column = 0; column <= right.length(); column++) {
+            previous[column] = column;
+        }
+        for (int row = 1; row <= left.length(); row++) {
+            int[] current = new int[right.length() + 1];
+            current[0] = row;
+            for (int column = 1; column <= right.length(); column++) {
+                int cost = left.charAt(row - 1) == right.charAt(column - 1)
+                        ? 0
+                        : 1;
+                current[column] = Math.min(
+                        Math.min(current[column - 1] + 1, previous[column] + 1),
+                        previous[column - 1] + cost
+                );
+            }
+            previous = current;
+        }
+        return previous[right.length()];
+    }
+
+    private record SimilarPath(String path, int distance) {
     }
 
     private enum TargetKind {

@@ -179,6 +179,7 @@ export const RoundSection = memo(function RoundSection({
 
           <ProcessSummary
             round={round}
+            nodes={chainNodes}
             expanded={processVisible}
             pendingCount={pendingCount}
             fadeIn={summaryFade}

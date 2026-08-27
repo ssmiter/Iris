@@ -80,7 +80,8 @@ public class TemplateProcessTool implements Tool {
                         : ToolManifest.ConcurrencySemantics.SERIAL,
                 sideEffect == ToolManifest.SideEffect.NONE
                         ? ToolManifest.CancellationSemantics.COOPERATIVE
-                        : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY
+                        : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY,
+                definition.searchHint()
         );
     }
 

@@ -59,7 +59,8 @@ public class ReadFileTool implements Tool {
                 ToolManifest.EvidencePolicy.SUMMARY,
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
-                ToolManifest.CancellationSemantics.COOPERATIVE
+                ToolManifest.CancellationSemantics.COOPERATIVE,
+                "view contents open text lines peek"
         );
     }
 

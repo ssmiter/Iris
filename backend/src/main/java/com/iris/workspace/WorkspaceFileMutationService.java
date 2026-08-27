@@ -139,11 +139,20 @@ public class WorkspaceFileMutationService {
         writeAtomically(target, content);
     }
 
+    /**
+     * 目标不存在时的教学消息：含当前工作区根与最接近的真实路径建议。
+     */
+    public String describeMissingPath(Path workspaceRoot, String logicalPath)
+            throws IOException {
+        return pathGuard.describeMissingPath(workspaceRoot, logicalPath);
+    }
+
     public void deleteFile(TargetState target) throws IOException {
         if (!target.exists()) {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
                     "要删除的工作区文件不存在：" + target.logicalPath()
+                            + "；请先用 list_files 确认路径再重试"
             );
         }
         requireVersion(target, target.version());
@@ -156,6 +165,7 @@ public class WorkspaceFileMutationService {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
                     "要移动的工作区文件不存在：" + source.logicalPath()
+                            + "；请先用 list_files 确认路径再重试"
             );
         }
         if (destination.exists()) {
@@ -210,6 +220,7 @@ public class WorkspaceFileMutationService {
             throw ToolRuntimeException.beforeCommit(
                     "workspace_path_not_found",
                     "要复制的工作区文件不存在：" + source.logicalPath()
+                            + "；请先用 list_files 确认路径再重试"
             );
         }
         if (destination.exists()) {
@@ -379,6 +390,7 @@ public class WorkspaceFileMutationService {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
                     "工作区目录不存在：" + target.logicalPath()
+                            + "；请先用 list_files 确认路径再重试"
             );
         }
         try (java.util.stream.Stream<Path> children =

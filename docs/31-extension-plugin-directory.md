@@ -150,6 +150,10 @@ search_hint: 产量 日报 汇总       # 发现打分语料
 
 `risk.level` 与 `risk.side_effect` 必填，缺失时扫描器按 fail-closed 整件拒绝注册。
 
+`search_hint` 可选；声明了就必须是 3 到 10 个词、与工具名正交的同义或领域短语
+（docs/42 §4 P0），词数不符扫描器拒绝注册。它进能力搜索的打分语料，
+匹配优先级低于工具名、高于 description。
+
 `runtime.entry` 是 argv 数组。内核供给占位符：`{pluginDir}`（插件目录绝对路径，
 两种形态可用）、`{javaBin}`（当前 JVM 的 java 可执行文件，仅 process 形态的
 spawn argv 可用——产品不引入新运行时）；`{paramName}` 仅 template 形态可用，

@@ -53,10 +53,14 @@ class CapabilityAdminFileControllerTest {
 
     @BeforeEach
     void resetFixtures() throws IOException {
-        // 清空并重建拓展根夹具，保证各测试独立
+        // 清空并重建拓展根夹具，保证各测试独立。
+        // 注意只删子项、不删根本身：根目录的删除事件会被 watcher 当成
+        // 根移除（scheduleRemoval → unregisterRoot），后续 rescanRoot
+        // 就会报「未登记的拓展根」——是否触发取决于调度线程竞态。
         if (Files.exists(EXTENSION_ROOT)) {
             try (var walk = Files.walk(EXTENSION_ROOT)) {
                 walk.sorted((a, b) -> -a.compareTo(b))
+                        .filter(path -> !path.equals(EXTENSION_ROOT))
                         .forEach(path -> {
                             try {
                                 Files.deleteIfExists(path);

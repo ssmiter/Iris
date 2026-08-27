@@ -73,7 +73,10 @@ public class DeleteFileTool implements Tool {
         if (!target.exists()) {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
-                    "要删除的工作区文件不存在：" + target.logicalPath()
+                    files.describeMissingPath(
+                            context.workspaceRoot(),
+                            target.logicalPath()
+                    )
             );
         }
         checkpoints.requireCapturable(target);

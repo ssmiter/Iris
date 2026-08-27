@@ -21,6 +21,7 @@ import com.iris.workspace.WorkspaceFileMutationService.TargetState;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 
@@ -77,7 +78,7 @@ public class CopyFileTool implements Tool {
                 context.workspaceRoot(),
                 input.path("destination_path").asText()
         );
-        requireCopyShape(source, destination);
+        requireCopyShape(context.workspaceRoot(), source, destination);
         if (source.sizeBytes() > MAX_COPY_BYTES) {
             throw new ToolRuntimeException(
                     "workspace_copy_too_large",
@@ -127,7 +128,7 @@ public class CopyFileTool implements Tool {
         );
         files.requireVersion(source, sourceClaim.expectedVersion());
         files.requireVersion(destination, destinationClaim.expectedVersion());
-        requireCopyShape(source, destination);
+        requireCopyShape(context.workspaceRoot(), source, destination);
         if (context.cancelled()) {
             throw ToolRuntimeException.beforeCommit(
                     "cancelled_before_commit",
@@ -193,13 +194,17 @@ public class CopyFileTool implements Tool {
     }
 
     private void requireCopyShape(
+            Path workspaceRoot,
             TargetState source,
             TargetState destination
-    ) {
+    ) throws IOException {
         if (!source.exists()) {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
-                    "要复制的工作区文件不存在：" + source.logicalPath()
+                    files.describeMissingPath(
+                            workspaceRoot,
+                            source.logicalPath()
+                    )
             );
         }
         if (destination.exists()) {

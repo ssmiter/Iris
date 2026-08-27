@@ -26,8 +26,9 @@ final class WorkspaceFileToolSupport {
         if (value < minimum || value > maximum) {
             throw new ToolRuntimeException(
                     "invalid_tool_input",
-                    "参数 " + field + " 必须在 "
-                            + minimum + " 到 " + maximum + " 之间"
+                    "参数 " + field + " 收到 " + value
+                            + "，超出允许范围（" + minimum + " 到 "
+                            + maximum + "）；请调整取值后重试"
             );
         }
         return value;
@@ -37,7 +38,7 @@ final class WorkspaceFileToolSupport {
         if (value == null || value.isBlank()) {
             throw new ToolRuntimeException(
                     "invalid_tool_input",
-                    "参数 " + field + " 不能为空"
+                    "参数 " + field + " 不能为空；请提供具体取值后重试"
             );
         }
         return value;

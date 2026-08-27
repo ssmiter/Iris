@@ -258,6 +258,7 @@ public class CapabilityService {
             boolean regex,
             boolean caseSensitive,
             String glob,
+            int offset,
             int limit,
             String systemCode
     ) {
@@ -269,6 +270,9 @@ public class CapabilityService {
                     "search_query_too_long",
                     "搜索内容不能超过 " + MAX_QUERY_CHARACTERS + " 个字符"
             );
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset 不能为负");
         }
         if (limit < 1 || limit > 100) {
             throw new IllegalArgumentException(
@@ -354,10 +358,11 @@ public class CapabilityService {
                 candidates.size(),
                 matches.size(),
                 matches.stream()
+                        .skip(offset)
                         .limit(limit)
                         .map(this::fileMatch)
                         .toList(),
-                matches.size() > limit,
+                matches.size() > (long) offset + limit,
                 candidates.size(),
                 retrievalStrategy,
                 semanticModelIdentity
@@ -419,6 +424,11 @@ public class CapabilityService {
                 score += 80;
                 matchedField = prefer(matchedField, "name");
             }
+            if (!document.searchHint().isEmpty()
+                    && pattern.matcher(document.searchHint()).find()) {
+                score += 60;
+                matchedField = prefer(matchedField, "searchHint");
+            }
             if (pattern.matcher(document.path()).find()) {
                 score += 50;
                 matchedField = prefer(matchedField, "path");
@@ -460,6 +470,7 @@ public class CapabilityService {
     private String semanticText(CatalogDocument document) {
         return String.join("\n",
                 document.name(),
+                document.searchHint(),
                 document.path(),
                 document.description(),
                 document.parameterNames(),
@@ -502,6 +513,7 @@ public class CapabilityService {
         }
         List<String> priority = List.of(
                 "name",
+                "searchHint",
                 "path",
                 "description",
                 "parameters",
@@ -555,6 +567,9 @@ public class CapabilityService {
                 "tool",
                 binding.capabilityPath(),
                 binding.manifest().name(),
+                binding.manifest().searchHint() == null
+                        ? ""
+                        : binding.manifest().searchHint(),
                 binding.manifest().description(),
                 String.join(" ", parameters),
                 metadata,
@@ -576,6 +591,7 @@ public class CapabilityService {
                 "pipeline",
                 definition.capabilityPath(),
                 definition.name(),
+                "",
                 definition.description(),
                 String.join(" ", parameters),
                 definition.id() + " " + definition.version()
@@ -601,6 +617,7 @@ public class CapabilityService {
                 definition.kind(),
                 definition.path(),
                 definition.name(),
+                definition.manifest().path("searchHint").asText(""),
                 definition.description(),
                 String.join(" ", parameters),
                 definition.id() + " " + definition.version()
@@ -928,6 +945,7 @@ public class CapabilityService {
             String kind,
             String path,
             String name,
+            String searchHint,
             String description,
             String parameterNames,
             String metadata,

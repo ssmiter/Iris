@@ -56,6 +56,25 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 - 两层都注册为 Capability，遵守同一发现、版本、审批、证据和历史规则；领域能力不得绕开 Tool Runtime；
 - Agentic 负责在未知任务中发现并组合它们。长期竞争力来自高质量生活能力，而不是 Tool 数量或 Loop 复杂度。
 
+### 2.2 结果与错误的文案规范（docs/42 §4 P0）
+
+工具返回的对象同时是模型的教材，三条规范让失败与截断都可一轮自愈：
+
+1. **错误即教学**。参数失败的每个可预见分支返回「为什么错 + 下一步怎么做」
+   的一句人话（「参数 limit 收到 0，超出允许范围（1 到 2000）；请调整取值后
+   重试」），不是裸错误码。errorCode 保持 snake_case 稳定词表供程序分支，
+   人话文案面向模型当轮自我纠正，两者各司其职不互相替代。
+2. **截断自报**。列表型结果（搜索、目录、清单）仅在真正截断时才出现
+   `truncated` / `appliedLimit` 字段，后面还有命中时附 `nextOffset`；
+   不出现即全集，模型不许把前一页当全集下结论。尾部 `guidance` 始终给出
+   扫描证据与续页或收窄的人话指引。
+3. **空结果非空人话**。空命中不返回空数组加沉默；`guidance` 说明实际搜了
+   什么（候选数、已扫描数）并给出下一步（换关键词、调 glob、确认路径），
+   防空 tool_result 引发轮次边界误判。
+
+落地参照：`search_files` 与 `list_files` 的 truncated/guidance 结构，
+`WorkspaceFileToolSupport` 的参数校验文案。
+
 ## 3. 注册表
 
 - `ToolRegistry` 启动时扫描 `tools/<domain>/<dir>/**` 下的 Tool，实现 `manifest.id + version → validated manifest + executor` 精确绑定；
@@ -104,8 +123,8 @@ class 文件目录当持久化数据库。Capability Catalog 是独立的语义�
 
 | capability path | name | 作用 | 关键边界 |
 |---|---|---|---|
-| `/system/files/list_files` | `list_files` | 确认目录结构与候选文件 | 稳定排序、深度与数量预算、不跟随目录链接 |
-| `/system/files/search_files` | `search_files` | 在工作区文本或只读语义目录中定位事实 | 工作区默认字面量；能力查询按自然词元相关性排序；可选正则、范围与命中预算、零命中也返回扫描证据 |
+| `/system/files/list_files` | `list_files` | 确认目录结构与候选文件 | 按最近修改降序、路径决胜；深度与扫描预算、offset 翻页、不跟随目录链接 |
+| `/system/files/search_files` | `search_files` | 在工作区文本或只读语义目录中定位事实 | 工作区默认字面量，命中按文件最近修改降序；能力查询按自然词元相关性排序；可选正则、范围与命中预算、offset 翻页、零命中也返回扫描证据 |
 | `/system/files/read_file` | `read_file` | 按行读取一个文本文件 | 行号、范围、字符预算、编码与二进制识别、给出下一段游标 |
 
 - 三个 Tool 都放在 `tools/system/files/`，因此目录路径天然一致；它们属于常驻工作区原语，
@@ -298,7 +317,7 @@ Iris 的唯一实现路径。
 |---|---|---|
 | `list_capabilities(path?)` | 看目录树（带统计） | 顶层调用返回各域与工具数；懒加载，不返回 schema |
 | `read_capability(path)` | 读取精确 Capability Definition | 返回判别联合 `ToolManifest | PipelineDefinition | GuidanceDefinition` |
-| `search_files(namespace="capabilities", query, path?)` | 定点搜索能力描述 | 复用文件搜索心智，覆盖 name/description/目录段/参数名；结果按能力聚合并返回扫描证据 |
+| `search_files(namespace="capabilities", query, path?)` | 定点搜索能力描述 | 复用文件搜索心智，覆盖 name/searchHint/description/目录段/参数名；结果按能力聚合并返回扫描证据 |
 
 发现路径必须服从任务的确定性，而不是机械遍历目录。对象或动作已经明确的点状任务直接用
 `search_files(namespace="capabilities")`；只有词汇和结构都未知、用户询问能力全景，或确实
@@ -340,8 +359,13 @@ Definition 正文仍接受 Context Window 与工具结果预算：过大的读�
 进上下文，也避免少数巨型 Definition 挤掉用户请求和工具观察。
 
 **搜索索引首版基线**：Java 后端在 Registry 完成校验后编译紧凑的结构化搜索文档
-（name、description、目录段、参数属性名、风险与副作用），查询直接在内存 projection
-上完成，不生成 Markdown、不经过前端、不维护第二份执行真相。先用召回率、误选率、
+（name、searchHint、description、目录段、参数属性名、风险与副作用），查询直接在内存 projection
+上完成，不生成 Markdown、不经过前端、不维护第二份执行真相。词法打分优先级为
+name > searchHint > description，目录段与参数名更次；目录浏览路径不变——
+目录覆盖「我知道去哪找」，searchHint 覆盖「我只知道要干什么」（docs/42 §4 P0）。
+searchHint 是可选的 3 到 10 词发现短语，必须与工具名正交（同义或领域词，
+不复述名字本身），未声明的工具只少一条打分语料，不影响注册。
+先用召回率、误选率、
 schema token 成本和延迟观察真实数据；只有规模和轨迹证明线性扫描不够时，才替换为
 倒排、Lucene 或向量混合索引，模型侧契约保持不变。
 
@@ -530,8 +554,11 @@ Capability snapshot、Tool observation 或日志。最终 Windows 产品仍应�
 
 - [ ] name snake_case 且全局唯一
 - [ ] description 一句话说清"做什么、何时用"
+- [ ] 高频工具声明 searchHint（3 到 10 词，与工具名正交，见 §6）
 - [ ] 放在正确目录（路径自动正确）
 - [ ] input/output JSON Schema 完整且属性有描述
+- [ ] 参数失败返回「为什么错 + 下一步怎么做」人话，errorCode 保持 snake_case（§2.2）
+- [ ] 列表型结果仅截断时出现 truncated/appliedLimit 并附续页指引；空结果给非空人话（§2.2）
 - [ ] 显式声明 risk、side effect 和 approval policy
 - [ ] 能由输入生成 Resource Claims、目标版本和人话影响
 - [ ] 声明幂等、verify/evidence 和 recovery 语义

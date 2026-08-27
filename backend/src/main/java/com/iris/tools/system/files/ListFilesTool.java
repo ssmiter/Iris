@@ -47,7 +47,7 @@ public class ListFilesTool implements Tool {
         this.fileService = fileService;
         this.manifest = new ToolManifest(
                 "iris.system.files.list_files",
-                "3",
+                "4",
                 "list_files",
                 "列出工作区目录结构；需要确认文件位置、名称或范围时使用",
                 inputSchema(),
@@ -60,7 +60,8 @@ public class ListFilesTool implements Tool {
                 ToolManifest.EvidencePolicy.SUMMARY,
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
-                ToolManifest.CancellationSemantics.COOPERATIVE
+                ToolManifest.CancellationSemantics.COOPERATIVE,
+                "browse directory tree show folder entries"
         );
     }
 
@@ -75,9 +76,11 @@ public class ListFilesTool implements Tool {
                 input.path("path").asText(".")
         );
         boolean recursive = input.path("recursive").asBoolean(false);
+        int offset = Math.max(0, input.path("offset").asInt(0));
         ObjectNode normalized = objectMapper.createObjectNode();
         normalized.put("path", path);
         normalized.put("recursive", recursive);
+        normalized.put("offset", offset);
         putOptionalText(normalized, "glob", input.get("glob"));
         return new PreparedOperation(
                 normalized,
@@ -95,6 +98,7 @@ public class ListFilesTool implements Tool {
             ToolContext context
     ) throws IOException {
         JsonNode input = operation.normalizedInput();
+        int offset = input.path("offset").asInt(0);
         ListResult result = fileService.list(
                 context.workspaceRoot(),
                 new ListRequest(
@@ -106,6 +110,7 @@ public class ListFilesTool implements Tool {
                         nullableText(input.get("glob")),
                         false,
                         false,
+                        offset,
                         DEFAULT_RESULTS
                 ),
                 context::cancelled
@@ -124,15 +129,65 @@ public class ListFilesTool implements Tool {
             }
             item.put("modifiedAt", entry.modifiedAt().toString());
         }
+        output.put("totalEntries", result.totalEntries());
         output.put("scannedEntries", result.scannedEntries());
         output.put("skippedEntries", result.skippedEntries());
-        output.put("truncated", result.truncated());
-        output.put("guidance", result.truncated()
-                ? "结果已到预算；请缩小 path、glob 或改为非递归查看"
-                : result.entries().isEmpty()
-                        ? "目录存在但当前条件下没有可见条目"
-                        : "目录范围已列完");
+        int shown = result.entries().size();
+        boolean hasMore = offset + shown < result.totalEntries();
+        // 截断信号仅在真正截断时出现，防模型把前一页当全集
+        if (result.scanTruncated() || hasMore) {
+            output.put("truncated", true);
+            output.put("appliedLimit", DEFAULT_RESULTS);
+            if (hasMore) {
+                output.put("nextOffset", offset + shown);
+            }
+        }
+        output.put("guidance", guidance(
+                result,
+                offset,
+                hasMore,
+                input.get("glob") != null
+        ));
         return ToolOutcome.succeeded(output);
+    }
+
+    private String guidance(
+            ListResult result,
+            int offset,
+            boolean hasMore,
+            boolean hasGlob
+    ) {
+        int shown = result.entries().size();
+        if (shown == 0) {
+            if (offset > 0 && result.totalEntries() > 0) {
+                return "offset 已超出结果末尾，共 " + result.totalEntries()
+                        + " 条；用更小的 offset 翻页";
+            }
+            if (result.scanTruncated()) {
+                return "扫描预算已用尽，未在已扫描部分找到可见条目；"
+                        + "用更具体的路径或 glob 收窄";
+            }
+            if (hasGlob) {
+                return "没有匹配该 glob 的条目；调整 glob，或去掉 glob 查看整个目录";
+            }
+            if (result.scannedEntries() == 0) {
+                return "这个目录是空的";
+            }
+            return "没有可见条目，" + result.skippedEntries()
+                    + " 个隐藏或生成目录条目已跳过";
+        }
+        if (result.scanTruncated()) {
+            return "扫描预算已用尽，结果只覆盖部分目录，已收集 "
+                    + result.totalEntries() + " 条中显示 " + shown
+                    + " 条；用更具体的路径或 glob 收窄";
+        }
+        if (hasMore) {
+            return "结果已截断，共 " + result.totalEntries() + " 条中显示第 "
+                    + (offset + 1) + " 到 " + (offset + shown)
+                    + " 条，按最近修改排序；用 offset=" + (offset + shown)
+                    + " 翻页，或用更具体的路径或 glob 收窄";
+        }
+        return "目录范围已列完，共 " + result.totalEntries() + " 条";
     }
 
     @Override
@@ -174,6 +229,8 @@ public class ListFilesTool implements Tool {
                 .put("description", "是否递归列出；默认 false");
         properties.putObject("glob").put("type", "string")
                 .put("description", "相对基础目录的可选 glob，如 **/*.java");
+        properties.putObject("offset").put("type", "integer")
+                .put("description", "结果起始偏移，按最近修改排序后翻页用；默认 0");
         return schema;
     }
 
@@ -184,7 +241,7 @@ public class ListFilesTool implements Tool {
                 .put("description", "实际枚举的工作区逻辑目录");
         ObjectNode entries = properties.putObject("entries");
         entries.put("type", "array");
-        entries.put("description", "稳定排序后的文件、目录与链接条目");
+        entries.put("description", "按最近修改时间降序、路径决胜排序的本页条目");
         ObjectNode item = entries.putObject("items");
         item.put("type", "object");
         ObjectNode itemProperties = item.putObject("properties");
@@ -192,17 +249,23 @@ public class ListFilesTool implements Tool {
         itemProperties.putObject("kind").put("type", "string");
         itemProperties.putObject("sizeBytes").put("type", "integer");
         itemProperties.putObject("modifiedAt").put("type", "string");
+        properties.putObject("totalEntries").put("type", "integer")
+                .put("description", "本次扫描在预算内收集到的匹配条目总数");
         properties.putObject("scannedEntries").put("type", "integer")
                 .put("description", "为得到结果实际检查的条目数");
         properties.putObject("skippedEntries").put("type", "integer")
                 .put("description", "因隐藏、生成目录或类型边界跳过的数量");
         properties.putObject("truncated").put("type", "boolean")
-                .put("description", "是否因扫描或结果预算提前结束");
+                .put("description", "结果未完整时才出现，恒为 true；不出现即全集");
+        properties.putObject("appliedLimit").put("type", "integer")
+                .put("description", "每页条数上限；仅截断时出现");
+        properties.putObject("nextOffset").put("type", "integer")
+                .put("description", "下一页的 offset；仅当后面还有条目时出现");
         properties.putObject("guidance").put("type", "string")
-                .put("description", "范围状态与下一步收窄提示");
+                .put("description", "范围状态、空结果说明与下一步收窄或翻页提示");
         schema.putArray("required")
-                .add("path").add("entries").add("scannedEntries")
-                .add("skippedEntries").add("truncated").add("guidance");
+                .add("path").add("entries").add("totalEntries")
+                .add("scannedEntries").add("skippedEntries").add("guidance");
         return schema;
     }
 }

@@ -3,8 +3,11 @@ package com.iris.tools.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -20,7 +23,8 @@ public class ToolInputValidator {
         if (input == null || !input.isObject()) {
             throw new ToolRuntimeException(
                     "invalid_tool_input",
-                    "工具输入必须是 JSON object"
+                    "工具输入必须是 JSON object。该工具期望的参数："
+                            + expectedFields(schema)
             );
         }
         Set<String> required = new HashSet<>();
@@ -29,7 +33,8 @@ public class ToolInputValidator {
             if (!input.has(field) || input.get(field).isNull()) {
                 throw new ToolRuntimeException(
                         "invalid_tool_input",
-                        "缺少必填参数: " + field
+                        "缺少必填参数 " + field + "。该工具期望的参数："
+                                + expectedFields(schema)
                 );
             }
         }
@@ -50,8 +55,8 @@ public class ToolInputValidator {
                 throw new ToolRuntimeException(
                         "invalid_tool_input",
                         "未声明参数: " + String.join(", ", unknown)
-                                + "；只允许这些字段: "
-                                + String.join(", ", allowed)
+                                + "。该工具期望的参数："
+                                + expectedFields(schema)
                 );
             }
         }
@@ -62,11 +67,21 @@ public class ToolInputValidator {
             if (propertySchema == null) {
                 continue;
             }
-            requireType(name, propertySchema.path("type").asText(), input.get(name));
+            requireType(
+                    name,
+                    propertySchema.path("type").asText(),
+                    input.get(name),
+                    schema
+            );
         }
     }
 
-    private void requireType(String field, String type, JsonNode value) {
+    private void requireType(
+            String field,
+            String type,
+            JsonNode value,
+            JsonNode schema
+    ) {
         boolean valid = switch (type) {
             case "string" -> value.isTextual();
             case "integer" -> value.isIntegralNumber();
@@ -80,7 +95,47 @@ public class ToolInputValidator {
             throw new ToolRuntimeException(
                     "invalid_tool_input",
                     "参数 " + field + " 类型应为 " + type
+                            + "，实际收到 " + actualType(value)
+                            + "。该工具期望的参数：" + expectedFields(schema)
             );
         }
+    }
+
+    private String expectedFields(JsonNode schema) {
+        Set<String> required = new HashSet<>();
+        schema.path("required").forEach(node -> required.add(node.asText()));
+        List<String> fields = new ArrayList<>();
+        JsonNode properties = schema.path("properties");
+        properties.fieldNames().forEachRemaining(name -> {
+            String type = properties.path(name).path("type").asText("any");
+            fields.add(name + "(" + type
+                    + (required.contains(name) ? ", 必填" : ", 可选") + ")");
+        });
+        return fields.isEmpty() ? "无参数" : String.join(", ", fields);
+    }
+
+    private String actualType(JsonNode value) {
+        if (value.isTextual()) {
+            return "string";
+        }
+        if (value.isIntegralNumber()) {
+            return "integer";
+        }
+        if (value.isNumber()) {
+            return "number";
+        }
+        if (value.isBoolean()) {
+            return "boolean";
+        }
+        if (value.isArray()) {
+            return "array";
+        }
+        if (value.isObject()) {
+            return "object";
+        }
+        if (value.isNull()) {
+            return "null";
+        }
+        return value.getNodeType().name().toLowerCase(Locale.ROOT);
     }
 }

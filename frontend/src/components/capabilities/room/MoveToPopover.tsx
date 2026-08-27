@@ -95,12 +95,13 @@ export function MoveToPopover({
               type="button"
               role="menuitem"
               disabled={here}
+              aria-current={here ? 'location' : undefined}
               onClick={() => onSelect(row.path)}
               className={cn(
                 'press flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-small',
                 'transition-colors duration-fast focus-visible:outline-none focus-visible:shadow-focus',
                 here
-                  ? 'cursor-default text-ink-muted'
+                  ? 'cursor-default text-ink-muted opacity-60'
                   : 'text-ink-subtle hover:bg-surface-muted hover:text-ink',
               )}
               style={{ paddingLeft: `${0.625 + row.depth * 0.875}rem` }}

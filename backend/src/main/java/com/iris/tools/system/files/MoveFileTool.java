@@ -22,6 +22,7 @@ import com.iris.workspace.WorkspaceFileMutationService.TargetState;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 
@@ -76,7 +77,7 @@ public class MoveFileTool implements Tool {
                 context.workspaceRoot(),
                 input.path("destination_path").asText()
         );
-        requireMoveShape(source, destination);
+        requireMoveShape(context.workspaceRoot(), source, destination);
         checkpoints.requireCapturable(source);
         checkpoints.requireCapturable(destination);
 
@@ -122,7 +123,7 @@ public class MoveFileTool implements Tool {
         );
         files.requireVersion(source, sourceClaim.expectedVersion());
         files.requireVersion(destination, destinationClaim.expectedVersion());
-        requireMoveShape(source, destination);
+        requireMoveShape(context.workspaceRoot(), source, destination);
         if (context.cancelled()) {
             throw ToolRuntimeException.beforeCommit(
                     "cancelled_before_commit",
@@ -207,13 +208,17 @@ public class MoveFileTool implements Tool {
     }
 
     private void requireMoveShape(
+            Path workspaceRoot,
             TargetState source,
             TargetState destination
-    ) {
+    ) throws IOException {
         if (!source.exists()) {
             throw new ToolRuntimeException(
                     "workspace_path_not_found",
-                    "要移动的工作区文件不存在：" + source.logicalPath()
+                    files.describeMissingPath(
+                            workspaceRoot,
+                            source.logicalPath()
+                    )
             );
         }
         if (destination.exists()) {

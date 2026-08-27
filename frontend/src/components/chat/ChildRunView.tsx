@@ -535,25 +535,111 @@ interface ChildRunCapsulesProps {
   ) => void
 }
 
+/** 终态胶囊原地停留时长（docs/42 P0：约 1.6s） */
+const CAPSULE_LINGER_MS = 1600
+/** 逗留结束后的淡出下沉时长 */
+const CAPSULE_EXIT_MS = 280
+
+/** 刚到达终态的 Run 的逗留快照：live 列表一摘就会瞬消，留一份静止完成态。 */
+interface RetainedCapsule {
+  run: RunView
+  exiting: boolean
+}
+
+function prefersReducedMotion() {
+  if (typeof window === 'undefined') return true
+  return (
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    || document.documentElement.dataset.motion === 'reduce'
+  )
+}
+
 /**
- * ComposerDock 上方的运行中胶囊条：只列出当前会话仍未终态的子 Run。
+ * ComposerDock 上方的运行中胶囊条：列出当前会话的子 Run。
+ * 到达终态不瞬消——先变静止完成态原地停留片刻，再淡出下沉移除（docs/42 P0）。
  */
 export function ChildRunCapsules({
   onOpen,
 }: ChildRunCapsulesProps) {
   const runsById = useChatStore((state) => state.runsById)
-
-  const liveChildren = useMemo(
-    () =>
-      Object.values(runsById)
-        .filter(
-          (run) => run.parentRunId !== null && !isTerminalRunPhase(run.phase),
-        )
-        .sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
-    [runsById],
+  const [retained, setRetained] = useState<ReadonlyMap<string, RetainedCapsule>>(
+    new Map(),
   )
+  const seenLiveRef = useRef<Set<string>>(new Set())
+  const seenTerminalRef = useRef<Set<string>>(new Set())
+  const timersRef = useRef<number[]>([])
 
-  if (liveChildren.length === 0) return null
+  // 只逗留「在本组件视野里从进行中走到终态」的 Run；
+  // 打开页面时投影里已有的历史终态直接忽略，不补播完成动画。
+  useEffect(() => {
+    const children = Object.values(runsById).filter(
+      (run) => run.parentRunId !== null,
+    )
+    for (const run of children) {
+      if (!isTerminalRunPhase(run.phase)) seenLiveRef.current.add(run.runId)
+    }
+    const finished = children.filter(
+      (run) =>
+        isTerminalRunPhase(run.phase)
+        && seenLiveRef.current.has(run.runId)
+        && !seenTerminalRef.current.has(run.runId),
+    )
+    if (finished.length === 0) return
+    for (const run of finished) seenTerminalRef.current.add(run.runId)
+    // motion-reduce 不留恋：终态即移除
+    if (prefersReducedMotion()) return
+
+    setRetained((current) => {
+      const next = new Map(current)
+      for (const run of finished) next.set(run.runId, { run, exiting: false })
+      return next
+    })
+    const ids = finished.map((run) => run.runId)
+    timersRef.current.push(
+      window.setTimeout(() => {
+        setRetained((current) => {
+          const next = new Map(current)
+          for (const id of ids) {
+            const entry = next.get(id)
+            if (entry) next.set(id, { ...entry, exiting: true })
+          }
+          return next
+        })
+      }, CAPSULE_LINGER_MS),
+      window.setTimeout(() => {
+        setRetained((current) => {
+          const next = new Map(current)
+          for (const id of ids) next.delete(id)
+          return next
+        })
+      }, CAPSULE_LINGER_MS + CAPSULE_EXIT_MS),
+    )
+  }, [runsById])
+
+  // 卸载时清掉全部逗留定时器
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => {
+      for (const id of timers) window.clearTimeout(id)
+    }
+  }, [])
+
+  const capsules = useMemo(() => {
+    const live = Object.values(runsById)
+      .filter(
+        (run) => run.parentRunId !== null && !isTerminalRunPhase(run.phase),
+      )
+      .map((run) => ({ run, exiting: false }))
+    const done = [...retained.values()].map(({ run, exiting }) => ({
+      run,
+      exiting,
+    }))
+    return [...live, ...done].sort((a, b) =>
+      a.run.startedAt.localeCompare(b.run.startedAt),
+    )
+  }, [runsById, retained])
+
+  if (capsules.length === 0) return null
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-1 pb-2">
@@ -561,17 +647,19 @@ export function ChildRunCapsules({
         aria-hidden="true"
         className="h-3.5 w-3.5 text-ink-muted"
       />
-      {liveChildren.map((run) => {
+      {capsules.map(({ run, exiting }) => {
         const meta = phaseMeta[run.phase]
         return (
           <button
             key={run.runId}
             type="button"
+            tabIndex={exiting ? -1 : undefined}
             className={cn(
               'inline-flex max-w-64 items-center gap-1.5 rounded-full border border-border/70 bg-surface-raised/92 px-2.5 py-1',
               'text-caption text-ink-subtle shadow-hairline backdrop-blur-md',
-              'transition-[color,background-color,transform] duration-fast ease-standard',
-              'hover:bg-surface-muted active:scale-[0.98]',
+              exiting
+                ? 'pointer-events-none translate-y-[3px] opacity-0 transition-[opacity,transform] duration-normal ease-exit'
+                : 'transition-[color,background-color,transform] duration-fast ease-standard hover:bg-surface-muted active:scale-[0.98]',
               'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
             )}
             onClick={() => onOpen(run.runId)}
@@ -582,6 +670,9 @@ export function ChildRunCapsules({
                 'h-1.5 w-1.5 shrink-0 rounded-full',
                 meta.tone === 'info' && 'bg-primary',
                 meta.tone === 'warning' && 'bg-warning',
+                meta.tone === 'success' && 'bg-success',
+                meta.tone === 'danger' && 'bg-danger',
+                meta.tone === 'neutral' && 'bg-ink-muted',
               )}
             />
             <span className="truncate">{run.purpose}</span>

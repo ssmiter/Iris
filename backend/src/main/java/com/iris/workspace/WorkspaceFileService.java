@@ -208,7 +208,7 @@ public class WorkspaceFileService {
         pending.push(new DirectoryFrame(base.physicalPath(), 0));
         int scanned = 0;
         int skipped = 0;
-        boolean truncated = false;
+        boolean scanTruncated = false;
 
         while (!pending.isEmpty()) {
             checkCancelled(cancelled);
@@ -218,7 +218,7 @@ public class WorkspaceFileService {
             for (Path child : children) {
                 checkCancelled(cancelled);
                 if (++scanned > MAX_SCANNED_ENTRIES) {
-                    truncated = true;
+                    scanTruncated = true;
                     break;
                 }
                 String relativeToBase = logicalRelative(
@@ -253,10 +253,6 @@ public class WorkspaceFileService {
                                     : null,
                             attributes.lastModifiedTime().toInstant()
                     ));
-                    if (entries.size() >= request.maxResults()) {
-                        truncated = true;
-                        break;
-                    }
                 }
                 if (request.recursive()
                         && attributes.isDirectory()
@@ -272,7 +268,7 @@ public class WorkspaceFileService {
                     }
                 }
             }
-            if (truncated) {
+            if (scanTruncated) {
                 break;
             }
             for (int index = directories.size() - 1; index >= 0; index--) {
@@ -282,12 +278,20 @@ public class WorkspaceFileService {
                 ));
             }
         }
+        // 排序即相关性：最近修改的排前面，平局按路径，截断保留的即最相关头部
+        entries.sort(Comparator.comparing(FileEntry::modifiedAt)
+                .reversed()
+                .thenComparing(FileEntry::path));
+        int totalEntries = entries.size();
+        int from = Math.min(Math.max(request.offset(), 0), totalEntries);
+        int to = Math.min(from + request.maxResults(), totalEntries);
         return new ListResult(
                 base.logicalPath(),
-                List.copyOf(entries),
+                List.copyOf(entries.subList(from, to)),
+                totalEntries,
                 scanned,
                 skipped,
-                truncated
+                scanTruncated
         );
     }
 
@@ -303,15 +307,17 @@ public class WorkspaceFileService {
                 );
         GlobFilter matcher = compileGlob(request.glob());
         Pattern regex = compileSearchPattern(request);
-        List<SearchMatch> matches = new ArrayList<>();
+        List<CandidateFile> candidates = new ArrayList<>();
         Deque<Path> pending = new ArrayDeque<>();
         pending.push(base.physicalPath());
         int candidateFiles = 0;
         int searchedFiles = 0;
         int skippedFiles = 0;
         int scannedEntries = 0;
-        boolean truncated = false;
+        boolean scanTruncated = false;
 
+        // 第一阶段：走完目录树收集候选文件；真正的文本扫描放到
+        // 第二阶段按最近修改排序后进行，命中预算截断时保留最相关头部
         while (!pending.isEmpty()) {
             checkCancelled(cancelled);
             Path directory = pending.pop();
@@ -320,7 +326,7 @@ public class WorkspaceFileService {
             for (Path child : children) {
                 checkCancelled(cancelled);
                 if (++scannedEntries > MAX_SCANNED_ENTRIES) {
-                    truncated = true;
+                    scanTruncated = true;
                     break;
                 }
                 String name = child.getFileName().toString();
@@ -359,63 +365,79 @@ public class WorkspaceFileService {
                 }
                 candidateFiles++;
                 if (candidateFiles > MAX_SEARCH_FILES) {
-                    truncated = true;
+                    scanTruncated = true;
                     break;
                 }
                 if (attributes.size() > MAX_SEARCH_FILE_BYTES) {
                     skippedFiles++;
                     continue;
                 }
-                TextEncoding encoding;
-                try {
-                    encoding = detectEncoding(child);
-                } catch (ToolRuntimeException exception) {
-                    skippedFiles++;
-                    continue;
-                }
-                searchedFiles++;
-                searchFile(
-                        workspaceRoot,
+                candidates.add(new CandidateFile(
                         child,
-                        encoding,
-                        regex,
-                        request.maxResults(),
-                        matches,
-                        cancelled
-                );
-                if (matches.size() >= request.maxResults()) {
-                    truncated = true;
-                    break;
-                }
+                        attributes.lastModifiedTime().toInstant()
+                ));
             }
-            if (truncated) {
+            if (scanTruncated) {
                 break;
             }
             for (int index = directories.size() - 1; index >= 0; index--) {
                 pending.push(directories.get(index));
             }
         }
+        candidates.sort(Comparator.comparing(CandidateFile::modifiedAt)
+                .reversed()
+                .thenComparing(CandidateFile::path));
+        List<SearchMatch> matches = new ArrayList<>();
+        int matchBudget = Math.max(request.offset(), 0) + request.maxResults();
+        int processed = 0;
+        for (CandidateFile candidate : candidates) {
+            checkCancelled(cancelled);
+            processed++;
+            TextEncoding encoding;
+            try {
+                encoding = detectEncoding(candidate.path());
+            } catch (ToolRuntimeException exception) {
+                skippedFiles++;
+                continue;
+            }
+            searchedFiles++;
+            searchFile(
+                    workspaceRoot,
+                    candidate,
+                    encoding,
+                    regex,
+                    matchBudget,
+                    matches,
+                    cancelled
+            );
+            if (matches.size() >= matchBudget) {
+                break;
+            }
+        }
+        int unsearchedCandidates = candidates.size() - processed;
+        int from = Math.min(Math.max(request.offset(), 0), matches.size());
         return new SearchResult(
                 base.logicalPath(),
-                List.copyOf(matches),
+                List.copyOf(matches.subList(from, matches.size())),
                 candidateFiles,
                 searchedFiles,
                 skippedFiles,
                 scannedEntries,
-                truncated
+                scanTruncated,
+                unsearchedCandidates
         );
     }
 
     private void searchFile(
             Path workspaceRoot,
-            Path file,
+            CandidateFile candidate,
             TextEncoding encoding,
             Pattern pattern,
             int maxResults,
             List<SearchMatch> matches,
             BooleanSupplier cancelled
     ) throws IOException {
-        try (BufferedReader reader = openReader(file, encoding)) {
+        try (BufferedReader reader = openReader(candidate.path(), encoding)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -433,10 +455,11 @@ public class WorkspaceFileService {
                     preview = preview.substring(0, 500);
                 }
                 matches.add(new SearchMatch(
-                        pathGuard.logicalPath(workspaceRoot, file),
+                        pathGuard.logicalPath(workspaceRoot, candidate.path()),
                         lineNumber,
                         matcher.start() + 1,
-                        preview
+                        preview,
+                        candidate.modifiedAt()
                 ));
                 if (matches.size() >= maxResults) {
                     return;
@@ -633,6 +656,7 @@ public class WorkspaceFileService {
             String pattern,
             boolean includeHidden,
             boolean includeGenerated,
+            int offset,
             int maxResults
     ) {
     }
@@ -648,9 +672,10 @@ public class WorkspaceFileService {
     public record ListResult(
             String path,
             List<FileEntry> entries,
+            int totalEntries,
             int scannedEntries,
             int skippedEntries,
-            boolean truncated
+            boolean scanTruncated
     ) {
     }
 
@@ -662,6 +687,7 @@ public class WorkspaceFileService {
             String glob,
             boolean includeHidden,
             boolean includeGenerated,
+            int offset,
             int maxResults
     ) {
     }
@@ -670,7 +696,8 @@ public class WorkspaceFileService {
             String path,
             int line,
             int column,
-            String preview
+            String preview,
+            Instant modifiedAt
     ) {
     }
 
@@ -681,7 +708,8 @@ public class WorkspaceFileService {
             int searchedFiles,
             int skippedFiles,
             int scannedEntries,
-            boolean truncated
+            boolean scanTruncated,
+            int unsearchedCandidates
     ) {
     }
 
@@ -704,6 +732,9 @@ public class WorkspaceFileService {
     }
 
     private record DirectoryFrame(Path path, int depth) {
+    }
+
+    private record CandidateFile(Path path, Instant modifiedAt) {
     }
 
     private record GlobFilter(

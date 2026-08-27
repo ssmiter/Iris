@@ -93,7 +93,8 @@ public class ResidentProcessTool implements Tool {
                         : ToolManifest.ConcurrencySemantics.SERIAL,
                 sideEffect == ToolManifest.SideEffect.NONE
                         ? ToolManifest.CancellationSemantics.COOPERATIVE
-                        : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY
+                        : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY,
+                definition.searchHint()
         );
         this.process = sharedProcess;
     }

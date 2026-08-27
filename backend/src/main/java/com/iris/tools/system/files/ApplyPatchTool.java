@@ -57,7 +57,8 @@ public class ApplyPatchTool implements Tool {
                 30,
                 8_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
-                ToolManifest.EvidencePolicy.REQUIRED
+                ToolManifest.EvidencePolicy.REQUIRED,
+                "edit modify replace exact text change"
         );
     }
 
@@ -251,14 +252,18 @@ public class ApplyPatchTool implements Tool {
             throw new ToolRuntimeException(
                     "workspace_patch_text_not_found",
                     "old_text 在 " + path
-                            + " 中不存在；请先用 read_file 核对当前原文"
+                            + " 中没有匹配。常见原因是文件内容已被改动，"
+                            + "或缩进、空白与原文不一致；请先用 read_file "
+                            + "重读目标区段，再按最新原文重试"
             );
         }
         if (!replaceAll && matches > 1) {
             throw new ToolRuntimeException(
                     "workspace_patch_not_unique",
                     "old_text 在 " + path + " 中出现 " + matches
-                            + " 次；请提供更多相邻原文，或明确 replace_all=true"
+                            + " 次，无法确定改哪一处；请在 old_text 里带上"
+                            + "更多相邻上下文行使它唯一，或确实要全部替换时"
+                            + "设 replace_all=true"
             );
         }
     }

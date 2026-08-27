@@ -2,6 +2,11 @@ package com.iris.tools.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+/**
+ * 工具清单。searchHint 为可选的发现辅助短语（3-10 个与工具名正交的
+ * 同义/领域词，docs/42 §4 P0）：目录浏览覆盖「我知道去哪找」，
+ * searchHint 覆盖「我只知道要干什么」；未声明为 null。
+ */
 public record ToolManifest(
         String id,
         String version,
@@ -17,8 +22,53 @@ public record ToolManifest(
         EvidencePolicy evidencePolicy,
         ContextRetention contextRetention,
         ConcurrencySemantics concurrency,
-        CancellationSemantics cancellation
+        CancellationSemantics cancellation,
+        String searchHint
 ) {
+    public ToolManifest {
+        searchHint = searchHint == null || searchHint.isBlank()
+                ? null
+                : searchHint.trim();
+    }
+
+    /** 未声明 searchHint 的全量构造器；存量工具沿用，等价于 searchHint = null。 */
+    public ToolManifest(
+            String id,
+            String version,
+            String name,
+            String description,
+            JsonNode inputSchema,
+            JsonNode outputSchema,
+            RiskLevel riskLevel,
+            SideEffect sideEffect,
+            int timeoutSeconds,
+            int resultCharacterLimit,
+            IdempotencySemantics idempotency,
+            EvidencePolicy evidencePolicy,
+            ContextRetention contextRetention,
+            ConcurrencySemantics concurrency,
+            CancellationSemantics cancellation
+    ) {
+        this(
+                id,
+                version,
+                name,
+                description,
+                inputSchema,
+                outputSchema,
+                riskLevel,
+                sideEffect,
+                timeoutSeconds,
+                resultCharacterLimit,
+                idempotency,
+                evidencePolicy,
+                contextRetention,
+                concurrency,
+                cancellation,
+                null
+        );
+    }
+
     public ToolManifest(
             String id,
             String version,
@@ -51,6 +101,44 @@ public record ToolManifest(
                 sideEffect == SideEffect.NONE
                         ? CancellationSemantics.COOPERATIVE
                         : CancellationSemantics.COMMIT_BOUNDARY
+        );
+    }
+
+    /** 同上便捷形，附带 searchHint 声明。 */
+    public ToolManifest(
+            String id,
+            String version,
+            String name,
+            String description,
+            JsonNode inputSchema,
+            JsonNode outputSchema,
+            RiskLevel riskLevel,
+            SideEffect sideEffect,
+            int timeoutSeconds,
+            int resultCharacterLimit,
+            IdempotencySemantics idempotency,
+            EvidencePolicy evidencePolicy,
+            String searchHint
+    ) {
+        this(
+                id,
+                version,
+                name,
+                description,
+                inputSchema,
+                outputSchema,
+                riskLevel,
+                sideEffect,
+                timeoutSeconds,
+                resultCharacterLimit,
+                idempotency,
+                evidencePolicy,
+                ContextRetention.PINNED,
+                ConcurrencySemantics.SERIAL,
+                sideEffect == SideEffect.NONE
+                        ? CancellationSemantics.COOPERATIVE
+                        : CancellationSemantics.COMMIT_BOUNDARY,
+                searchHint
         );
     }
 

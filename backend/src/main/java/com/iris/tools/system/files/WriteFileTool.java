@@ -57,7 +57,8 @@ public class WriteFileTool implements Tool {
                 30,
                 8_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
-                ToolManifest.EvidencePolicy.REQUIRED
+                ToolManifest.EvidencePolicy.REQUIRED,
+                "create save overwrite new document"
         );
     }
 

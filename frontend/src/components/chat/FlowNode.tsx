@@ -8,6 +8,7 @@ import type {
   AttentionAction,
   AttentionNode,
   RenderNode,
+  ToolNode,
 } from '@/domain/chat/models'
 import { Badge, Button } from '@/components/ui'
 import { Tooltip } from '@/components/ui/Tooltip'
@@ -194,6 +195,28 @@ function nodeTitle(node: RenderNode) {
   }
 }
 
+/** snake_case 拆词：摘要缺失时工具名的可读化兜底 */
+function humanizeToolName(toolName: string) {
+  return toolName.replace(/_/g, ' ')
+}
+
+/**
+ * 工具节点两段式标题（docs/42 §6 P0）：
+ * faint 类别前缀取能力路径末段，人话短语优先取摘要首行；
+ * 运行中或摘要缺失时退化为拆词工具名，原文 toolName 以 faint mono 居次。
+ */
+function toolTitleParts(node: ToolNode) {
+  const category =
+    node.catalogPath?.split('/').filter(Boolean).pop() ?? null
+  const summaryLine =
+    node.status !== 'running' ? node.summary?.split('\n')[0].trim() : undefined
+  return {
+    category,
+    phrase: summaryLine || humanizeToolName(node.toolName),
+    showToolName: Boolean(summaryLine),
+  }
+}
+
 function formatMs(durationMs: number) {
   if (durationMs < 1000) return `${durationMs}ms`
   return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)}s`
@@ -231,15 +254,11 @@ function statusText(node: RenderNode): React.ReactNode {
   ) {
     return `${base}，${formatMs(node.durationMs)}`
   }
-  // tool 节点 meta：状态，mono 耗时，摘要首行摘录
+  // tool 节点 meta：状态 + mono 耗时（摘要首行已升任标题短语，不再重复摘录）
   if (node.type === 'tool') {
     const duration =
       node.durationMs != null && node.durationMs > 0
         ? `${(node.durationMs / 1000).toFixed(1)}s`
-        : null
-    const excerpt =
-      node.status !== 'running' && node.summary
-        ? node.summary.split('\n')[0].slice(0, 40)
         : null
     return (
       <>
@@ -248,12 +267,6 @@ function statusText(node: RenderNode): React.ReactNode {
           <>
             {'，'}
             <span className="font-mono tabular-nums">{duration}</span>
-          </>
-        )}
-        {excerpt && (
-          <>
-            {'，'}
-            <span className="truncate">{excerpt}</span>
           </>
         )}
       </>
@@ -496,7 +509,7 @@ export const FlowNode = memo(function FlowNode({
         <button
           type="button"
           className={cn(
-            'flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left',
+            'group flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left',
             'transition-colors duration-fast ease-standard',
             'hover:bg-surface-muted/70',
             'focus-visible:outline-none focus-visible:shadow-focus motion-reduce:transition-none',
@@ -515,7 +528,35 @@ export const FlowNode = memo(function FlowNode({
                   : 'text-ink-muted',
             )}
           >
-            {nodeTitle(node)}
+            {node.type === 'tool' ? (
+              (() => {
+                const { category, phrase, showToolName } = toolTitleParts(node)
+                return (
+                  <>
+                    {category && (
+                      <span className="mr-1.5 font-normal text-ink-muted/70">
+                        {category}
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        'font-[550]',
+                        failed ? 'text-danger' : 'text-ink-subtle',
+                      )}
+                    >
+                      {phrase}
+                    </span>
+                    {showToolName && (
+                      <span className="ml-1.5 font-mono text-caption font-normal text-ink-muted/70">
+                        {node.toolName}
+                      </span>
+                    )}
+                  </>
+                )
+              })()
+            ) : (
+              nodeTitle(node)
+            )}
           </span>
           <span
             className={cn(
@@ -532,8 +573,11 @@ export const FlowNode = memo(function FlowNode({
           <ChevronRight
             aria-hidden="true"
             className={cn(
-              'h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform duration-deliberate ease-flow',
-              expanded && 'rotate-90',
+              'h-3.5 w-3.5 shrink-0 text-ink-muted',
+              'transition-[opacity,transform] duration-deliberate ease-flow',
+              expanded
+                ? 'rotate-90 opacity-100'
+                : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
               'motion-reduce:transition-none',
             )}
           />
