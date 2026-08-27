@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -16,8 +17,13 @@ import java.util.List;
  *
  * <p>新增列时：先改 schema.sql（新库），再在这里登记一行（旧库）。只支持
  * ADD COLUMN 级别的演进；需要改表结构的迁移再引入真正的迁移工具。</p>
+ *
+ * <p>docs/41 §2.2：显式 @Order(5) 先于一切读库 runner（ModelProfileCatalog
+ * 从 10 起）——无 Order 时排在 Ordered runner 之后，新增列若被早期 runner
+ * 读取会读到旧表结构。</p>
  */
 @Component
+@Order(5)
 public final class SchemaColumnMigration implements ApplicationRunner {
     private static final Logger log =
             LoggerFactory.getLogger(SchemaColumnMigration.class);

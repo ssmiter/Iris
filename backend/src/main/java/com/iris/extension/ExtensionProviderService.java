@@ -130,8 +130,19 @@ public class ExtensionProviderService
     private List<Path> resolveRoots() {
         List<Path> roots = new ArrayList<>();
         if (properties.getBundledRoot() != null) {
-            roots.add(properties.getBundledRoot()
-                    .toAbsolutePath().normalize());
+            Path bundled = properties.getBundledRoot()
+                    .toAbsolutePath().normalize();
+            // docs/41 §2.3：内建根按工作目录相对解析，从别处启动 jar 会静默
+            // 丢掉全部内建拓展（浏览器/Python/SQL 工具凭空消失）——打 WARN 让
+            // 这可诊断，不 fail-close（IDE 不同目录启动是常态）。
+            if (!Files.isDirectory(bundled)) {
+                log.warn("bundled extension root not found: {} (resolved from "
+                        + "working directory {}; builtin extensions will be "
+                        + "absent — start from backend/ or set "
+                        + "iris.extension.bundled-root)",
+                        bundled, Path.of("").toAbsolutePath());
+            }
+            roots.add(bundled);
         }
         if (!properties.getRoots().isEmpty()) {
             properties.getRoots().stream()
