@@ -111,6 +111,9 @@ export function ConversationApp() {
   const [earlierLoading, setEarlierLoading] = useState(false)
   const earlierLoadingRef = useRef(false)
   const timelineRef = useRef<ConversationTimelineHandle>(null)
+  // 用于在重水合/410 后强制 SSE effect 以新 eventCursor 重建连接。
+  const [reconnectSignal, setReconnectSignal] = useState(0)
+  const sseControllerRef = useRef<AbortController | null>(null)
 
   // 向上翻页：以视野内最早 Turn 为水位线取上一页，只补不覆盖；
   // 压缩线随页并入（dedup 由 addCompactBoundary 保证）。
@@ -220,6 +223,8 @@ export function ConversationApp() {
       .then(async (view) => {
         if (controller.signal.aborted) return
         hydrateView(view)
+        // 初始水合完成后触发 SSE 重建，使流从快照游标开始。
+        setReconnectSignal((n) => n + 1)
         try {
           const usage = await getContextUsage(
             view.conversationId,
@@ -263,19 +268,36 @@ export function ConversationApp() {
   }, [currentBranchId, currentConversationId])
 
   useEffect(() => {
+    if (!currentConversationId || !currentBranchId) return
+    // 从 store 读取最新状态：本 effect 不依赖 connectionState，避免 onOpen/
+    // 事件回调里的 setState 导致流被反复重建。
+    const connectionState = useChatStore.getState().connectionState
     if (
-      !currentConversationId ||
-      !currentBranchId ||
-      chat.connectionState === 'hydrating'
+      connectionState === 'hydrating' ||
+      connectionState === 'invalidated' ||
+      connectionState === 'failed'
     ) {
       return
     }
     const controller = new AbortController()
+    sseControllerRef.current = controller
     let reconnectTimer: number | undefined
     let reconnectAttempt = 0
 
     const connect = async () => {
       if (controller.signal.aborted) return
+      // 重连前 flush 滞留的 delta，避免队列与服务器重放交错。
+      useChatStore.getState().flushQueuedDeltas()
+      if (controller.signal.aborted) return
+      // flush 可能暴露缺口使 store 进入 invalidated；此时交给恢复 effect，
+      // 本 effect 不再继续发起连接。
+      const stateAfterFlush = useChatStore.getState().connectionState
+      if (
+        stateAfterFlush === 'invalidated' ||
+        stateAfterFlush === 'failed'
+      ) {
+        return
+      }
       useChatStore.getState().setConnectionState(
         reconnectAttempt === 0 ? 'connecting' : 'reconnecting',
       )
@@ -417,7 +439,15 @@ export function ConversationApp() {
                 })
               }
             }
-            useChatStore.getState().setConnectionState('connected')
+            // 只在真正从连接中恢复时置 connected；若本事件已让 store 进入
+            // invalidated，覆盖它会让恢复 effect 漏掉或重 fire。
+            const currentState = useChatStore.getState().connectionState
+            if (
+              currentState === 'connecting' ||
+              currentState === 'reconnecting'
+            ) {
+              useChatStore.getState().setConnectionState('connected')
+            }
           },
           () => {
             reconnectAttempt = 0
@@ -436,8 +466,8 @@ export function ConversationApp() {
             )
             if (controller.signal.aborted) return
             hydrateView(view)
-            reconnectAttempt = 0
-            void connect()
+            // 以新 eventCursor 重建 SSE；直接用旧 controller 会携带已终止信号。
+            setReconnectSignal((n) => n + 1)
             return
           } catch {
             // 重水合也失败，落入常规退避
@@ -452,25 +482,48 @@ export function ConversationApp() {
     }
     void connect()
     return () => {
+      sseControllerRef.current = null
       controller.abort()
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
     }
-  }, [currentBranchId, currentConversationId])
+  }, [currentBranchId, currentConversationId, reconnectSignal])
+
+  const recoveringRef = useRef(false)
 
   useEffect(() => {
     if (
       chat.connectionState !== 'invalidated' ||
-      !currentConversationId
+      !currentConversationId ||
+      recoveringRef.current
     ) {
       return
     }
+    recoveringRef.current = true
+    // 先终止旧 SSE 流，防止快照水位后仍有 live 事件灌入导致 version 回退。
+    sseControllerRef.current?.abort()
+    sseControllerRef.current = null
     getConversationView(currentConversationId, currentBranchId || undefined)
-      .then(hydrateView)
+      .then((view) => {
+        // 用户可能已在请求途中切换会话/分支：丢弃过期结果。
+        const conversationState = useConversationStore.getState()
+        if (
+          view.conversationId !== conversationState.currentConversationId ||
+          view.selectedBranchId !== conversationState.currentBranchId
+        ) {
+          return
+        }
+        hydrateView(view)
+        // 以快照游标重建 SSE 连接。
+        setReconnectSignal((n) => n + 1)
+      })
       .catch((error: Error) => {
         useChatStore.getState().setConnectionState('failed')
         notify.error('增量状态失配，重新载入失败', {
           description: error.message,
         })
+      })
+      .finally(() => {
+        recoveringRef.current = false
       })
   }, [
     chat.connectionState,

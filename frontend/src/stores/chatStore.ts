@@ -34,6 +34,8 @@ export interface ChatState {
   tasksById: Record<string, TaskView>
   connectionState: ConnectionState
   eventCursor: string | null
+  /** SSE 事件序列号，用于 eventCursor/lastEventAt 单调递增（docs/08 §4） */
+  lastEventSequence: number
   projectionVersion: number
   pendingSupplements: PendingSupplement[]
   /** 视野之外还有更早的 Turn（后端分页水位线） */
@@ -53,6 +55,8 @@ export interface ChatState {
   hydrateTasks: (tasks: TaskView[]) => void
   upsertTask: (task: TaskView) => void
   setConnectionState: (state: ConnectionState) => void
+  /** 立即 flush 50ms delta 合批队列；断线重连前调用，避免滞留 delta 与重放交错。 */
+  flushQueuedDeltas: () => void
   addPendingSupplement: (turnId: string, text: string) => string
   confirmPendingSupplement: (
     clientRequestId: string,
@@ -72,9 +76,14 @@ function reduceConversationEvent(
   event: ConversationEvent,
 ): Partial<ChatState> {
   const payload = event.envelope.payload
-  const next: Partial<ChatState> = {
-    eventCursor: event.envelope.eventId,
-    lastEventAt: event.envelope.occurredAt,
+  const next: Partial<ChatState> = {}
+
+  // eventCursor / lastEventAt 只单调递增：旧流迟到回放不得回退游标。
+  const nextSequence = event.envelope.sequence
+  if (nextSequence > state.lastEventSequence) {
+    next.eventCursor = event.envelope.eventId
+    next.lastEventAt = event.envelope.occurredAt
+    next.lastEventSequence = nextSequence
   }
 
   if (event.type === 'turn.accepted' || event.type === 'turn.updated') {
@@ -117,26 +126,35 @@ function reduceConversationEvent(
     const baseVersion = payload.baseVersion as number | undefined
     const targetVersion = payload.targetVersion as number | undefined
     const append = payload.append as string | undefined
+    const field = payload.field as string | undefined
     const current = nodeId ? state.renderNodesById[nodeId] : undefined
 
     if (
       current?.type === 'answer'
-      && current.version === baseVersion
       && typeof targetVersion === 'number'
       && typeof append === 'string'
     ) {
-      next.renderNodesById = {
-        ...state.renderNodesById,
-        [current.nodeId]: {
-          ...current,
-          content: current.content + append,
-          version: targetVersion,
-          updatedAt: event.envelope.occurredAt,
-        },
+      // 重连重放是契约内常态：content 字段的重复 chunk 直接忽略（docs/08 §10.4）。
+      if (
+        targetVersion <= current.version
+        && (field === undefined || field === 'content')
+      ) {
+        return next
       }
-    } else {
-      next.connectionState = 'invalidated'
+      if (current.version === baseVersion) {
+        next.renderNodesById = {
+          ...state.renderNodesById,
+          [current.nodeId]: {
+            ...current,
+            content: current.content + append,
+            version: targetVersion,
+            updatedAt: event.envelope.occurredAt,
+          },
+        }
+        return next
+      }
     }
+    next.connectionState = 'invalidated'
   } else if (event.type === 'render_node.invalidated') {
     const node = payload.node as RenderNode | undefined
     if (node && state.renderNodesById[node.nodeId]) {
@@ -179,6 +197,8 @@ function reduceConversationEvent(
 export const useChatStore = create<ChatState>((set) => {
   let queuedDeltas: ConversationEvent[] = []
   let queuedFlushTimer: number | null = null
+  // 近期已见 eventId 集合，按契约 §4 做 SSE 至少一次投递去重；有界 500。
+  const seenEventIds = new Set<string>()
 
   const reduceEvents = (state: ChatState, events: ConversationEvent[]) =>
     events.reduce<ChatState>(
@@ -205,7 +225,22 @@ export const useChatStore = create<ChatState>((set) => {
     }
   }
 
+  const forgetStreamBuffers = () => {
+    clearQueuedDeltas()
+    seenEventIds.clear()
+  }
+
   const applyEvent = (event: ConversationEvent) => {
+    const eventId = event.envelope.eventId
+    if (seenEventIds.has(eventId)) return
+    if (seenEventIds.size >= 500) {
+      for (const id of seenEventIds) {
+        seenEventIds.delete(id)
+        break
+      }
+    }
+    seenEventIds.add(eventId)
+
     if (event.type === 'render_node.delta') {
       queuedDeltas.push(event)
       if (queuedFlushTimer === null) {
@@ -229,13 +264,14 @@ export const useChatStore = create<ChatState>((set) => {
   tasksById: {},
   connectionState: 'idle',
   eventCursor: null,
+  lastEventSequence: -1,
   projectionVersion: 1,
   pendingSupplements: [],
   hasEarlierTurns: false,
   lastEventAt: null,
 
   hydrateProjection: (projection) => {
-    clearQueuedDeltas()
+    forgetStreamBuffers()
     set({
       turnOrder: projection.turns.map((turn) => turn.turnId),
       turnsById: Object.fromEntries(
@@ -244,13 +280,15 @@ export const useChatStore = create<ChatState>((set) => {
       runsById: projection.runsById,
       roundsById: projection.roundsById,
       renderNodesById: projection.renderNodesById,
+      eventCursor: null,
+      lastEventSequence: -1,
       connectionState: 'connected',
       lastEventAt: new Date().toISOString(),
     })
   },
 
   hydrateView: (view) => {
-    clearQueuedDeltas()
+    forgetStreamBuffers()
     set({
       turnOrder: view.turnOrder,
       turnsById: view.turnsById,
@@ -258,6 +296,7 @@ export const useChatStore = create<ChatState>((set) => {
       roundsById: view.roundsById,
       renderNodesById: view.renderNodesById,
       eventCursor: view.eventCursor,
+      lastEventSequence: -1,
       projectionVersion: view.projectionVersion,
       hasEarlierTurns: view.hasEarlierTurns,
       pendingSupplements: Object.values(view.turnsById)
@@ -355,6 +394,8 @@ export const useChatStore = create<ChatState>((set) => {
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
+  flushQueuedDeltas,
+
   addPendingSupplement: (turnId, text) => {
     const clientRequestId = crypto.randomUUID()
     set((state) => ({
@@ -400,7 +441,7 @@ export const useChatStore = create<ChatState>((set) => {
   clearPendingSupplements: () => set({ pendingSupplements: [] }),
 
   resetConversation: () => {
-    clearQueuedDeltas()
+    forgetStreamBuffers()
     set({
       turnOrder: [],
       turnsById: {},
@@ -410,6 +451,7 @@ export const useChatStore = create<ChatState>((set) => {
       tasksById: {},
       connectionState: 'idle',
       eventCursor: null,
+      lastEventSequence: -1,
       pendingSupplements: [],
       hasEarlierTurns: false,
       lastEventAt: null,

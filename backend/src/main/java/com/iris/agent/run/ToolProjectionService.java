@@ -385,7 +385,6 @@ public class ToolProjectionService {
 
     private void emitAttention(RunRow run, ObjectNode node) {
         ObjectNode payload = objectMapper.createObjectNode();
-        payload.set("attention", node);
         payload.set("node", node);
         events.append(new EventDraft(
                 node.path("version").asLong() == 1

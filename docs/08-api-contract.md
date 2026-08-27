@@ -298,11 +298,13 @@ PipelineStepRun 与 ModelStep 仍是 canonical facts，但首版 Frontend 不沿
 |---|---|
 | `thinking` | `summary, detailRef?, durationMs?` |
 | `tool` | `toolCallId, toolExecutionId, toolName, summary, resultRef?, evidenceSummary?` |
-| `attention` | `attentionId, subtype, impact, actions, expiresAt?, approval?` |
+| `attention` | `attentionId, subtype, impact, actions[{id,label,tone}], expiresAt?, input{...}, approval?` |
 | `artifact` | `artifactId, kind, title, previewRef, sourceToolCallId?` |
 | `answer` | `content, role=stage|final, sourceMessageId` |
 | `supplement` | `messageId, state, injectedAfterRoundId?` |
 | `run` | `childRunId, label, progressSummary` |
+
+`attention` 节点的 `input` 内嵌对象携带澄清/输入请求数据：`inputRequestId`、`question`、`version`、`options[{id,label,recommended,description}]`，以及回答后的 `answer`/`answerOptionId`。
 
 Frontend 只按 `type + rendererKey` 选择安全 renderer。它不能从 `summary` 推断 Tool 已完成。
 
@@ -613,6 +615,14 @@ GET /api/v1/runs/{runId}
 
 用于展开诊断或重连后的精确读取，不用于轮询。正常 UI 通过 Conversation SSE 和 ConversationView 获取状态。
 
+> **未实现。** `GET /api/v1/runs/{runId}` 当前未实现。作为临时替代，Pipeline Run 详情可通过以下端点读取：
+
+```http
+GET /api/v1/pipeline-runs/{runId}
+```
+
+返回 `PipelineRunView`，内联全部步骤输出与最后一步结果。该读模型随后将收敛为引用式投影，见 docs/43 S1。
+
 首版不提供任意 `POST /runs/{id}/resume`。等待输入、审批、人工接管等各有类型化命令，避免一个万能 resume 携带不明状态。
 
 Pipeline 重启从 terminal Step 与 child facts 重建 ready-set。若冻结依赖 unavailable，Run 以 `suspended` + blocker/FailureView 投影；不得自动迁移 Definition/Manifest，也不得直接切 Agentic。Pipeline → Agentic handoff 只有在全部 earlier/sibling activity 终止、Resource Claim 已释放或转移、且没有执行中/验证中/未知写动作时才能创建 child Run；child 继承权限上限但不继承 Approval。
@@ -822,7 +832,7 @@ GET /api/v1/compactions/{runId}
       "expectedVersion": "sha256-before"
     }
   ],
-  "status": "pending",
+  "status": "waiting",
   "createdAt": "2026-07-24T18:30:00+08:00",
   "expiresAt": "2026-07-24T18:35:00+08:00",
   "decidedAt": null,
@@ -843,10 +853,10 @@ Frontend 不需要也不应获得秘密参数。完整规范化输入保存在 B
 `status`：
 
 ```text
-pending | approved | rejected | expired | invalidated
+waiting | approved | rejected | expired | invalidated
 ```
 
-Approval Attention 的 `attentionId` 与 `approvalId` 是不同 ID。它的 `AttentionView.payload.approval` 必须内嵌完整安全 `ApprovalView`，使实时卡片无需猜 ID 或额外轮询就能提交合法决定。
+Approval Attention 的 `attentionId` 与 `approvalId` 是不同 ID。它的 `AttentionView.approval` 必须内嵌完整安全 `ApprovalView`，使实时卡片无需猜 ID 或额外轮询就能提交合法决定。
 
 ### 7.2 决定
 
@@ -883,6 +893,8 @@ Backend 只接受第一份合法决定。命令提交时已经 stale，直接返
 
 ### 7.3 恢复待处理审批
 
+> **未实现（后续里程碑）。** 当前刷新或深链接恢复应走 `GET /api/v1/conversations/{conversationId}/view` 的 `renderNodes` 与 `pendingAttentionIds` 投影；运行期状态以 SSE 为准。
+
 ```http
 GET /api/v1/approvals/{approvalId}
 ```
@@ -890,7 +902,7 @@ GET /api/v1/approvals/{approvalId}
 返回单个 `ApprovalView`。它是刷新、深链接或显式详情读取，不用于轮询。
 
 ```http
-GET /api/v1/conversations/{conversationId}/approvals?status=pending
+GET /api/v1/conversations/{conversationId}/approvals?status=waiting
 ```
 
 这是刷新后的恢复读取，不得用于运行期轮询。正常新增和决定经 SSE 投影。
@@ -905,22 +917,33 @@ GET /api/v1/conversations/{conversationId}/approvals?status=pending
   "turnId": "turn_opaque",
   "runId": "run_opaque",
   "subtype": "clarification",
-  "status": "pending",
+  "status": "waiting",
   "impact": "需要确认是否把酒店搜索范围扩大到西湖 3 公里内。",
-  "actions": ["answer", "cancel"],
-  "payload": {
-    "question": "是否扩大搜索范围？",
+  "actions": [
+    { "id": "answer", "label": "回答", "tone": "primary" },
+    { "id": "cancel", "label": "取消", "tone": "secondary" }
+  ],
+  "input": {
     "inputRequestId": "input_request_opaque",
+    "question": "是否扩大搜索范围？",
     "version": 1,
     "options": [
-      { "id": "option_1", "label": "扩大到 3 公里", "recommended": true },
-      { "id": "option_2", "label": "保持原范围", "recommended": false }
-    ]
+      { "id": "option_1", "label": "扩大到 3 公里", "recommended": true, "description": null },
+      { "id": "option_2", "label": "保持原范围", "recommended": false, "description": null }
+    ],
+    "answer": null,
+    "answerOptionId": null
   },
   "expiresAt": null,
   "resolvedAt": null,
   "version": 1
 }
+```
+
+`status`：
+
+```text
+waiting | expired | cancelled | resolved
 ```
 
 ```http
@@ -958,6 +981,8 @@ Backend 按 subtype 校验允许的 kind；人工核验还必须记录 evidence/
 ```http
 GET /api/v1/tool-executions/{toolExecutionId}
 ```
+
+> **未实现（后续里程碑）。** 当前工具执行状态通过 `ConversationView.renderNodes` 与对应 SSE 事件投影；详情接口留待有权限的诊断场景冻结。
 
 返回安全详情：
 
@@ -1008,6 +1033,8 @@ output；Frontend 收起后可以丢弃窗口缓存。Backend 必须按 conversa
 ## 8. Capability Catalog
 
 Catalog API 供 Frontend 浏览，也由 Backend 内部发现原语使用。模型不会直接通过 HTTP 调自己。
+
+> **未实现。** `/api/v1/capabilities*` 发现读 API 当前未实现且无消费者。前端能力管理页使用 §8.7 的 `/api/v1/capability-admin/*` 一族；模型侧发现仍走 Backend 内部原语，不依赖本族 HTTP。
 
 ### 8.1 列目录
 
@@ -1165,12 +1192,14 @@ Frontend 不提交 `loadedTools[]`，也不接收完整 Catalog schema。它可�
 模型发现契约完全分离——不进模型上下文，不参与 inspect/invoke 链路：
 
 ```http
+GET /api/v1/capability-admin/generation
 GET /api/v1/capability-admin/tree
 GET /api/v1/capability-admin/items?path=/industry/mes&kind=process&query=库存
 GET /api/v1/capability-admin/items/detail?path=/industry/mes/_01raw/inventory/query_mes_material_inventory
 GET /api/v1/capability-admin/problems
 ```
 
+- `generation`：返回当前注册表 generation 计数，供前端判断缓存是否失效。
 - `problems`：拓展扫描问题投影（docs/34 M8a）——`root` / `file` /
   `description` / `severity`（当前统一 error，预留 warning）。内存运行时
   视图，随重扫整体替换，不落库；插件作者写错清单不再需要翻后端日志。
@@ -1240,6 +1269,8 @@ slug 冲突 fail-closed。响应 `ServerView` 回带 command/args/env。
 这是连接层恢复，不是远端调用的不透明重试。
 
 ## 9. Workspace 与 Artifact 读取
+
+> **未实现。** `GET /api/v1/workspace/entries` 与 `GET /api/v1/workspace/content` 当前未实现且无消费者。用户浏览 Workspace 内容通过 Artifact preview/download 或工具结果按需加载。
 
 ### 9.1 列目录
 
@@ -1511,8 +1542,8 @@ attention.updated(status=approved)
 render_node.updated(type=tool,status=running)
 render_node.updated(type=tool,status=verifying)
 render_node.added(type=artifact,status=available)
-render_node.updated(type=tool,status=succeeded)
 run.settled(kind=pipeline,phase=succeeded)
+render_node.updated(type=tool,status=succeeded)
 round.updated(phase=settled)
 round.started(index=2)
 render_node.added(type=answer,role=final)
@@ -1522,7 +1553,7 @@ run.settled(kind=agentic,phase=succeeded)
 turn.updated(phase=settled)
 ```
 
-SSE 顺序展示因果，但完整事实由 Message、Run、ToolExecution、Approval 和 Event 表保存。
+SSE 顺序展示因果，但完整事实由 Message、Run、ToolExecution、Approval 和 Event 表保存。实现上 `run.settled` 先于同一 Run 触发的 `render_node.updated` 发出；Frontend 以实体 ID 和版本做 upsert，对事件顺序不敏感。
 
 ### 11.2 Outcome unknown
 

@@ -490,7 +490,7 @@ class ConversationFlowIntegrationTest {
         assertThat(approvalEvent).isNotNull();
         var eventApproval = approvalEvent
                 .payload()
-                .path("attention")
+                .path("node")
                 .path("approval");
         assertThat(eventApproval.path("argumentsSummary").asText())
                 .contains("审批参数预览行");
