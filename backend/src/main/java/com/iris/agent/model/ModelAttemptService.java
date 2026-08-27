@@ -10,6 +10,7 @@ import com.iris.agent.run.RunRoundRepository;
 import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.agent.run.RunStateMachine;
+import com.iris.storage.SqliteBusyRetry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -63,7 +64,7 @@ public class ModelAttemptService {
         requireText(modelId, "modelId");
         requireHash(contextHash, "contextHash");
         requireHash(capabilityLeaseHash, "capabilityLeaseHash");
-        return withLock(roundId, () -> transactions.execute(status -> {
+        return withLock(roundId, () -> SqliteBusyRetry.execute(transactions, () -> {
             RoundRow round = runs.findRound(roundId).orElseThrow(
                     () -> new IllegalStateException("找不到 Round")
             );
@@ -111,7 +112,7 @@ public class ModelAttemptService {
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow(
                 () -> new IllegalStateException("找不到 ModelAttempt")
         );
-        return withLock(initial.roundId(), () -> transactions.execute(status -> {
+        return withLock(initial.roundId(), () -> SqliteBusyRetry.execute(transactions, () -> {
             AttemptRow attempt = attempts.findAttempt(attemptId).orElseThrow();
             if (!"streaming".equals(attempt.phase())
                     || attempt.version() != expectedAttemptVersion) {
@@ -223,7 +224,7 @@ public class ModelAttemptService {
         requireText(category, "category");
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         withLock(initial.roundId(), () -> {
-            transactions.executeWithoutResult(status -> {
+            SqliteBusyRetry.executeVoid(transactions, () -> {
                 AttemptRow attempt = attempts.findAttempt(attemptId)
                         .orElseThrow();
                 RoundRow round = runs.findRound(attempt.roundId())
@@ -276,7 +277,7 @@ public class ModelAttemptService {
         requireText(category, "category");
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         return withLock(initial.roundId(), () ->
-                transactions.execute(status -> {
+                SqliteBusyRetry.execute(transactions, () -> {
                     AttemptRow attempt = attempts.findAttempt(attemptId)
                             .orElseThrow();
                     if (!"streaming".equals(attempt.phase())
@@ -374,7 +375,7 @@ public class ModelAttemptService {
         requireText(category, "category");
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         return withLock(initial.roundId(), () ->
-                transactions.execute(status -> {
+                SqliteBusyRetry.execute(transactions, () -> {
                     AttemptRow attempt = attempts.findAttempt(attemptId)
                             .orElseThrow();
                     if (!"streaming".equals(attempt.phase())) {
@@ -443,7 +444,7 @@ public class ModelAttemptService {
         requireText(providerProfile, "providerProfile");
         requireText(modelId, "modelId");
         return withLock(roundId, () ->
-                transactions.execute(status -> {
+                SqliteBusyRetry.execute(transactions, () -> {
                     RoundRow round = runs.findRound(roundId).orElseThrow(
                             () -> new IllegalStateException("Round not found")
                     );
@@ -508,7 +509,7 @@ public class ModelAttemptService {
     public RoundRow cancel(String attemptId) {
         AttemptRow initial = attempts.findAttempt(attemptId).orElseThrow();
         return withLock(initial.roundId(), () ->
-                transactions.execute(status -> {
+                SqliteBusyRetry.execute(transactions, () -> {
                     AttemptRow attempt = attempts.findAttempt(attemptId)
                             .orElseThrow();
                     RoundRow round = runs.findRound(attempt.roundId())

@@ -23,6 +23,7 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.RunEventEmitter;
 import com.iris.conversation.infrastructure.TurnStopRepository;
+import com.iris.storage.SqliteContention;
 import com.iris.tools.core.ToolRuntime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -636,6 +637,9 @@ public class AgenticRoundCoordinator {
     }
 
     private boolean retryable(Throwable error) {
+        if (SqliteContention.isBusy(error)) {
+            return true;
+        }
         if (error instanceof ModelProviderException provider) {
             return provider.retryable();
         }
@@ -769,6 +773,9 @@ public class AgenticRoundCoordinator {
 
     private String category(Throwable error) {
         error = Exceptions.unwrap(error);
+        if (SqliteContention.isBusy(error)) {
+            return "storage_busy";
+        }
         if (error instanceof ModelProtocolException protocol) {
             return "protocol:" + protocol.code();
         }

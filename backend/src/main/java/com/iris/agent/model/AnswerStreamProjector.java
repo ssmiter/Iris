@@ -10,6 +10,7 @@ import com.iris.agent.run.RunRoundRepository.RoundRow;
 import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
+import com.iris.storage.SqliteBusyRetry;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -165,7 +166,7 @@ public class AnswerStreamProjector {
             return true;
         }
 
-        Completion completion = transactions.execute(status -> {
+        Completion completion = SqliteBusyRetry.execute(transactions, () -> {
             ObjectNode current = readNode(nodeId);
             if (current == null) {
                 throw new IllegalStateException(

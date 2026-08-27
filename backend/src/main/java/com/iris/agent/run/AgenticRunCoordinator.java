@@ -452,6 +452,9 @@ public class AgenticRunCoordinator {
 
     private String failureCode(Throwable error) {
         error = Exceptions.unwrap(error);
+        if (SqliteContention.isBusy(error)) {
+            return "runtime_storage_busy";
+        }
         if (error instanceof ModelProtocolException protocol) {
             return protocol.code();
         }
@@ -515,6 +518,12 @@ public class AgenticRunCoordinator {
                 source = "sqlite";
                 recovery = "retry_same";
                 message = "本地任务存储持续繁忙；Iris 已停止这段运行并保留已有状态，可以从当前任务继续。";
+            }
+            case "storage_busy" -> {
+                category = "runtime_storage";
+                source = "sqlite";
+                recovery = "retry_same";
+                message = "本地存储短暂繁忙，已从断点保留状态，可以重新继续。";
             }
             case "run_unexpected_failure" -> {
                 category = "agent_kernel";

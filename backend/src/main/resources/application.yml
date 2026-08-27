@@ -18,6 +18,11 @@ spring:
         journal_mode: WAL
         synchronous: NORMAL
         foreign_keys: true
+        # docs/40 §2.1：全部事务 BEGIN 即拿写锁（IMMEDIATE），从根上消灭
+        # DEFERRED「先读后写」的 BUSY_SNAPSHOT 快照过期类（busy_timeout 对
+        # 那类错误无效）。锁竞争收敛到 BEGIN 点由 busy_timeout 正常排队；
+        # WAL 下读不受影响，本应用写事务都很短，吞吐损失可忽略。
+        transaction_mode: IMMEDIATE
         # 流式 flush 高频小写会把 WAL 快速推到默认 1000 页（约 4MB）触发
         # 自动 checkpoint，checkpoint 期间写者短暂阻塞，表现为周期性抖动；
         # 放大到 10000 页摊薄 checkpoint 频次（崩溃恢复成本可忽略）。
