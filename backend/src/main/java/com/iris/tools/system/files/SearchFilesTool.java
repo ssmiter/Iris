@@ -68,7 +68,11 @@ public class SearchFilesTool implements Tool {
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
                 ToolManifest.CancellationSemantics.COOPERATIVE,
-                "find grep locate keyword lookup"
+                "find grep locate keyword lookup",
+                "namespace 二选一：workspace（默认，文本内容搜索，字面量匹配，"
+                        + "regex=true 改用正则）与 capabilities（能力目录语义搜索）。"
+                        + "命中按文件最近修改降序；截断时用 offset 翻页；"
+                        + "零命中时读 guidance 换关键词或收窄 glob，不重复同一查询。"
         );
     }
 

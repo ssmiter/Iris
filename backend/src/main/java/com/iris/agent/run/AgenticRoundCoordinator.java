@@ -13,6 +13,7 @@ import com.iris.agent.model.ModelContextAssembler.ContextSeed;
 import com.iris.agent.model.PromptTooLargeException;
 import com.iris.agent.model.ModelProtocolException;
 import com.iris.agent.model.ModelRequest;
+import com.iris.agent.model.ModelRequestSnapshotService;
 import com.iris.agent.model.ModelStreamAssembler;
 import com.iris.agent.model.ToolObservationService;
 import com.iris.agent.model.provider.ModelProvider;
@@ -68,6 +69,7 @@ public class AgenticRoundCoordinator {
     private final RunFinalizationPolicy finalizationPolicy;
     private final AutoCompactionService autoCompactions;
     private final ToolObservationService toolObservations;
+    private final ModelRequestSnapshotService requestSnapshots;
     private final ToolRuntime toolRuntime;
     private final AgentRunContextRepository runContexts;
     private final double compactionWarningRatio;
@@ -92,6 +94,7 @@ public class AgenticRoundCoordinator {
             RunFinalizationPolicy finalizationPolicy,
             AutoCompactionService autoCompactions,
             ToolObservationService toolObservations,
+            ModelRequestSnapshotService requestSnapshots,
             ToolRuntime toolRuntime,
             AgentRunContextRepository runContexts,
             @Value("${iris.agent.compaction.warning-ratio:0.85}")
@@ -118,6 +121,7 @@ public class AgenticRoundCoordinator {
         this.finalizationPolicy = finalizationPolicy;
         this.autoCompactions = autoCompactions;
         this.toolObservations = toolObservations;
+        this.requestSnapshots = requestSnapshots;
         this.toolRuntime = toolRuntime;
         this.runContexts = runContexts;
         this.compactionWarningRatio = compactionWarningRatio;
@@ -298,6 +302,13 @@ public class AgenticRoundCoordinator {
                 cancelled
         );
         AtomicBoolean attemptCommitted = new AtomicBoolean(false);
+        // docs/42 §5.2：装配完成、发送前一点落完整 header 快照，
+        // 保证「落库的即发出的」；重试的 successor attempt 各自一行。
+        requestSnapshots.capture(
+                provider,
+                started.attempt(),
+                started.request()
+        );
         Mono<RoundRow> committed = provider.stream(started.request())
                 .timeout(provider.timeout())
                 .takeUntilOther(

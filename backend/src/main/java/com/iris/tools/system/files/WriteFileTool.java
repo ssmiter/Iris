@@ -17,6 +17,7 @@ import com.iris.workspace.WorkspaceCheckpointService;
 import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
 import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileMutationService.TargetState;
+import com.iris.workspace.WorkspaceFileVisionService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -35,16 +36,19 @@ public class WriteFileTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspaceFileMutationService files;
     private final WorkspaceCheckpointService checkpoints;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public WriteFileTool(
             ObjectMapper objectMapper,
             WorkspaceFileMutationService files,
-            WorkspaceCheckpointService checkpoints
+            WorkspaceCheckpointService checkpoints,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.files = files;
         this.checkpoints = checkpoints;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.write_file",
                 "3",
@@ -58,7 +62,10 @@ public class WriteFileTool implements Tool {
                 8_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
                 ToolManifest.EvidencePolicy.REQUIRED,
-                "create save overwrite new document"
+                "create save overwrite new document",
+                "整体创建或替换，content 上限 1000000 字符；局部修改优先 "
+                        + "apply_patch。写入经过 Runtime snapshot 与 commit gate；"
+                        + "目标已存在时整文件被替换，不确定现状先 read_file 核对。"
         );
     }
 
@@ -115,6 +122,13 @@ public class WriteFileTool implements Tool {
                 resource.logicalPath()
         );
         files.requireVersion(target, resource.expectedVersion());
+        // 读改写状态机（docs/42 §4-8）：已存在文件必须在本会话读过且未变
+        vision.requireFreshVision(
+                context.conversationId(),
+                target.logicalPath(),
+                target.exists(),
+                target.version()
+        );
         if (context.cancelled()) {
             throw ToolRuntimeException.beforeCommit(
                     "cancelled_before_commit",
@@ -136,6 +150,11 @@ public class WriteFileTool implements Tool {
         files.writeUtf8(target, content);
         String afterHash = files.versionOf(target.physicalPath());
         checkpoints.markApplied(checkpoint.checkpointId(), afterHash);
+        vision.recordWritten(
+                context.conversationId(),
+                target.logicalPath(),
+                afterHash
+        );
 
         ObjectNode output = objectMapper.createObjectNode();
         output.put("path", target.logicalPath());

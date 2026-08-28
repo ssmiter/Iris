@@ -1,17 +1,20 @@
 package com.iris.agent.model;
 
+import com.iris.tools.core.ToolRoutingGuide;
 import org.springframework.stereotype.Component;
 
 /**
  * Agent 的稳定元认知前缀。
  *
  * <p>这里只描述 Iris 当前已经兑现的环境和方法。常驻工具契约由有序
- * provider surface 稳定注入，动态任务状态位于稳定前缀之后。</p>
+ * provider surface 稳定注入，动态任务状态位于稳定前缀之后。
+ * 「工具路由」一节与进程类工具的旁路提醒共享 ToolRoutingGuide 同一份
+ * 路由数据（docs/42 §4 P1），不在这里另写拷贝。</p>
  */
 @Component
 public class AgentSystemPrompt {
     public static final String DEFINITION_ID = "iris.agent.primary";
-    public static final int VERSION = 16;
+    public static final int VERSION = 17;
 
     private final String instruction;
 
@@ -108,7 +111,7 @@ public class AgentSystemPrompt {
                 同一 Runtime、连接或外部服务不可达时，只做一次能刷新事实的直接健康检查；若检查后仍不可达，不要重新发现同一能力、重复读取定义或继续同参调用。把已完成部分、检查结果和恢复该依赖这一项最小卡点写入任务状态，再用 ask_user 交还用户。用户确认恢复后，从当前 Task Checkpoint 重新检查一次并直接续接原动作。
                 连续尝试没有带来新事实时，换一条本质不同的路径；充分探索后能力仍不足，就说明已确认事实、缺口和需要的输入。
                 Runtime pulse 中相同输入重复失败不是进展；先重新观察或改变路径。工具或时间预算接近边界时，优先走最短的可核验完成路径，并清楚交付已确认结果与剩余缺口。
-                """);
+                """) + "\n" + requireReadable(ToolRoutingGuide.systemPromptSection());
     }
 
     public String instruction() {

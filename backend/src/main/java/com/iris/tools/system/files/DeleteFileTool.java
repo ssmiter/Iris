@@ -17,6 +17,7 @@ import com.iris.workspace.WorkspaceCheckpointService;
 import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
 import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileMutationService.TargetState;
+import com.iris.workspace.WorkspaceFileVisionService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -32,16 +33,19 @@ public class DeleteFileTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspaceFileMutationService files;
     private final WorkspaceCheckpointService checkpoints;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public DeleteFileTool(
             ObjectMapper objectMapper,
             WorkspaceFileMutationService files,
-            WorkspaceCheckpointService checkpoints
+            WorkspaceCheckpointService checkpoints,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.files = files;
         this.checkpoints = checkpoints;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.delete_file",
                 "2",
@@ -126,6 +130,7 @@ public class DeleteFileTool implements Tool {
         }
         files.deleteFile(target);
         checkpoints.markApplied(checkpoint.checkpointId(), "absent");
+        vision.recordDeleted(context.conversationId(), target.logicalPath());
 
         ObjectNode output = objectMapper.createObjectNode();
         output.put("path", target.logicalPath());

@@ -261,11 +261,20 @@ Round 只属于 Agentic Run：
   "answerNodeId": null,
   "stats": {
     "toolCallCount": 1,
-    "durationMs": 3200
+    "durationMs": 3200,
+    "inputTokens": 5400,
+    "outputTokens": 380,
+    "cacheReadTokens": 4100,
+    "cacheMissTokens": 1300
   },
   "version": 3
 }
 ```
+
+`stats` 的四项 token 是该 Round 全部已完成 attempt 的聚合
+（docs/42 §5.3，命中率逐步骤暴露的生产信号；`cacheMissTokens` 含缓存
+写入份额）。Round 尚无已完成 attempt 时四项为 `null`——「还没有 usage
+事实」与真实的 0 必须可区分。
 
 PipelineStepRun 与 ModelStep 仍是 canonical facts，但首版 Frontend 不沿裸 ID 读取内部编排；它只接收相应 RenderNode、RoundView 或 RunView。后续若确有诊断需求，再冻结有权限的 detail contract。
 
@@ -615,13 +624,9 @@ GET /api/v1/runs/{runId}
 
 用于展开诊断或重连后的精确读取，不用于轮询。正常 UI 通过 Conversation SSE 和 ConversationView 获取状态。
 
-> **未实现。** `GET /api/v1/runs/{runId}` 当前未实现。作为临时替代，Pipeline Run 详情可通过以下端点读取：
-
-```http
-GET /api/v1/pipeline-runs/{runId}
-```
-
-返回 `PipelineRunView`，内联全部步骤输出与最后一步结果。该读模型随后将收敛为引用式投影，见 docs/43 S1。
+> **未实现。** `GET /api/v1/runs/{runId}` 当前未实现。
+>
+> 曾经的临时替代 `GET /api/v1/pipeline-runs/{runId}` 已移除（2026-08-27，docs/43 S1）：孤儿出口且内联全量步骤输出违反引用式原则。有真实消费者时按引用式投影重新设计。
 
 首版不提供任意 `POST /runs/{id}/resume`。等待输入、审批、人工接管等各有类型化命令，避免一个万能 resume 携带不明状态。
 

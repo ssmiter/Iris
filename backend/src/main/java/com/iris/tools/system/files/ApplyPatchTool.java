@@ -18,6 +18,7 @@ import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
 import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileMutationService.TargetState;
 import com.iris.workspace.WorkspaceFileService.TextDocument;
+import com.iris.workspace.WorkspaceFileVisionService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -35,16 +36,19 @@ public class ApplyPatchTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspaceFileMutationService files;
     private final WorkspaceCheckpointService checkpoints;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public ApplyPatchTool(
             ObjectMapper objectMapper,
             WorkspaceFileMutationService files,
-            WorkspaceCheckpointService checkpoints
+            WorkspaceCheckpointService checkpoints,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.files = files;
         this.checkpoints = checkpoints;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.apply_patch",
                 "2",
@@ -58,7 +62,11 @@ public class ApplyPatchTool implements Tool {
                 8_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
                 ToolManifest.EvidencePolicy.REQUIRED,
-                "edit modify replace exact text change"
+                "edit modify replace exact text change",
+                "old_text 必须与读到的原文逐字一致（含缩进与换行）；"
+                        + "多处匹配时加大上下文或设 replace_all=true。"
+                        + "补丁总量上限 200000 字符；整文件重写改用 write_file。"
+                        + "改动前先 read_file 取得准确原文。"
         );
     }
 
@@ -127,6 +135,13 @@ public class ApplyPatchTool implements Tool {
                 resource.logicalPath()
         );
         files.requireVersion(target, resource.expectedVersion());
+        // 读改写状态机（docs/42 §4-8）：必须在本会话读过且文件未变
+        vision.requireFreshVision(
+                context.conversationId(),
+                target.logicalPath(),
+                target.exists(),
+                target.version()
+        );
         TextDocument document = files.readForEdit(
                 context.workspaceRoot(),
                 resource.logicalPath(),
@@ -162,6 +177,11 @@ public class ApplyPatchTool implements Tool {
         files.writeDocument(target, document, changed);
         String afterHash = files.versionOf(target.physicalPath());
         checkpoints.markApplied(checkpoint.checkpointId(), afterHash);
+        vision.recordWritten(
+                context.conversationId(),
+                target.logicalPath(),
+                afterHash
+        );
 
         ObjectNode output = objectMapper.createObjectNode();
         output.put("path", target.logicalPath());

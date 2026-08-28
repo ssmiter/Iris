@@ -64,6 +64,13 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
    的一句人话（「参数 limit 收到 0，超出允许范围（1 到 2000）；请调整取值后
    重试」），不是裸错误码。errorCode 保持 snake_case 稳定词表供程序分支，
    人话文案面向模型当轮自我纠正，两者各司其职不互相替代。
+   **新造 errorCode 的规矩**（docs/43 S2）：码必须先在
+   `tools/core/ToolErrorRecoveryCatalog` 可判定——要么命名落进开放规则族
+   （`invalid_*`、`*_not_applied`、`*_version_changed`、`*_too_large` 等
+   前缀/后缀族），要么在表里显式登记（含「审过就是落 replan」的登记）；
+   守卫测试 ToolErrorRecoveryCatalogTest 扫描全部产码点源码，未登记的
+   新码直接红灯。恢复族映射（errorCode → recovery.action）只有这一处
+   事实源，模型侧不再各自字符串匹配。
 2. **截断自报**。列表型结果（搜索、目录、清单）仅在真正截断时才出现
    `truncated` / `appliedLimit` 字段，后面还有命中时附 `nextOffset`；
    不出现即全集，模型不许把前一页当全集下结论。尾部 `guidance` 始终给出
@@ -74,6 +81,41 @@ Manifest 的完整字段见 docs/02 §9；至少包含 identity、input/output s
 
 落地参照：`search_files` 与 `list_files` 的 truncated/guidance 结构，
 `WorkspaceFileToolSupport` 的参数校验文案。
+
+### 2.3 读改写状态机与重复读取 stub（docs/42 §4 P1，2026-08-27 已落地）
+
+- **读改写状态机**：`WorkspaceFileVisionService` 按会话记录 path → 内容
+  SHA-256 摘要；`write_file` / `apply_patch` / `append_file` 改写已存在
+  文件前，必须在本会话读过且当前摘要一致，否则在写入前拒绝并指引先
+  `read_file`（`workspace_edit_requires_read` / `workspace_vision_stale`）。
+  新建文件豁免；写后状态推进，允许连续写。`delete_file` / `move_file` /
+  `copy_file` 的决策依据是路径而非内容且均无覆盖分支，不设先读门禁，
+  但写后分别清除、迁移、建立视野记录。
+- **重复读取 stub**：`read_file` 同会话同区间且摘要一致时只返回一行 stub
+  （「内容未变，以对话中上次读取为准」），不重发全文；observation 持久化
+  的就是这条 stub 本身，历史语义不被篡改。
+
+### 2.4 description/prompt 双通道与工具路由（docs/42 §4 P1，2026-08-28 已落地）
+
+工具的文本分两通道，发现层永远不变胖：
+
+1. **description 恒为一句话**，供目录卡片与搜索语料使用，只说
+   「做什么、何时用」，不写参数细节与规约。
+2. **prompt 是可选的完整行为合同**（参数边界、默认上限、兄弟工具路由），
+   只在工具被选中后进入模型视野：驻留工具的 schema 常驻 provider
+   surface（等于已选中），`ProviderToolSurfacePlanner` 把 prompt 拼在
+   description 后进请求；非驻留能力的 prompt 随 `read_capability` 返回的
+   manifest 按需到达，不进目录卡片也不进搜索语料。
+   内置工具在 `ToolManifest` 声明 `prompt`；扩展 `*.tool.yml` 用
+   `prompt` 键（可空、非空即 ≤4000 字符，扫描器 fail-closed）。
+
+新工具写法：description 一句话进发现层；有参数边界、默认上限或兄弟
+工具路由要交代时写 prompt，不要把规约塞进 description。
+
+工具路由对照（读文件用 `read_file` 而不是 shell cat 这类具体映射 +
+并行调用规约）的单一事实源是 `ToolRoutingGuide`：系统提示词的
+「工具路由」一节与进程类工具（TemplateProcessTool/ResidentProcessTool）
+规约面追加的旁路提醒都由它渲染，禁止两处各写一份会漂移的拷贝。
 
 ## 3. 注册表
 
@@ -208,6 +250,7 @@ MES 样例优先保留能组成“需求 → 排程 → 发布 → 执行 → �
 Capability Catalog 是动态多来源投影，不再假定进程启动时已经知道全部能力。每个来源都提供稳定 Definition、当前 binding availability 和刷新版本；Catalog 在读取/搜索时组合当前快照，而不是把启动时列表永久缓存。
 
 - **Skill** 是 `kind=skill` 的版本化工艺定义：声明适用情境、步骤骨架、依赖能力、验证方法和失败边界。`read_capability` 读取正文后，它作为普通 observation 指导当前 Agent；Skill 本身不冒充 Tool，也没有直接执行入口。草稿、启用、停用与版本升级由 Backend 管理，前端只编辑和展示这些事实。
+  - 步骤骨架可带可选的走完标志 `done_when`：每个关键步骤一句话，绑定可核验的工具回执或产物在场（“回执 PUBLISHED”“plan_id 已落工作区”），判据必须是外部信号，不写自我感觉——“我觉得做完了”“看起来没问题”这类表述不算数。写法为步骤行内 `done_when：<判据>`；frontmatter 字段白名单 fail-closed（docs/31 §5.1），所以 `done_when` 只住正文不进头部。当前不做机器校验，它是留给轨道点亮与投影的诚实信号（docs/42 §7）。
 - **MCP Server** 是 Connector 配置，不是 Capability。连接成功后，`tools/list` 返回的每个远程 Tool 经 Iris 校验、命名空间化并映射为 `kind=tool` 的 Capability；调用仍进入唯一 Tool Runtime，再由 MCP adapter 执行 `tools/call`。Server 离线时 Definition 历史保留，binding availability 变为 unavailable，不能静默删除或换绑。
 - **记忆对象** 是带来源、作用域、置信边界和版本的用户事实，不是 Capability。`search/read/propose/update/forget` 等记忆操作才是可发现能力；进入模型上下文的是有预算、有来源的候选投影，而不是把全部记忆或管理页内容塞进系统提示词。
 
@@ -554,6 +597,7 @@ Capability snapshot、Tool observation 或日志。最终 Windows 产品仍应�
 
 - [ ] name snake_case 且全局唯一
 - [ ] description 一句话说清"做什么、何时用"
+- [ ] 参数边界、默认上限、兄弟工具路由写进 prompt，不进 description（§2.4）
 - [ ] 高频工具声明 searchHint（3 到 10 词，与工具名正交，见 §6）
 - [ ] 放在正确目录（路径自动正确）
 - [ ] input/output JSON Schema 完整且属性有描述

@@ -63,7 +63,8 @@ Planner 从最新事实向前选择原子组：
 - **结果预算**发生在 Tool 完成时：完整 payload 按 executionId 保存，Observation
   超预算时变成“预览 + hash + `tool-result://` 引用 + 读回方法”。
 - **micro compact**发生在后续 attempt 组装时：只处理声明为可重取的 read/list/search
-  等旧 Observation，保留工具名、输入摘要、executionId、payload hash 和结果状态。
+  等旧 Observation，保留工具名、executionId、payload hash、结果状态和开头片段的
+  截断预览（`preview` + `previewTruncated`），并附 read_tool_result 读回指引。
 - 最近若干个 Tool Observation 必须保留原文；数量和 token 水位由真实数据决定，
   不能把某个参考实现的常量写成产品真理。当前默认值为待标定初值，可调。
 - 写操作、`outcome_unknown`、审批、验证 evidence 与用户不可重新取得的外部返回，
@@ -175,8 +176,16 @@ base Frame 链的增量摘要 + base waterline 到目标位置的 canonical fact
 5. 写入 `compaction.started` 后异步唤醒。
 
 模型只能读取冻结快照，不得在 retry 或进程恢复时重新查询当前 ConversationView。
-它不租用工具，只输出可持久化 Frame 正文。ModelAttempt、context hash、provider
-identity 和 token 预算仍遵循普通模型协议。
+
+摘要请求的装配形态（docs/42 §5.1）：逐字复用本分支最近一次根 Agentic Run 已路由请求
+留存的装配前缀——system instruction、可见工具 schema、历史 items 全部从
+`model_context_snapshot` 留存的装配产物重建，摘要指令和冻结快照一起放在尾部 user
+消息。自动 Compact 恰在最后一次请求预热 provider 缓存之后触发，前缀逐字一致让这次
+摘要请求直接命中已预热的 KV Cache，不为独立 system prompt 付双倍提示词成本。前缀中
+可见的工具 schema 只为保持缓存前缀一致：Compact 是单个模型步骤，不执行任何工具
+调用，只输出可持久化 Frame 正文。缓存复用是尽力而为——分支上没有可解码的已路由
+快照，或复用前缀加源快照超出预算时，回退独立 system prompt 形态，正确性不受影响。
+ModelAttempt、context hash、provider identity 和 token 预算仍遵循普通模型协议。
 
 成功提交 ModelAttempt 后，Run 进入 verifying；新 Context Frame、CompactBoundary、
 branch head 推进和 Compaction Run completed 在同一事务中闭合，然后发送

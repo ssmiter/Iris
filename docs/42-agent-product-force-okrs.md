@@ -1,7 +1,14 @@
 # 42 · Agent 产品力：体验 OKR 与四参照系迁移（设计稿）
 
-> 状态：**P0 已落地**（2026-08-27：薄工具 P0 五条 + 前端 P0 六条，
-> 后端 135 测试 0 失败、前端 typecheck 干净）。
+> 状态：**P0 已落地，P1 两波已落地**（P1 第一波 2026-08-27：§3 effort
+> 档位、§6-8 思考节点沉淀自动收起、§7 done_when 约定，合流 docs/43
+> M8/S1；P1 第二波 2026-08-28：§4-6 双通道、§4-7 路由表、§4-8 读改写
+> 状态机、§4-9 重复读取 stub、§5.1 压缩前缀复用、§5.2 header 快照、
+> §5.3 命中率入 Round 投影，合流 docs/43 S2 errorCode 单一事实源 +
+> 守卫测试。后端 164 测试 0 失败、历史遗留基线不变、前端 typecheck
+> 干净）。
+> 剩余：§4-10 三层结果预算（P2）、§5.4 统一装配点、§5.5 目录消息
+> 生命周期、§6-9 答案引用 chip（P2）、§10 缺口清单。
 > 落地中发现的三个数据通道缺口（留后续批次，见 §10）：
 > 工具节点投影无 description（标题暂用 summary 首行）、
 > round 维度无 token 投影（摘要行暂不带 tok）、
@@ -79,6 +86,10 @@ OKR 的用法：每个分期落地后对照 KR 打分；KR 全部写明数据源
 
 ## 3. 模型 effort 档位（真缺口，本期新设计）
 
+**已落地（2026-08-27）**：Profile.effort 校验 + openai-compatible 透传
+`reasoning_effort` + 不支持 kind 启动 WARN + 目录/顶栏暴露，均按
+本节设计执行；缺省不写请求体，行为与引入前字节级一致。
+
 **现状缺口**：`IrisModelProperties.Profile` 只有
 kind/modelId/baseUrl/endpointPath/apiKey/timeoutSeconds/maxOutputTokens/
 cumulativeToolArguments——没有任何推理强度概念。消费侧已能读
@@ -131,20 +142,47 @@ reasoning_content 与 reasoning_tokens（OpenAiCompatibleStreamMapper），
 
 ### P1（中改动，机制收益）
 
-6. **description/prompt 双通道**：发现层恒为一句话（目录/搜索只看它）；
+6. **description/prompt 双通道**（2026-08-28 已落地：ToolManifest 增加
+   可选 `prompt` 行为合同字段）：发现层恒为一句话（目录/搜索只看它）；
    完整行为合同（参数边界、默认上限、兄弟工具路由）独立存放，只在工具
    被选中后进入模型视野。发现层不被冗长规约拖垮。
-7. **系统提示词工具路由表**：列举具体对照（读文件用 read_file 而不是
+   落地形态：驻留工具 schema 本就常驻 provider surface（等于「已选中」），
+   `ProviderToolSurfacePlanner` 把 prompt 拼接在 description 后进请求，
+   不开第二发现通道；非驻留能力的 prompt 随 read_capability 的 manifest
+   按需返回；扩展 `*.tool.yml` 用 `prompt` 键（可空、≤4000 字符，扫描器
+   fail-closed 校验）。高频内置工具（read_file/apply_patch/list_files/
+   search_files/write_file/make_directory）已把行为合同迁入 prompt，
+   description 保持一句话。
+7. **系统提示词工具路由表**（2026-08-28 已落地：`ToolRoutingGuide`
+   单一事实源）：列举具体对照（读文件用 read_file 而不是
    shell cat）而非抽象原则，系统提示词与 shell 工具自身规约各放一份。
    防「有专用工具却走 shell」的旁路（旁路 = 绕过审批粒度、路径围栏、
    结果裁剪）。附并行调用规约：无依赖的调用同消息并行发出。
+   落地形态：路由数据（动作 → 专用工具 → 典型旁路）只在
+   `ToolRoutingGuide` 一处；`AgentSystemPrompt`（v17）尾部「工具路由」
+   一节与 TemplateProcessTool/ResidentProcessTool 规约面统一追加的
+   进程旁路提醒都由它渲染，两处不会漂移。
 8. **读改写状态机**：per-session 记录 (path → 内容摘要/mtime)；
    编辑工具执行前校验「先读过且文件未被别人改过」，过期即拒绝并要求
    重读。审批管线管「要不要写」，这套状态机管「不基于过期视野写」——
    机制级正确性，不是兜底。
+   （2026-08-27 已落地：`WorkspaceFileVisionService` 按 conversationId
+   内存记录 path → SHA-256 摘要，摘要而非 mtime+size——内容相同才算视野
+   未过期，避免误拒与漏拒；内存而非持久化——进程重启后磁盘可能已被外部
+   改动，清空状态迫使重启后首写先重读，fail-close。`write_file` /
+   `apply_patch` / `append_file` 在 execute 写入前校验，拒绝抛
+   beforeCommit 的 `workspace_edit_requires_read` /
+   `workspace_vision_stale` 并指引先 read_file；新建文件豁免；写后
+   recordWritten 推进摘要允许连写。delete/move/copy 决策依据是路径而非
+   内容且均无覆盖分支，不设先读门禁，写后分别清除/迁移/建立视野。）
 9. **重复读取 stub**（O4-KR4.2）：同文件同区间重复读取且文件未变时
    返回一行 stub（「内容未变，以对话中上次读取为准」），不重发全文。
    历史不丢，只是不重复注入。
+   （2026-08-27 已落地：`read_file` execute 内比对同会话同区间 +
+   同摘要，命中即返回一行 stub；写入推进视野时作废读取区间，自己写过
+   或外部改过后的再读都回全文。取舍写明：observation 持久化的是这次
+   真实返回——stub 本身，不回填历史全文、不篡改历史语义；模型要原文
+   需换区间重读。）
 
 ### P2（大改动，量级收益）
 
@@ -168,6 +206,12 @@ Iris 已有后端权威历史，迁移的是缓存纪律，不是 Cordis 插件�
 
 ### 5.1 压缩摘要请求复用已预热前缀（最高价值单条）
 
+2026-08-28 已落地：`model_context_snapshot` 留存的装配产物带类型信封可逐字
+重建（`RoutedRequestPrefix`），摘要请求 = 分支最近一次根 Agentic Run 已路由
+请求前缀 + 尾部 user 摘要指令（`CompactionSummaryContextFactory`）；前缀缺失、
+快照不可解码或加源超预算时回退独立形态。验收测试
+`CompactionSummaryPrefixReuseTest` 对装配产物断言逐字一致。
+
 参照系实测：自动压缩恰好在最后一次请求预热 provider KV Cache 之后
 触发，若摘要请求用独立 system prompt + 拍平文本，第一个 token 就分叉，
 对话最大时付双倍提示词成本。改法：摘要请求逐字复现最后一个已路由
@@ -183,12 +227,29 @@ CompactionLauncher），确认分叉点后改造。
 明确否决 header-delta 编解码器）。每请求一条小事件，换来缓存漂移
 可归因、回放分歧可审计。与「历史不可丢」一致：只增不改。
 
+> 已落地：新表 `model_request_snapshot`（attempt_id 主键 + snapshot_json
+> + snapshot_hash + same_as_previous 标记，行照插不省行）。采集点在
+> consume 段、provider.stream 订阅之前（AgenticRoundCoordinator 与
+> CompactionCoordinator 两处），保证落库的即发出的；重试 successor
+> 各自一行。快照只含 header（身份 / 渲染后 system 全文 hash / 工具名称
+> 序列 + schema 整体 hash / maxOutputTokens + effort），历史内容已由
+> `model_attempt.context_hash` 锚定不进快照，否则 hash 每轮必变、
+> sameAsPrevious 失去意义。hash 相对同一 Run 上一快照变化当拍记 INFO
+> （含字段级差异概要）。登记见 docs/21 §8。
+
 ### 5.3 缓存命中率成为生产信号（O4-KR4.1）
 
 Iris 已把 cache_read/cache_miss tokens 随 model_attempt 落库（数据源
 现成），缺的是：逐步骤暴露（前端 context-usage 或日志）、以及
 「header 快照变更/压缩后命中率跌落」的回归判读。配套 5.2 形成闭环：
 装配变动 → 快照事件 → 命中率变化可归因。
+
+> 已落地：逐步骤暴露面选在 Round 投影——`RoundView.stats` 增加
+> inputTokens / outputTokens / cacheReadTokens / cacheMissTokens（该
+> Round 全部已完成 attempt 的聚合，cache_miss 含缓存写入份额；无已完成
+> attempt 时为 null，区别于 0），契约登记见 docs/08 §3.5。前端消费
+> （context-usage 或过程链展示）随后续批次接入，本批只冻结 API 字段。
+> 逐 attempt 粒度仍可走 `model_attempt_cache_diagnostic` 视图直查。
 
 ### 5.4 统一装配点
 
@@ -237,10 +298,14 @@ mono 承载数字与路径）；动画单次、≤450ms、只用于注意力锚�
 
 ### P1（机制小改）
 
-8. **思考节点沉淀自动收起**：thinking 节点 settled 后若用户未手动展开
-   过则自动收起，标题回填耗时；用户手动展开优先权保留（与
-   seedExpandedRound 一次性播种语义一致）。思考内容只在当下有阅读
-   价值，沉淀后是链条最大噪音源。
+8. **思考节点沉淀自动收起**（2026-08-27 已落地）：thinking 节点 settled
+   后若用户未手动展开过则自动收起，标题回填耗时；用户手动展开优先权
+   保留（与 seedExpandedRound 一次性播种语义一致）。思考内容只在当下
+   有阅读价值，沉淀后是链条最大噪音源。
+   实现注记：落地时保留节点标题「分析与判断」（现状标题不分状态，
+   耗时本就在 meta 位回填「已完成，1.2s」）；「思考中…→思考」式
+   标题更名留待体验裁决。钉住表 userExpandedNodeIds 随用户最近一次
+   手动选择走，自动逻辑一次为限不再抢回。
 
 ### P2（信任闭环，需后端配合）
 
@@ -276,7 +341,9 @@ agent 自己与 Pipeline（docs/28 已定首版不做任意 DAG）；轨道只�
 
 分期：
 
-- **P0｜Skill 步骤补 done_when**：Skill 正文约定增加可选 done_when
+- **P0｜Skill 步骤补 done_when**（2026-08-27 已落地：docs/03 §4.4
+  写法约定 + web-research SKILL.md 夹具示范；frontmatter 白名单
+  fail-closed，约定住正文）：Skill 正文约定增加可选 done_when
   ——一句话走完标志，绑定工具回执/产物在场（「回执 PUBLISHED」
   「plan_id 在场」），不写自我感觉。零执行改动、零前端改动，
   为将来一切点亮/投影/沉淀打下「诚实信号」地基。与既有 verify/

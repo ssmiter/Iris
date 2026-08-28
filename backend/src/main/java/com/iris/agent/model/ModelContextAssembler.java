@@ -331,7 +331,12 @@ public class ModelContextAssembler {
         );
         SnapshotPayload payload = new SnapshotPayload(
                 seed.systemInstruction(),
-                window.items(),
+                window.items().stream()
+                        .map(item -> RoutedRequestPrefix.ItemEnvelope.of(
+                                objectMapper,
+                                item
+                        ))
+                        .toList(),
                 requiredUserFactIds,
                 List.copyOf(requiredObservationIds),
                 definitions,
@@ -492,7 +497,7 @@ public class ModelContextAssembler {
 
     private record SnapshotPayload(
             String systemInstruction,
-            List<ModelInputItem> items,
+            List<RoutedRequestPrefix.ItemEnvelope> items,
             List<String> requiredUserFactIds,
             List<String> requiredObservationIds,
             List<ModelRequest.ToolDefinition> tools,

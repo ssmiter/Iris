@@ -185,6 +185,7 @@ class ExtensionProviderIntegrationTest {
                 # 联网研究
 
                 先列问题再检索。
+                把来源逐条记入 references/sources.md。done_when：该文件在场且包含本轮答案引用的全部链接。
                 """);
         Files.writeString(skillDir.resolve("references/sources.md"),
                 "# 来源清单\n");

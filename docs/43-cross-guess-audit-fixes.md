@@ -1,9 +1,10 @@
 # 43 · 隔离互猜审计：确认缺陷清单与修复分期（设计稿）
 
-> 状态：**第一、二、三批已落地**（2026-08-27：行为缺陷 H1/H2/M1-M7/L1-L5
-> 全部修复，契约文档 D1-D5 已对齐 docs/08；后端 135 测试 0 失败、
-> 历史遗留基线不变，前端 typecheck 干净；H1/M5/M6 带钉死测试）。
-> 剩余：M8 预览字段（与 docs/42 §4-10 合流）、S1/S2 结构性裁决。
+> 状态：**全部落地**（2026-08-27：行为缺陷 H1/H2/M1-M7/L1-L5 全部修复，
+> 契约文档 D1-D5 已对齐 docs/08，M8 预览字段已落地，
+> S1 孤儿端点已删除；后端 135 测试 0 失败、历史遗留基线不变，
+> 前端 typecheck 干净；H1/M5/M6 带钉死测试）。
+> 剩余：docs/42 §4-10 三层结果预算其余部分。
 > 方法：6 个隔离视角互猜（前端↔后端、Agent↔工具、上下文↔工具生命周期、
 > 流式时序对账），36 个子代理，30 条疑点经对抗式验证（默认怀疑、
 > 证据不足驳回），**确认 18 条、证伪 12 条**。方法文档见
@@ -150,6 +151,11 @@ resultReference/contentHash/guidance，没有预览文本；docs/22 §3.1
 修法：toReference 加 bounded 预览字段（如前 300 字符），对齐
 docs/22。与 docs/42 §4-10「大结果落盘指针」合流实现。
 
+**已落地（2026-08-27）**：toReference 输出 `preview`（前 300 字符纯文本，
+截断时尾部带省略标记）+ `previewTruncated`；referenceOnly 捕获与
+micro-compact 两条路径统一经投影器获得预览，冻结决策不变；
+docs/22 §3.1 措辞同步对齐。docs/42 §4-10 的①③层预算仍属后续分期。
+
 ### 行为缺陷 · 低危（顺手修）
 
 - **L1** invoke_capability 的 description 补一句「read_capability
@@ -191,9 +197,33 @@ docs/22。与 docs/42 §4-10「大结果落盘指针」合流实现。
 - **S1** /pipeline-runs/{id} 是孤儿出口（前端零调用）且响应尺寸无界：
   删除，或收敛为引用式投影（steps 只回 id/kind/phase/failureCode +
   output 引用）。建议删除——有真实消费者再按引用式补。
+  **已落地（2026-08-27）**：按删除执行，PipelineController 只留
+  POST invoke；docs/08 改为已移除注记。
 - **S2** errorCode→recovery 族映射收为单一事实源（ToolOutcome 携带
   recovery 类别，或 tools/core 一处常量表），加测试断言每个被产出
   的码落入已知族。M4 的最小修补先行，本项进 docs/42 P1。
+  **已落地（2026-08-28）**：选方案 B——
+  `tools/core/ToolErrorRecoveryCatalog` 一处常量表，ToolObservationService
+  的恢复判定改为查表消费。不选 A 的理由：ToolOutcome 携带恢复族要求
+  每个产码点（全部工具文件 + ToolRuntimeException 构造点）逐一改造，
+  且扩展进程经插件协议透传任意码（ResidentProcessTool 转发插件 JSON
+  的 code，内建浏览器扩展即走此路），生产侧自报无法约束第三方扩展；
+  而方案 B 配合守卫测试正好满足「新造码不入表就在开发期炸」。
+  表分三层：开放词法规则族（invalid_*、*_not_applied、*_version_changed
+  等前缀/后缀）、精确登记（含显式登记为 replan 的已盘点码）、动态前缀
+  （process_exit_、cancelled_before_）。守卫测试
+  `ToolErrorRecoveryCatalogTest` 扫描 backend main 与 extensions/ 全部
+  产码点（ToolRuntimeException / ToolOutcome.failed / completeFailure /
+  合成终态 / 浏览器扩展 Failure 等），未登记的新码直接红灯；行为钉死
+  测试保证判定结果与 M4 最小修补后逐点一致。第三方扩展运行期透传的
+  未知码仍落 replan 兜底，属设计内容错。新造 errorCode 的规矩登记在
+  docs/03 §2.2 与 docs/21 §6。
+  **补齐（2026-08-28 复核）**：初版登记表漏了 19 个真实产码（守卫一跑
+  即红）——backend 2 个（workspace_atomic_copy_unavailable、
+  task_evidence_ref_invalid）与 extensions 17 个（python/sql/mes 族，
+  含 dataFailure 的 industrial_demo_sql_unavailable）；全部按现运行期
+  行为显式登记为 replan。守卫的产码点模式从 `new Failure(` 放宽为
+  `new \w*Failure(`，覆盖 Calculate 的 CalcFailure 变体。
 
 ## 2. 修复分期
 

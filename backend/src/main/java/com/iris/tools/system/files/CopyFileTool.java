@@ -18,6 +18,7 @@ import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
 import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileMutationService.CopyResult;
 import com.iris.workspace.WorkspaceFileMutationService.TargetState;
+import com.iris.workspace.WorkspaceFileVisionService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -36,16 +37,19 @@ public class CopyFileTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspaceFileMutationService files;
     private final WorkspaceCheckpointService checkpoints;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public CopyFileTool(
             ObjectMapper objectMapper,
             WorkspaceFileMutationService files,
-            WorkspaceCheckpointService checkpoints
+            WorkspaceCheckpointService checkpoints,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.files = files;
         this.checkpoints = checkpoints;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.copy_file",
                 "1",
@@ -148,6 +152,12 @@ public class CopyFileTool implements Tool {
         );
         checkpoints.markApplied(
                 checkpoint.checkpointId(),
+                copied.contentHash()
+        );
+        // 副本由模型知情创建，目标路径视野直接建立（区间作废）
+        vision.recordWritten(
+                context.conversationId(),
+                destination.logicalPath(),
                 copied.contentHash()
         );
 

@@ -142,6 +142,55 @@ class ExtensionScannerTest {
     }
 
     @Test
+    void validatesOptionalPromptChannel() throws IOException {
+        writeTool("code/python/with-prompt.tool.yml", """
+                name: with_prompt
+                kind: template
+                description: 带行为合同的工具
+                prompt: 参数 date 必须是 ISO 日期；单次批量上限 100 条。
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, ok.py]
+                """);
+        writeTool("code/python/blank-prompt.tool.yml", """
+                name: blank_prompt
+                kind: template
+                description: 空 prompt
+                prompt: ""
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, ok.py]
+                """);
+        writeTool("code/python/oversize-prompt.tool.yml", """
+                name: oversize_prompt
+                kind: template
+                description: 超长 prompt
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, ok.py]
+                prompt: %s
+                """.formatted("长".repeat(4_001)));
+
+        ExtensionScanner.ScanResult result = scanner.scan(root);
+
+        assertEquals(1, result.tools().size(),
+                () -> result.problems().toString());
+        assertEquals("with_prompt",
+                result.tools().getFirst().definition().name());
+        assertEquals("参数 date 必须是 ISO 日期；单次批量上限 100 条。",
+                result.tools().getFirst().definition().prompt());
+        assertEquals(2, result.problems().size(),
+                () -> result.problems().toString());
+        assertTrue(result.problems().stream()
+                        .map(ExtensionScanner.ScanProblem::description)
+                        .allMatch(description -> description.contains("prompt")),
+                () -> result.problems().toString());
+    }
+
+    @Test
     void scansResidentProcessManifest() throws IOException {
         writeTool("system/time/current-time.tool.yml", """
                 name: current_time

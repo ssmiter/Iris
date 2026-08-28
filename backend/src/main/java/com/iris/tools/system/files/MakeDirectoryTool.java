@@ -54,7 +54,10 @@ public class MakeDirectoryTool implements Tool {
                 20,
                 4_000,
                 ToolManifest.IdempotencySemantics.IDEMPOTENT_WITH_KEY,
-                ToolManifest.EvidencePolicy.REQUIRED
+                ToolManifest.EvidencePolicy.REQUIRED,
+                null,
+                "只在已有父目录下创建单层新目录；目录已存在会失败。"
+                        + "创建后即可向其中 write_file。"
         );
     }
 

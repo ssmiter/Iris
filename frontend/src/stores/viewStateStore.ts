@@ -22,6 +22,8 @@ export interface ViewState {
   expandedRoundIds: FlagMap
   expandedNodeIds: FlagMap
   initializedNodeIds: FlagMap
+  /** 用户手动展开且未收回的节点：沉淀自动收起让位于用户选择（docs/42 §6 P1） */
+  userExpandedNodeIds: FlagMap
   theme: Theme
   hue: Hue
   accent: Accent
@@ -40,6 +42,8 @@ export interface ViewState {
   revealNewRoundNodes: (roundId: string, nodeIds: string[]) => void
   /** 轮次结算瞬间播种一次展开：完成时全链条自动展开，之后用户可自由折叠 */
   seedExpandedRound: (roundId: string, nodeIds: string[]) => void
+  /** 节点沉淀自动收起：仅收起用户未曾手动展开的节点，用户钉住的保持展开 */
+  collapseUnpinnedNodes: (nodeIds: string[]) => void
   setTheme: (theme: Theme) => void
   setHue: (hue: Hue) => void
   setAccent: (accent: Accent) => void
@@ -65,6 +69,7 @@ export const useViewStateStore = create<ViewState>()(
       expandedRoundIds: {},
       expandedNodeIds: {},
       initializedNodeIds: {},
+      userExpandedNodeIds: {},
       theme: getInitialTheme(),
       hue: 'neutral',
       accent: 'iris',
@@ -106,13 +111,25 @@ export const useViewStateStore = create<ViewState>()(
           }
         }),
       toggleNode: (nodeId) =>
-        set((state) => ({
-          expandedNodeIds: toggleFlag(state.expandedNodeIds, nodeId),
-          initializedNodeIds: {
-            ...state.initializedNodeIds,
-            [nodeId]: true,
-          },
-        })),
+        set((state) => {
+          // 展开即钉住、收回即解钉：钉住记录随用户最近一次选择走，
+          // 沉淀自动收起只读这张表，不猜测用户意图。
+          const expanding = !state.expandedNodeIds[nodeId]
+          const userExpandedNodeIds = { ...state.userExpandedNodeIds }
+          if (expanding) {
+            userExpandedNodeIds[nodeId] = true
+          } else {
+            delete userExpandedNodeIds[nodeId]
+          }
+          return {
+            expandedNodeIds: toggleFlag(state.expandedNodeIds, nodeId),
+            userExpandedNodeIds,
+            initializedNodeIds: {
+              ...state.initializedNodeIds,
+              [nodeId]: true,
+            },
+          }
+        }),
       seedExpandedNodes: (nodeIds) =>
         set((state) => ({
           expandedNodeIds: nodeIds.reduce<FlagMap>(
@@ -162,6 +179,20 @@ export const useViewStateStore = create<ViewState>()(
               },
             ),
           }
+        }),
+      collapseUnpinnedNodes: (nodeIds) =>
+        set((state) => {
+          const removable = nodeIds.filter(
+            (nodeId) =>
+              state.expandedNodeIds[nodeId]
+              && !state.userExpandedNodeIds[nodeId],
+          )
+          if (removable.length === 0) return state
+          const expandedNodeIds = { ...state.expandedNodeIds }
+          for (const nodeId of removable) {
+            delete expandedNodeIds[nodeId]
+          }
+          return { expandedNodeIds }
         }),
       setTheme: (theme) => set({ theme }),
       setHue: (hue) => set({ hue }),

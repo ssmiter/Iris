@@ -11,6 +11,7 @@ import com.iris.tools.core.Tool;
 import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
+import com.iris.tools.core.ToolRoutingGuide;
 import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.VerificationResult;
 
@@ -81,8 +82,22 @@ public class TemplateProcessTool implements Tool {
                 sideEffect == ToolManifest.SideEffect.NONE
                         ? ToolManifest.CancellationSemantics.COOPERATIVE
                         : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY,
-                definition.searchHint()
+                definition.searchHint(),
+                composePrompt(definition)
         );
+    }
+
+    /**
+     * 进程工具的行为合同 = 插件自声明 prompt（可空）+ 内核统一的进程旁路
+     * 提醒（ToolRoutingGuide 单一事实源，docs/42 §4 P1 第 7 条）。旁路
+     * 绕过审批粒度、路径围栏与结果裁剪，所以每个进程工具的规约面都钉上。
+     */
+    static String composePrompt(ProcessToolDefinition definition) {
+        String declared = definition.prompt();
+        String reminder = ToolRoutingGuide.processToolReminder();
+        return declared == null || declared.isBlank()
+                ? reminder
+                : declared.trim() + "\n\n" + reminder;
     }
 
     @Override

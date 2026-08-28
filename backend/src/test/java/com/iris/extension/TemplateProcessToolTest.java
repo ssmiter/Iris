@@ -137,6 +137,36 @@ class TemplateProcessToolTest {
     }
 
     @Test
+    void manifestPromptCarriesSharedProcessBypassReminder() throws Exception {
+        ProcessToolDefinition withoutPrompt = definition("""
+                name: echo_tool
+                kind: template
+                description: 回显
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, echo.py]
+                """);
+        ProcessToolDefinition withPrompt = definition("""
+                name: echo_tool
+                kind: template
+                description: 回显
+                prompt: 参数 text 原样回显；上限 1000 字符。
+                input_schema: { type: object, properties: {} }
+                risk: { level: read_only, side_effect: none }
+                runtime:
+                  entry: [python, echo.py]
+                """);
+
+        String bare = tool(withoutPrompt).manifest().prompt();
+        String combined = tool(withPrompt).manifest().prompt();
+
+        assertTrue(bare.contains("进程旁路边界"), () -> bare);
+        assertTrue(combined.startsWith("参数 text 原样回显"), () -> combined);
+        assertTrue(combined.contains("进程旁路边界"), () -> combined);
+    }
+
+    @Test
     void executesRealProcessAndCapturesStdout() throws Exception {
         String javaBin = Path.of(System.getProperty("java.home"), "bin",
                 isWindows() ? "java.exe" : "java").toString();

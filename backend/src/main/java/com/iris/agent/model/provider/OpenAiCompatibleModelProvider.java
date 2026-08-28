@@ -92,6 +92,16 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
     }
 
     @Override
+    public String effort() {
+        return profile.effectiveEffort();
+    }
+
+    @Override
+    public int maxOutputTokens() {
+        return profile.getMaxOutputTokens();
+    }
+
+    @Override
     public Duration timeout() {
         return Duration.ofSeconds(profile.getTimeoutSeconds());
     }
@@ -191,6 +201,13 @@ public class OpenAiCompatibleModelProvider implements ModelProvider {
         body.put("stream", true);
         body.put("max_tokens", profile.getMaxOutputTokens());
         body.putObject("stream_options").put("include_usage", true);
+        // 显式设档才带 reasoning_effort：缺省（等同 medium）时请求体与
+        // 引入 effort 前一致。effort 是请求标量，变更即 provider 前缀缓存
+        // 分叉——docs/42 §5.2 的请求快照落地时必须把它纳入归因。
+        String effort = profile.getEffort();
+        if (effort != null && !effort.isBlank()) {
+            body.put("reasoning_effort", profile.effectiveEffort());
+        }
         ArrayNode messages = body.putArray("messages");
         for (ProviderMessage message : conversation.messages()) {
             messages.add(serializeMessage(message));

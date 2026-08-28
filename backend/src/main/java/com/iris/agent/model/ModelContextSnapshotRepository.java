@@ -149,6 +149,45 @@ public class ModelContextSnapshotRepository {
         }
     }
 
+    /**
+     * The retained assembly product of the latest routed root agentic request
+     * on a branch. Compaction summary requests rebuild their prefix from it so
+     * the provider cache prefix warmed by that request stays usable.
+     */
+    public Optional<RoutedPrefixSnapshot> latestRoutedPrefix(
+            String conversationId,
+            String branchId
+    ) {
+        return jdbc.sql("""
+                SELECT snapshot.context_hash, snapshot.payload_json
+                FROM model_context_snapshot snapshot
+                JOIN agent_run run ON run.run_id = snapshot.run_id
+                JOIN agent_round round
+                  ON round.round_id = snapshot.round_id
+                WHERE snapshot.conversation_id = :conversationId
+                  AND snapshot.branch_id = :branchId
+                  AND run.kind = 'agentic'
+                  AND run.parent_run_id IS NULL
+                ORDER BY round.round_index DESC,
+                         snapshot.created_at DESC,
+                         snapshot.context_hash DESC
+                LIMIT 1
+                """)
+                .param("conversationId", conversationId)
+                .param("branchId", branchId)
+                .query((rs, rowNum) -> new RoutedPrefixSnapshot(
+                        rs.getString("context_hash"),
+                        rs.getString("payload_json")
+                ))
+                .optional();
+    }
+
+    public record RoutedPrefixSnapshot(
+            String contextHash,
+            String payloadJson
+    ) {
+    }
+
     public Optional<ContextPressure> latestPressure(String runId) {
         return jdbc.sql("""
                 SELECT estimated_input_tokens, max_input_tokens,

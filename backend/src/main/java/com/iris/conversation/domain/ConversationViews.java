@@ -180,7 +180,22 @@ public final class ConversationViews {
     ) {
     }
 
-    public record RoundStats(int toolCallCount, long durationMs) {
+    /**
+     * 缓存 token 是该 Round 全部 completed attempt 的聚合（docs/42 §5.3：
+     * 命中率逐步骤暴露；cache_miss 含缓存写入份额）。Round 尚无已完成
+     * attempt 时四项为 null，与「还没有 usage 事实」区分于真实的 0。
+     */
+    public record RoundStats(
+            int toolCallCount,
+            long durationMs,
+            Integer inputTokens,
+            Integer outputTokens,
+            Integer cacheReadTokens,
+            Integer cacheMissTokens
+    ) {
+        public RoundStats(int toolCallCount, long durationMs) {
+            this(toolCallCount, durationMs, null, null, null, null);
+        }
     }
 
     public record ConversationSummary(

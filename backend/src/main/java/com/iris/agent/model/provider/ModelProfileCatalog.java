@@ -75,6 +75,7 @@ public class ModelProfileCatalog implements ApplicationRunner {
                         provider.profileId(),
                         provider.providerKind(),
                         provider.modelId(),
+                        provider.effort(),
                         provider.profileId().equals(current)
                 ))
                 .toList();
@@ -104,6 +105,7 @@ public class ModelProfileCatalog implements ApplicationRunner {
                 provider.profileId(),
                 provider.providerKind(),
                 provider.modelId(),
+                provider.effort(),
                 true
         );
     }
@@ -113,6 +115,7 @@ public class ModelProfileCatalog implements ApplicationRunner {
             String id,
             String kind,
             String modelId,
+            String effort,
             boolean active
     ) {
     }

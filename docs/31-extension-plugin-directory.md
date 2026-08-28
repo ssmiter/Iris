@@ -146,6 +146,7 @@ runtime:
   env: [MES_DB_URL]              # 只声明需要的变量名，值由环境提供
 limits: { timeout_ms: 30000, max_result_chars: 100000 }
 search_hint: 产量 日报 汇总       # 发现打分语料
+prompt: 单次查询上限 1000 行      # 可选：完整行为合同，选中后才进模型视野
 ```
 
 `risk.level` 与 `risk.side_effect` 必填，缺失时扫描器按 fail-closed 整件拒绝注册。
@@ -153,6 +154,12 @@ search_hint: 产量 日报 汇总       # 发现打分语料
 `search_hint` 可选；声明了就必须是 3 到 10 个词、与工具名正交的同义或领域短语
 （docs/42 §4 P0），词数不符扫描器拒绝注册。它进能力搜索的打分语料，
 匹配优先级低于工具名、高于 description。
+
+`prompt` 可选（docs/42 §4 P1 双通道）：完整行为合同——参数边界、默认上限、
+兄弟工具路由。它不进目录卡片也不进搜索语料，只在工具被选中后经
+`read_capability` 的 manifest 进入模型视野；声明了就不能为空、不超过
+4000 字符。进程工具（process/template）的规约面还会被内核统一追加一段
+进程旁路提醒（与系统提示词同源，`ToolRoutingGuide`），插件不需要自写。
 
 `runtime.entry` 是 argv 数组。内核供给占位符：`{pluginDir}`（插件目录绝对路径，
 两种形态可用）、`{javaBin}`（当前 JVM 的 java 可执行文件，仅 process 形态的

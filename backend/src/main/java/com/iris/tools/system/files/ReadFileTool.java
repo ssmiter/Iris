@@ -11,10 +11,12 @@ import com.iris.tools.core.ToolContext;
 import com.iris.tools.core.ToolManifest;
 import com.iris.tools.core.ToolOutcome;
 import com.iris.tools.core.VerificationResult;
+import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileService;
 import com.iris.workspace.WorkspaceFileService.NumberedLine;
 import com.iris.workspace.WorkspaceFileService.ReadRequest;
 import com.iris.workspace.WorkspaceFileService.ReadResult;
+import com.iris.workspace.WorkspaceFileVisionService;
 import com.iris.workspace.WorkspacePathGuard;
 import org.springframework.stereotype.Component;
 
@@ -34,16 +36,22 @@ public class ReadFileTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspacePathGuard pathGuard;
     private final WorkspaceFileService fileService;
+    private final WorkspaceFileMutationService mutationService;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public ReadFileTool(
             ObjectMapper objectMapper,
             WorkspacePathGuard pathGuard,
-            WorkspaceFileService fileService
+            WorkspaceFileService fileService,
+            WorkspaceFileMutationService mutationService,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.pathGuard = pathGuard;
         this.fileService = fileService;
+        this.mutationService = mutationService;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.read_file",
                 "2",
@@ -60,7 +68,10 @@ public class ReadFileTool implements Tool {
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
                 ToolManifest.CancellationSemantics.COOPERATIVE,
-                "view contents open text lines peek"
+                "view contents open text lines peek",
+                "start_line 从 1 开始，line_count 默认 400、上限 2000。"
+                        + "结果带行号；长文件分段读取，不要一次拉全文。"
+                        + "局部修改前先读到准确原文，搜索命中用它核对上下文。"
         );
     }
 
@@ -104,14 +115,40 @@ public class ReadFileTool implements Tool {
             ToolContext context
     ) throws IOException {
         JsonNode input = operation.normalizedInput();
+        int startLine = input.path("start_line").asInt();
+        int lineCount = input.path("line_count").asInt();
         ReadResult result = fileService.read(
                 context.workspaceRoot(),
                 new ReadRequest(
                         input.path("path").asText(),
-                        input.path("start_line").asInt(),
-                        input.path("line_count").asInt()
+                        startLine,
+                        lineCount
                 ),
                 context::cancelled
+        );
+        String contentHash = mutationService.versionOf(
+                pathGuard.resolveExistingFile(
+                        context.workspaceRoot(),
+                        result.path()
+                ).physicalPath()
+        );
+        // 重复读取 stub（docs/42 §4-9）：同会话同区间且摘要一致时不重发
+        // 全文。observation 持久化的就是这条 stub 本身，历史语义不被篡改。
+        if (vision.matchesLastRead(
+                context.conversationId(),
+                result.path(),
+                contentHash,
+                startLine,
+                lineCount
+        )) {
+            return ToolOutcome.succeeded(stubOutput(result, startLine));
+        }
+        vision.recordRead(
+                context.conversationId(),
+                result.path(),
+                contentHash,
+                startLine,
+                lineCount
         );
         ObjectNode output = objectMapper.createObjectNode();
         output.put("path", result.path());
@@ -151,6 +188,30 @@ public class ReadFileTool implements Tool {
                         "已从工作区围栏内读取文本范围"
                 )
         ));
+    }
+
+    private ObjectNode stubOutput(ReadResult result, int requestedStartLine) {
+        ObjectNode output = objectMapper.createObjectNode();
+        output.put("path", result.path());
+        output.put("encoding", result.encoding());
+        output.put("sizeBytes", result.sizeBytes());
+        output.put(
+                "content",
+                "内容未变，以对话中上次读取为准：" + result.path()
+        );
+        output.put("startLine", requestedStartLine);
+        output.put("endLine", 0);
+        output.put("returnedLines", 0);
+        output.put("empty", false);
+        output.put("truncated", false);
+        output.put("lineTruncated", false);
+        output.putNull("nextStartLine");
+        output.put(
+                "guidance",
+                "这一区间的内容与上次读取一致，未重复注入；"
+                        + "需要其他区间时调整 start_line 或 line_count"
+        );
+        return output;
     }
 
     private String projectContent(List<NumberedLine> lines) {

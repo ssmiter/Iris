@@ -1168,6 +1168,21 @@ CREATE TABLE IF NOT EXISTS model_context_prefix (
 CREATE INDEX IF NOT EXISTS idx_model_context_prefix_hash
     ON model_context_prefix(prefix_hash);
 
+-- docs/42 §5.2：每次模型请求的非历史 header 完整快照（只增不改）。
+-- 一个 attempt 一行；same_as_previous 只是与同一 Run 上一快照 hash 比较
+-- 的标记，行照插——完整快照语义不省行，缓存漂移与回放分歧按行归因。
+CREATE TABLE IF NOT EXISTS model_request_snapshot (
+    attempt_id TEXT PRIMARY KEY,
+    snapshot_hash TEXT NOT NULL,
+    same_as_previous INTEGER NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES model_attempt(attempt_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_request_snapshot_hash
+    ON model_request_snapshot(snapshot_hash);
+
 CREATE TABLE IF NOT EXISTS model_attempt_usage (
     attempt_id TEXT PRIMARY KEY,
     input_tokens INTEGER NOT NULL,

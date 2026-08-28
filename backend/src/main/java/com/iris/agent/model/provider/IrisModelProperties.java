@@ -40,6 +40,12 @@ public class IrisModelProperties {
         private int timeoutSeconds = 180;
         private int maxOutputTokens = 8192;
         private boolean cumulativeToolArguments;
+        /**
+         * 推理强度档位 low/medium/high；不配置等同 medium，且此时请求体
+         * 不带 effort 参数，行为与引入该字段前完全一致。effort 是请求标量：
+         * 变更即 provider 前缀缓存分叉，docs/42 §5.2 的请求快照需纳入归因。
+         */
+        private String effort;
 
         public String getKind() {
             return kind;
@@ -105,6 +111,20 @@ public class IrisModelProperties {
                 boolean cumulativeToolArguments
         ) {
             this.cumulativeToolArguments = cumulativeToolArguments;
+        }
+
+        /** 配置的原始值；null 或空白表示未显式设档。 */
+        public String getEffort() {
+            return effort;
+        }
+
+        public void setEffort(String effort) {
+            this.effort = effort;
+        }
+
+        /** 未显式设档时按 medium 计（docs/42 §3）。 */
+        public String effectiveEffort() {
+            return effort == null || effort.isBlank() ? "medium" : effort;
         }
     }
 }

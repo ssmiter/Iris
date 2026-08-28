@@ -10,6 +10,7 @@ import com.iris.agent.model.ModelContext;
 import com.iris.agent.model.ModelContextAssembler;
 import com.iris.agent.model.ModelContextWindowPlanner;
 import com.iris.agent.model.ModelPromptPrefix;
+import com.iris.agent.model.ModelRequestSnapshotService;
 import com.iris.agent.model.ModelStreamEvent;
 import com.iris.agent.model.PromptTooLargeException;
 import com.iris.agent.model.ToolObservationService;
@@ -88,6 +89,8 @@ class AgenticRoundCoordinatorTest {
     @Mock
     private ToolObservationService toolObservations;
     @Mock
+    private ModelRequestSnapshotService requestSnapshots;
+    @Mock
     private ToolRuntime toolRuntime;
     @Mock
     private AgentRunContextRepository runContexts;
@@ -109,6 +112,7 @@ class AgenticRoundCoordinatorTest {
                 finalizationPolicy,
                 autoCompactions,
                 toolObservations,
+                requestSnapshots,
                 toolRuntime,
                 runContexts,
                 0.85,

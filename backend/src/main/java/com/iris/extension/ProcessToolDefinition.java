@@ -19,7 +19,10 @@ public record ProcessToolDefinition(
         Approval approval,
         RuntimeSpec runtime,
         Limits limits,
-        @JsonProperty("search_hint") String searchHint
+        @JsonProperty("search_hint") String searchHint,
+        /** 可选的完整行为合同（docs/42 §4 P1 双通道）：只在工具被选中后经
+         *  read_capability 进入模型视野，不进目录卡片与搜索语料。 */
+        String prompt
 ) {
     @JsonIgnoreProperties(ignoreUnknown = false)
     public record Risk(

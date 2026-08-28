@@ -755,6 +755,8 @@ export interface ModelProfileView {
   id: string
   kind: string
   modelId: string
+  /** 推理强度档位 low/medium/high（docs/42 §3），随 profile 冻结。 */
+  effort: string
   active: boolean
 }
 

@@ -18,6 +18,7 @@ import com.iris.workspace.WorkspaceCheckpointService.Checkpoint;
 import com.iris.workspace.WorkspaceFileMutationService;
 import com.iris.workspace.WorkspaceFileMutationService.TargetState;
 import com.iris.workspace.WorkspaceFileService.TextDocument;
+import com.iris.workspace.WorkspaceFileVisionService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -37,16 +38,19 @@ public class AppendFileTool implements Tool {
     private final ObjectMapper objectMapper;
     private final WorkspaceFileMutationService files;
     private final WorkspaceCheckpointService checkpoints;
+    private final WorkspaceFileVisionService vision;
     private final ToolManifest manifest;
 
     public AppendFileTool(
             ObjectMapper objectMapper,
             WorkspaceFileMutationService files,
-            WorkspaceCheckpointService checkpoints
+            WorkspaceCheckpointService checkpoints,
+            WorkspaceFileVisionService vision
     ) {
         this.objectMapper = objectMapper;
         this.files = files;
         this.checkpoints = checkpoints;
+        this.vision = vision;
         this.manifest = new ToolManifest(
                 "iris.system.files.append_file",
                 "1",
@@ -144,6 +148,13 @@ public class AppendFileTool implements Tool {
                 resource.logicalPath()
         );
         files.requireVersion(target, resource.expectedVersion());
+        // 读改写状态机（docs/42 §4-8）：已存在文件必须在本会话读过且未变
+        vision.requireFreshVision(
+                context.conversationId(),
+                target.logicalPath(),
+                target.exists(),
+                target.version()
+        );
         TextDocument document = target.exists()
                 ? files.readForEdit(
                         context.workspaceRoot(),
@@ -189,6 +200,11 @@ public class AppendFileTool implements Tool {
         }
         String afterHash = files.versionOf(target.physicalPath());
         checkpoints.markApplied(checkpoint.checkpointId(), afterHash);
+        vision.recordWritten(
+                context.conversationId(),
+                target.logicalPath(),
+                afterHash
+        );
 
         ObjectNode output = objectMapper.createObjectNode();
         output.put("path", target.logicalPath());

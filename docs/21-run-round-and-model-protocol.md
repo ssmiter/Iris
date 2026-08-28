@@ -187,6 +187,16 @@ error observation，告诉模型“结果未知，不得自动重试”。
 
 上下文裁剪不得从 tool observation 前切断它对应的 assistant tool call。
 
+失败 observation 的 `recovery` 块（action / newToolCallRequired / instruction）
+由 `tools/core/ToolErrorRecoveryCatalog` 统一判定，这是 errorCode → 恢复族的
+唯一事实源（docs/43 S2，方案 B）。判定顺序即契约：outcome_unknown 分支、
+`_not_applied` 后缀、rejected/expired phase、精确登记、开放词法规则
+（`invalid_*`、`*_too_large`、`*_version_changed` 等）、`*_timeout` 族、
+兜底 replan。新造 errorCode 必须先在该表可判定——要么命名落进开放规则族，
+要么显式登记；守卫测试 ToolErrorRecoveryCatalogTest 扫描全部产码点源码，
+未登记的新码直接红灯（规矩同时登记在 docs/03 §2.2）。第三方扩展经插件协议
+透传的未知码在运行期落 replan 兜底，属设计内容错。
+
 ## 7. Provider adapter
 
 首版 port：
@@ -210,9 +220,17 @@ Anthropic JSON 字段。Provider profile 由后端配置选择：
 
 `iris.model` 从单份配置演进为 `active` + `profiles.<id>` 字典；每个条目仍是
 完整冻结的一份 provider 配置（kind/model-id/base-url/endpoint-path/api-key/
-timeout）。启动时 `ModelProviderConfiguration` 按字典逐 profile 构造 adapter
-并登记 `ModelProviderRegistry`；kind 缺省或为 `unconfigured` 的条目跳过
-（application.yml 的 env 占位），其他未知 kind fail-close。
+timeout/effort）。启动时 `ModelProviderConfiguration` 按字典逐 profile 构造
+adapter 并登记 `ModelProviderRegistry`；kind 缺省或为 `unconfigured` 的条目
+跳过（application.yml 的 env 占位），其他未知 kind fail-close。
+
+`effort` 是推理强度档位（low/medium/high，docs/42 §3）：不配置等同 medium，
+且此时请求体不带 effort 参数，行为与引入该字段前一致；显式设档时
+openai-compatible kind 透传为 `reasoning_effort` 请求字段。取值非法在启动
+注册时 fail-close；kind 没有对应请求机制时忽略并记 WARN，不静默降语义。
+effort 是请求标量，变更即 provider 前缀缓存分叉。想换强度不必重造通道：
+同一模型登记两个 profile（如 `deepseek` 与 `deepseek-deep`）即可用现有
+切换面切换。
 
 活跃 profile 由 `ModelProfileCatalog` 持有：yml 的 `iris.model.active` 是默认，
 `POST /api/v1/model-profiles/active` 切换后写入 `app_setting`
@@ -223,7 +241,7 @@ profile 时回落 yml 默认并告警。切换立即生效于之后启动的 Run
 
 管理端点（投影只进前端顶栏，不进模型上下文；响应不含 api-key/base-url）：
 
-- `GET /api/v1/model-profiles` → `{ active, profiles: [{ id, kind, modelId, active }] }`
+- `GET /api/v1/model-profiles` → `{ active, profiles: [{ id, kind, modelId, effort, active }] }`
 - `POST /api/v1/model-profiles/active` `{ profile }` → 切换并返回同一视图；
   未知 profile 返回 404。
 
@@ -239,7 +257,18 @@ model_attempt
 model_content_block
 model_tool_call
 tool_observation
+model_request_snapshot
 ```
+
+`model_request_snapshot` 是每次请求的 header 完整快照（docs/42 §5.2）：
+装配完成、发送前一点采集，一个 attempt 一行，只增不改。快照只覆盖非历史
+状态——profile/model 身份、渲染后 system（prompt 定义版本 + 全文 hash）、
+可见工具集（名称序列 + schema 整体 hash）、调用配置（maxOutputTokens 与
+effort 档位）；历史内容由 `model_attempt.context_hash` 锚定，不进快照。
+完整快照而非 delta：与同一 Run 上一快照 hash 相同时只置
+`same_as_previous` 标记，行照插；hash 变化当拍记 INFO（含字段级差异
+概要），与 `model_attempt_usage` 的 cache_read/cache_miss 配套，让
+「装配变动 → 命中率跌落」可归因（docs/42 §5.3）。
 
 原始 provider 流和 thinking 原文默认不持久化到安全 projection。需要审计的
 provider metadata 先清洗再存；秘密与 header 永不入库。

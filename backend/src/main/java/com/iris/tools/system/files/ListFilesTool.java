@@ -61,7 +61,11 @@ public class ListFilesTool implements Tool {
                 ToolManifest.ContextRetention.REFETCHABLE,
                 ToolManifest.ConcurrencySemantics.PARALLEL_SAFE,
                 ToolManifest.CancellationSemantics.COOPERATIVE,
-                "browse directory tree show folder entries"
+                "browse directory tree show folder entries",
+                "recursive 默认 false；递归深度上限 8 层，每页最多 200 条，"
+                        + "按最近修改降序。truncated 出现时用 nextOffset 翻页，"
+                        + "或用更具体的路径与 glob 收窄；guidance 说明实际扫描范围。"
+                        + "它建立的是工作区事实，不代表能力发现。"
         );
     }
 

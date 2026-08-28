@@ -18,6 +18,12 @@ import { USER_BUBBLE_WIDTH_CLASS } from '@/domain/chat/bubbleStyle'
 /** 已播过摘要行淡入的 roundId 集合（会话级） */
 const summaryFadedRoundIds = new Set<string>()
 
+/**
+ * 已按"沉淀自动收起"处理过的 thinking 节点（会话级，docs/42 §6 P1）：
+ * 一次为限——用户随后手动展开/收起优先，自动逻辑不再抢回。
+ */
+const autoCollapsedNodeIds = new Set<string>()
+
 interface RoundSectionProps {
   round: RoundView
   nodesById: Record<string, RenderNode>
@@ -96,6 +102,9 @@ export const RoundSection = memo(function RoundSection({
   const seedExpandedRound = useViewStateStore(
     (state) => state.seedExpandedRound,
   )
+  const collapseUnpinnedNodes = useViewStateStore(
+    (state) => state.collapseUnpinnedNodes,
+  )
 
   // 摘要行入场动画：只在 active→非 active 的跃迁瞬间触发一次，
   // 水合历史时初值即 settled，不会误闪；会话级集合防重放。
@@ -113,11 +122,41 @@ export const RoundSection = memo(function RoundSection({
 
   // 结算瞬间：一次性把整条过程链播种为展开。
   // 用户随后手动折叠优先（seed 只在 initializedNodeIds 未含 round 标记时生效一次）。
+  // thinking 节点例外（docs/42 §6 P1）：思考内容只在当下有阅读价值，
+  // 沉淀后是链条最大噪音源——播种后同批收回用户未曾手动展开的思考体，
+  // 两次 set 同一 effect 内提交，不会先展开再收起地闪一下。
   useEffect(() => {
     if (roundActive) return
     if (chainNodes.length === 0) return
     seedExpandedRound(round.roundId, processNodeIds)
-  }, [roundActive, chainNodes.length, round.roundId, processNodeIds, seedExpandedRound])
+    const pinned = useViewStateStore.getState().userExpandedNodeIds
+    const collapseIds = chainNodes
+      .filter(
+        (node) =>
+          node.type === 'thinking'
+          && !pinned[node.nodeId]
+          && !autoCollapsedNodeIds.has(node.nodeId),
+      )
+      .map((node) => node.nodeId)
+    for (const nodeId of collapseIds) autoCollapsedNodeIds.add(nodeId)
+    if (collapseIds.length > 0) collapseUnpinnedNodes(collapseIds)
+  }, [roundActive, chainNodes, round.roundId, processNodeIds, seedExpandedRound, collapseUnpinnedNodes])
+
+  // 回合仍活跃、单个 thinking 节点先行沉淀时同样自动收起：
+  // 活跃期逐字流不动，settled 瞬间才收；一次性，用户选择优先。
+  useEffect(() => {
+    const pinned = useViewStateStore.getState().userExpandedNodeIds
+    const collapseIds: string[] = []
+    for (const node of chainNodes) {
+      if (node.type !== 'thinking' || !isFlowNodeSettled(node)) continue
+      if (autoCollapsedNodeIds.has(node.nodeId)) continue
+      if (!expandedNodeIds.has(node.nodeId)) continue
+      if (pinned[node.nodeId]) continue
+      autoCollapsedNodeIds.add(node.nodeId)
+      collapseIds.push(node.nodeId)
+    }
+    if (collapseIds.length > 0) collapseUnpinnedNodes(collapseIds)
+  }, [chainNodes, expandedNodeIds, collapseUnpinnedNodes])
 
   useLayoutEffect(() => {
     if (processVisible) onRevealNewNodes(processNodeIds)

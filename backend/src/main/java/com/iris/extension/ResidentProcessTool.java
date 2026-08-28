@@ -94,7 +94,8 @@ public class ResidentProcessTool implements Tool {
                 sideEffect == ToolManifest.SideEffect.NONE
                         ? ToolManifest.CancellationSemantics.COOPERATIVE
                         : ToolManifest.CancellationSemantics.COMMIT_BOUNDARY,
-                definition.searchHint()
+                definition.searchHint(),
+                TemplateProcessTool.composePrompt(definition)
         );
         this.process = sharedProcess;
     }

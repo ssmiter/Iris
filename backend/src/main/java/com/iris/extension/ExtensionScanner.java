@@ -432,6 +432,17 @@ public class ExtensionScanner {
                         + "用与工具名不重复的同义或领域词";
             }
         }
+        if (definition.prompt() != null) {
+            // prompt 可选；声明了就必须是完整行为合同而非第二句 description
+            // （docs/42 §4 P1 双通道）。
+            if (definition.prompt().isBlank()) {
+                return "prompt 已声明但为空；不需要时移除该键";
+            }
+            if (definition.prompt().length() > 4_000) {
+                return "prompt 超过 4000 字符；行为合同写参数边界、默认上限"
+                        + "与兄弟工具路由，不是教程";
+            }
+        }
         if (definition.inputSchema() == null
                 || !definition.inputSchema().isObject()) {
             return "input_schema 必须是 JSON Schema 对象";

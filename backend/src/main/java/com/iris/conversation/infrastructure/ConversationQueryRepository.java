@@ -829,19 +829,59 @@ public class ConversationQueryRepository {
 
     private RoundView mapRoundView(java.sql.ResultSet rs)
             throws java.sql.SQLException {
+        String roundId = rs.getString("round_id");
+        RoundUsage usage = roundUsage(roundId);
         return new RoundView(
-                rs.getString("round_id"),
+                roundId,
                 rs.getString("run_id"),
                 rs.getInt("round_index"),
                 visibleRoundPhase(rs.getString("phase")),
-                processNodeIds(rs.getString("round_id")),
+                processNodeIds(roundId),
                 rs.getString("answer_node_id"),
                 new RoundStats(
                         rs.getInt("tool_call_count"),
-                        rs.getLong("duration_ms")
+                        rs.getLong("duration_ms"),
+                        usage == null ? null : usage.inputTokens(),
+                        usage == null ? null : usage.outputTokens(),
+                        usage == null ? null : usage.cacheReadTokens(),
+                        usage == null ? null : usage.cacheMissTokens()
                 ),
                 rs.getLong("version")
         );
+    }
+
+    /**
+     * docs/42 §5.3：Round 级缓存 token 聚合，数据源是随 attempt 落库的
+     * model_attempt_usage；没有已完成 attempt 时返回 null（区别于 0）。
+     */
+    private RoundUsage roundUsage(String roundId) {
+        return jdbc.sql("""
+                SELECT SUM(u.input_tokens) AS input_tokens,
+                       SUM(u.output_tokens) AS output_tokens,
+                       SUM(u.cache_read_tokens) AS cache_read_tokens,
+                       SUM(u.cache_miss_tokens) AS cache_miss_tokens
+                FROM model_attempt_usage u
+                JOIN model_attempt ma ON ma.attempt_id = u.attempt_id
+                WHERE ma.round_id = :roundId
+                HAVING COUNT(*) > 0
+                """)
+                .param("roundId", roundId)
+                .query((rs, rowNum) -> new RoundUsage(
+                        rs.getInt("input_tokens"),
+                        rs.getInt("output_tokens"),
+                        rs.getInt("cache_read_tokens"),
+                        rs.getInt("cache_miss_tokens")
+                ))
+                .optional()
+                .orElse(null);
+    }
+
+    private record RoundUsage(
+            int inputTokens,
+            int outputTokens,
+            int cacheReadTokens,
+            int cacheMissTokens
+    ) {
     }
 
     /**
