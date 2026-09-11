@@ -1424,8 +1424,9 @@ import type { WorkspaceItemDto } from '@/types/artifactDock'
 const mescliWorkspaceItemsApi = {
   /** GET /api/workspace/items?conversationId= —— 该会话归集的产物/上传/呈现条目 */
   list: async (conversationId: number): Promise<WorkspaceItemDto[]> => {
-    const res = await fetchApi<{ conversationId: number; items: WorkspaceItemDto[] }>(
-      `/api/workspace/items?conversationId=${conversationId}`
+    const res = await fetchApi<{ conversationId: string | number; items: WorkspaceItemDto[] }>(
+      `/api/workspace/items?conversationId=${conversationId}`,
+      { silent: true }
     )
     return res.items ?? []
   },
@@ -1484,7 +1485,11 @@ export function normalizeBackendProviderConfig(provider: ProviderConfig): Provid
 const mescliConfigApi = {
   /** GET /api/config/providers */
   getProviders: (): Promise<ProviderConfig[]> =>
-    fetchApi<ProviderConfig[]>('/api/config/providers').then((list) =>
+    // Provider profiles are a recoverable startup dependency: the UI can
+    // still use local/profile presets when the backend is booting. Do not turn
+    // that short window into a toast storm; reloadProviders handles the empty
+    // result and retries when the profile store changes.
+    fetchApi<ProviderConfig[]>('/api/config/providers', { silent: true }).then((list) =>
       list.map(normalizeBackendProviderConfig)
     ),
 
@@ -1674,7 +1679,7 @@ const mescliAttachmentApi = {
     }),
 
   getAttachments: async (conversationId: number): Promise<FileAttachmentDto[]> =>
-    fetchApi<FileAttachmentDto[]>(`/api/attachments/${conversationId}`),
+    fetchApi<FileAttachmentDto[]>(`/api/attachments/${conversationId}`, { silent: true }),
 
   deleteAttachment: async (attachmentId: string): Promise<void> =>
     fetchApi<void>(`/api/attachments/${attachmentId}`, {

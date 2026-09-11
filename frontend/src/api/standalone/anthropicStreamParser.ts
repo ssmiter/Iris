@@ -67,10 +67,14 @@ export function parseAnthropicStreamEvent(
         const id = String(block.id || '') || `tool-${index}`
         const name = String(block.name || '')
         // tool_use 的初始 input 可能为空对象或已有部分字段。
-        const input =
+        let input =
           typeof block.input === 'object' && block.input !== null
             ? JSON.stringify(block.input)
             : ''
+        // Anthropic sends `{}` as the content-block placeholder; the real
+        // arguments follow as input_json_delta. Keeping the placeholder would
+        // make the agent loop start the tool too early with empty arguments.
+        if (input.trim() === '{}') input = ''
         state.toolInputs.set(id, input)
         state.indexToId.set(index, id)
         return {
@@ -218,6 +222,8 @@ function accumulateToolInput(
 function mergePartialJson(existing: string, delta: string): string {
   if (!existing) return delta
   if (!delta) return existing
+  if (existing.trim() === '{}' && delta.trim().startsWith('{')) return delta
+  if (existing.trim() === '[]' && delta.trim().startsWith('[')) return delta
   if (delta.startsWith(existing)) return delta
   if (existing.startsWith(delta)) return existing
 

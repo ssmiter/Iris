@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS message_attachment (
     FOREIGN KEY (message_id) REFERENCES message(message_id)
 );
 
+-- Legacy/inline attachments arrive from the WonWork-compatible client before
+-- they become immutable user_artifact objects. Keep their DTO as one opaque
+-- JSON fact so refreshes are lossless without coupling the UI upload shape to
+-- the artifact data plane. Workspace uploads continue to use user_artifact.
+CREATE TABLE IF NOT EXISTS conversation_attachment (
+    attachment_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    dto_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_attachment_conversation
+    ON conversation_attachment(conversation_id, created_at);
+
 CREATE TABLE IF NOT EXISTS conversation_turn (
     turn_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,

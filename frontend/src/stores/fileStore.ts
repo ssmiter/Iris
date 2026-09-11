@@ -192,11 +192,15 @@ export const useFileStore = create<FileStoreState>()(
         }))
 
         for (const att of committed) {
-          // Workspace 上传已在后端持久化，仅 legacy base64 附件需要旧 attachmentApi
-          if (att.isWorkspaceUpload) continue
-
+          // 工作区上传保存的是文件本体；这里另外保存一行会话关联元数据，
+          // 这样刷新后附件仍能回到当前对话。不要把大文件/Blob URL 再复制
+          // 进 SQLite：工作区路径是权威内容来源，图片本轮需要看的 data
+          // 只留在内存态。
+          const durable = att.isWorkspaceUpload
+            ? { ...att, data: '', previewUrl: undefined }
+            : att
           try {
-            await attachmentApi.upload(conversationId, att)
+            await attachmentApi.upload(conversationId, durable)
           } catch (err) {
             console.error('上传附件失败:', att.name, err)
           }

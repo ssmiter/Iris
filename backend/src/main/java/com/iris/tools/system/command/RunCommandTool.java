@@ -49,7 +49,7 @@ public class RunCommandTool implements Tool {
         this.roots = roots;
         this.manifest = new ToolManifest(
                 "iris.system.command.run",
-                "1",
+                "2",
                 "run_command",
                 "在 Windows PowerShell 中执行一条本机命令并返回退出码、stdout 与 stderr；适合已有 CLI 能直接完成的任务",
                 inputSchema(),

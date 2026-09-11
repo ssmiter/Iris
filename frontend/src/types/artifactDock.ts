@@ -189,8 +189,9 @@ export function fileNodeToArtifact(node: {
 
 /** 后端 AiWorkspaceItem 的 DTO（camelCase，JsonSerializerOptions.Web） */
 export interface WorkspaceItemDto {
-  id: number
-  conversationId: number
+  /** Backend artifact ids are opaque strings; WonWork used numeric rows. */
+  id: string | number
+  conversationId: string | number
   userId: string
   virtualPath: string
   kind: 'output' | 'upload' | 'presented' | 'opened'

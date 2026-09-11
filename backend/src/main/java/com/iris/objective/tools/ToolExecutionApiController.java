@@ -173,7 +173,7 @@ public final class ToolExecutionApiController {
             }
             return event;
         }
-        if (!result.terminal() || "succeeded".equals(result.phase())) {
+        if ("succeeded".equals(result.phase())) {
             String output = facts.outputJson(result.executionId()).orElse("");
             event.put("type", "result");
             event.put("resultData", output);
@@ -184,10 +184,34 @@ public final class ToolExecutionApiController {
             }
             return event;
         }
+        if (!result.terminal()) {
+            // A duplicate request can observe an execution between claimed and
+            // its terminal fact. Never present that intermediate snapshot as a
+            // successful empty result; the caller can retry with executionId.
+            String message = "工具仍在执行，尚未产生终态；请稍后用同一 toolUseId 重试";
+            event.put("type", "error");
+            event.put("error", message);
+            event.put("data", message);
+            event.put("errorCode", "tool_execution_in_progress");
+            event.put("status", result.phase());
+            return event;
+        }
+        String output = facts.outputJson(result.executionId()).orElse("");
+        if (!output.isBlank()) {
+            event.put("resultData", output);
+            try { event.put("structuredData", json.readTree(output)); } catch (Exception ignored) { }
+        }
         event.put("type", "error");
-        event.put("error", result.message() == null ? "工具执行失败" : result.message());
-        event.put("data", result.message());
+        String terminalMessage = result.message();
+        if (terminalMessage == null || terminalMessage.isBlank()) {
+            terminalMessage = "outcome_unknown".equals(result.phase())
+                    ? "工具执行结果不确定，外部状态需要核对"
+                    : "工具执行失败";
+        }
+        event.put("error", terminalMessage);
+        event.put("data", terminalMessage);
         event.put("errorCode", result.errorCode());
+        event.put("status", result.phase());
         return event;
     }
 

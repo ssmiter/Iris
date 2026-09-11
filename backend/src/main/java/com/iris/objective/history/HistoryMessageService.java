@@ -163,6 +163,8 @@ public class HistoryMessageService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "conversation not found");
         }
         // 先删子表，再删主表。message_attachment 依赖 message。
+        jdbc.sql("DELETE FROM conversation_attachment WHERE conversation_id = :id")
+                .param("id", conversationId).update();
         jdbc.sql("DELETE FROM message_attachment WHERE message_id IN (SELECT message_id FROM message WHERE conversation_id = :id)")
                 .param("id", conversationId).update();
         jdbc.sql("DELETE FROM message WHERE conversation_id = :id")

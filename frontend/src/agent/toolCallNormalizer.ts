@@ -70,13 +70,23 @@ function generateFallbackId(): string {
 export function mergeToolArguments(existing: string, delta: string): string {
   if (!existing) return delta
   if (!delta) return existing
+  // Anthropic starts a tool_use block with the placeholder input `{}` and
+  // sends the real JSON object in the following partial_json deltas. Treat the
+  // placeholder as an empty seed; concatenating it would create
+  // `{}{"key":...}` and make an otherwise valid call impossible to parse.
+  const deltaTrimmed = delta.trim()
+  if (
+    (existing.trim() === '{}' && deltaTrimmed.startsWith('{')) ||
+    (existing.trim() === '[]' && deltaTrimmed.startsWith('['))
+  ) {
+    return delta
+  }
   if (delta.startsWith(existing)) return delta
   if (existing.startsWith(delta)) return existing
 
   // Anthropic/Kimi Code 等可能把 partial_json 以“完整累积 JSON”形式发送，
   // 而不是增量片段。此时应直接取新的完整 JSON，避免与 existing（如 `{}`）
   // 按字符重叠拼接成 `{}{"path":...}`。
-  const deltaTrimmed = delta.trim()
   if (
     deltaTrimmed.length > existing.length &&
     (deltaTrimmed.startsWith('{') || deltaTrimmed.startsWith('['))

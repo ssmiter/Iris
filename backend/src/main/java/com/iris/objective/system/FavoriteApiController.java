@@ -62,13 +62,11 @@ public class FavoriteApiController {
                     HttpStatus.BAD_REQUEST, "标题和指令内容不能为空");
         }
         Instant now = Instant.now();
-        jdbc.sql("INSERT INTO favorite(title, prompt, created_at, updated_at)"
-                        + " VALUES (:title, :prompt, :now, :now)")
+        Long id = jdbc.sql("INSERT INTO favorite(title, prompt, created_at, updated_at)"
+                        + " VALUES (:title, :prompt, :now, :now) RETURNING id")
                 .param("title", request.title().trim())
                 .param("prompt", request.prompt())
                 .param("now", now.toString())
-                .update();
-        Long id = jdbc.sql("SELECT last_insert_rowid()")
                 .query(Long.class)
                 .single();
         // WonWork POST 回 {Id,Title,Prompt}
