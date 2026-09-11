@@ -9,30 +9,38 @@ import { useFileStore } from '@/stores/fileStore'
 import { useLicenseStore } from '@/stores/licenseStore'
 import { useQuotaStore } from '@/stores/quotaStore'
 import { usePermissionStore } from '@/stores/permissionStore'
-import { useConversationTitleStore } from '@/stores/conversationTitleStore'
-import { isPreview, supportsLicenseActivation, FEATURE_FLAGS, isOnline, isFeatureHidden } from '@/config/product'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { syncFromConversations, useTitleRefreshStore } from '@/stores/conversationTitleStore'
+import { useMainLoopRunStore } from '@/stores/mainLoopRuns'
+import { useBrowseDirectoryStore } from '@/stores/browseDirectoryStore'
+import { supportsLicenseActivation, FEATURE_FLAGS, isOnline, isFeatureHidden } from '@/config/product'
 import {
   MessageSquare,
-  Workflow,
-  Brain,
   Users,
   CalendarClock,
   Settings,
-  LogIn,
+  User,
+  Building2,
+  Languages,
+  LogOut,
   ChevronLeft,
   ChevronRight,
   Plus,
   Trash2,
   Star,
   Wrench,
-  Globe,
-  GitBranch,
   Puzzle,
+  Boxes,
+  BookOpenCheck,
+  Sparkles,
   MoreHorizontal,
   Pencil,
+  RefreshCw,
+  Loader2,
   Check,
   X,
   Search,
+  FolderOpen,
 } from 'lucide-react'
 
 const IS_STANDALONE = import.meta.env.VITE_STANDALONE_MODE === 'true'
@@ -46,18 +54,22 @@ interface NavItem {
   feature?: string
 }
 
-/** 核心导航（始终可见，不超过 3 个） */
-const CORE_ITEMS: (keyof typeof FEATURE_FLAGS)[] = ['chat', 'workflow']
+/** 核心导航（始终可见，不超过 3 个；browse=文件浏览浮层开关，由 MainLayout 拦截不走视图） */
+const CORE_ITEMS = ['chat', 'browse'] as const
 
 /** 更多工具（收入可展开面板） */
 const MORE_ITEMS = [
-  { id: 'memory', labelKey: 'layout.sidebar.memory', icon: <Brain size={18} />, feature: FEATURE_FLAGS.memory },
-  { id: 'webbridge', labelKey: 'layout.sidebar.webbridge', icon: <Globe size={18} />, feature: FEATURE_FLAGS.webbridge },
+  // 记忆入口已迁至顶栏"记忆微尘"（记忆之野 2026-07-31）——侧栏旧入口隐藏，nav id 保留防回流
   { id: 'cron', labelKey: 'layout.sidebar.cron', icon: <CalendarClock size={18} />, feature: FEATURE_FLAGS.cronScheduler },
   { id: 'skill', labelKey: 'layout.sidebar.skill', icon: <Wrench size={18} />, feature: FEATURE_FLAGS.skill },
-  { id: 'dag-workflow', labelKey: 'layout.sidebar.dagWorkflow', icon: <GitBranch size={18} />, feature: FEATURE_FLAGS.dagWorkflow },
   { id: 'agent-swarm', labelKey: 'layout.sidebar.agentSwarm', icon: <Users size={18} />, feature: FEATURE_FLAGS.agentSwarm },
   { id: 'plugin', labelKey: 'layout.sidebar.plugin', icon: <Puzzle size={18} />, feature: FEATURE_FLAGS.plugin },
+  // 客户工具包对所有登录模式可见（2026-08-17 拍板开门）：新体系"管理与使用分离"——任何登录态可管包装卸，
+  // 用业务域包才需切对应 systemCode 登录；公网客户下载的 .wwtool 也走此页安装
+  { id: 'mescli-packages', labelKey: 'layout.sidebar.mescliPackages', icon: <Boxes size={18} />, feature: undefined },
+  { id: 'knowledge', labelKey: 'layout.sidebar.knowledge', icon: <BookOpenCheck size={18} />, feature: undefined, requiresKnowledge: true },
+  // MCP 插件市场（2026-08-06）：不加 feature 字段恒可见，市场不可用（内网/standalone）时视图层自降级
+  { id: 'mcp-market', labelKey: 'layout.sidebar.mcpMarket', icon: <Sparkles size={18} />, feature: undefined },
 ] as const
 
 interface SidebarProps {
@@ -66,6 +78,9 @@ interface SidebarProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
   onOpenLogin: () => void
+  onOpenSettings: () => void
+  onOpenMesLogin: () => void
+  knowledgeEnabled: boolean
 }
 
 // ── Conversation context menu ──────────────────────────
@@ -76,6 +91,7 @@ function ConvContextMenu({
   position,
   onClose,
   onRename,
+  onRefreshTitle,
   onDelete,
   isActive,
 }: {
@@ -84,6 +100,7 @@ function ConvContextMenu({
   position: { top: number; left: number }
   onClose: () => void
   onRename: (id: number) => void
+  onRefreshTitle: (id: number) => void
   onDelete: (id: number) => void
   isActive: boolean
 }) {
@@ -114,6 +131,9 @@ function ConvContextMenu({
     >
       <button onClick={() => { onRename(conv.id); onClose() }}>
         <Pencil size={13} /> {t('layout.sidebar.rename')}
+      </button>
+      <button onClick={() => { onRefreshTitle(conv.id); onClose() }}>
+        <RefreshCw size={13} /> {t('layout.sidebar.refreshTitle')}
       </button>
       <button
         onClick={() => { onDelete(conv.id); onClose() }}
@@ -158,34 +178,40 @@ function InlineRename({
   )
 }
 
-// ── 用户 ··· 菜单（设置 + 工具 + 快捷指令收纳，向上弹出） ──
+// ── 用户上弹菜单（设置 + 工具 + 快捷指令 + 语言二级页） ──
 
 function UserMenu({
   open,
   position,
   onClose,
+  onOpenLogin,
+  onOpenSettings,
+  onOpenMesLogin,
   onNavigate,
   moreItems,
-  activeView,
   favorites,
   onSendFavorite,
   onDeleteFavorite,
 }: {
   open: boolean
-  position: { bottom: number; left: number }
+  position: { bottom: number; left: number; width?: number }
   onClose: () => void
+  onOpenLogin: () => void
+  onOpenSettings: () => void
+  onOpenMesLogin: () => void
   onNavigate: (view: string) => void
   moreItems: readonly { id: string; labelKey: string; icon: React.ReactNode }[]
-  activeView: string
   favorites: { id: number; title: string; prompt: string }[]
   onSendFavorite: (prompt: string) => void
   onDeleteFavorite: (id: number) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
+  const [p2, setP2] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    setP2(false)
     const h = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
     }
@@ -198,50 +224,150 @@ function UserMenu({
     }
   }, [open, onClose])
 
+  const { isLoggedIn, isMesLoggedIn, isWebsiteLoggedIn } = useAuthStore()
+
+  const handleSetLanguage = (lang: 'zh-CN' | 'en-US') => {
+    useSettingsStore.getState().setLanguage(lang)
+  }
+
   if (!open) return null
+
+  const langName = i18n.language === 'en-US' ? 'English' : '简体中文'
 
   return (
     <div
       ref={menuRef}
-      className="wf-conv-menu wf-user-menu"
-      style={{ bottom: position.bottom, left: position.left }}
+      className={cn('wf-umenu', open && 'open')}
+      style={{
+        bottom: position.bottom,
+        left: position.left,
+        ...(position.width != null ? { width: position.width, minWidth: 0 } : {}),
+      }}
     >
-      <button
-        onClick={() => onNavigate('settings')}
-        className={activeView === 'settings' ? 'active' : undefined}
-      >
-        <Settings size={13} /> {t('layout.sidebar.settings')}
-      </button>
-      {moreItems.length > 0 && <div className="wf-menu-divider" />}
-      {moreItems.map((item) => (
-        <button
-          key={item.id}
-          onClick={() => onNavigate(item.id)}
-          className={activeView === item.id ? 'active' : undefined}
-        >
-          <span className="wf-menu-ico">{item.icon}</span> {t(item.labelKey)}
-        </button>
-      ))}
-      {favorites.length > 0 && (
-        <>
-          <div className="wf-menu-divider" />
-          <div className="wf-menu-section">{t('layout.sidebar.quickCommands')}</div>
-          {favorites.slice(0, 4).map((fav) => (
-            <div key={fav.id} className="wf-menu-fav-row">
-              <button onClick={() => onSendFavorite(fav.prompt)} title={fav.prompt}>
-                <Star size={12} /> <span className="wf-menu-fav-title">{fav.title}</span>
-              </button>
+      <div className={cn('wf-umenu-slide', p2 && 'p2')}>
+        {/* 一级页 */}
+        <div className="wf-umenu-page">
+          <button
+            className="wf-umenu-row wf-press"
+            onClick={() => { onClose(); onOpenLogin() }}
+          >
+            <span className="wf-umenu-ic"><User size={14} /></span>
+            <span>{isLoggedIn ? t('layout.usermenu.account') : t('layout.usermenu.login')}</span>
+            <ChevronRight size={14} className="wf-umenu-chev" />
+          </button>
+
+          {isWebsiteLoggedIn && !isMesLoggedIn && !IS_STANDALONE && (
+            <button
+              className="wf-umenu-row wf-press"
+              onClick={() => { onClose(); onOpenMesLogin() }}
+            >
+              <span className="wf-umenu-ic"><Building2 size={14} /></span>
+              <span>{t('layout.usermenu.mesLogin')}</span>
+              <ChevronRight size={14} className="wf-umenu-chev" />
+            </button>
+          )}
+
+          <div className="wf-umenu-sep" />
+
+          <button
+            className="wf-umenu-row wf-press"
+            onClick={() => setP2(true)}
+          >
+            <span className="wf-umenu-ic"><Languages size={14} /></span>
+            <span>{t('layout.usermenu.language')}</span>
+            <span className="wf-umenu-val">{langName}</span>
+            <ChevronRight size={14} className="wf-umenu-chev" />
+          </button>
+
+          <div className="wf-umenu-sep" />
+
+          <button
+            className="wf-umenu-row wf-press"
+            onClick={() => { onClose(); onOpenSettings() }}
+          >
+            <span className="wf-umenu-ic"><Settings size={14} /></span>
+            <span>{t('layout.usermenu.settings')}</span>
+          </button>
+
+          {moreItems.length > 0 && (
+            <>
+              <div className="wf-umenu-sep" />
+              <div className="wf-umenu-cap">{t('layout.usermenu.tools')}</div>
+              {moreItems.map((item) => (
+                <button
+                  key={item.id}
+                  data-testid={item.id === 'knowledge' ? 'knowledge-account-menu-button' : undefined}
+                  className="wf-umenu-row wf-press"
+                  onClick={() => { onClose(); onNavigate(item.id) }}
+                >
+                  <span className="wf-umenu-ic">{item.icon}</span>
+                  <span>{t(item.labelKey)}</span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {favorites.length > 0 && (
+            <>
+              <div className="wf-umenu-sep" />
+              <div className="wf-umenu-cap">{t('layout.sidebar.quickCommands')}</div>
+              {favorites.slice(0, 4).map((fav) => (
+                <div key={fav.id} className="wf-menu-fav-row">
+                  <button onClick={() => { onClose(); onSendFavorite(fav.prompt) }} title={fav.prompt}>
+                    <Star size={12} /> <span className="wf-menu-fav-title">{fav.title}</span>
+                  </button>
+                  <button
+                    className="wf-menu-fav-del"
+                    onClick={() => onDeleteFavorite(fav.id)}
+                    title={t('layout.sidebar.delete')}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+
+          {isLoggedIn && (isMesLoggedIn || isWebsiteLoggedIn) && (
+            <>
+              <div className="wf-umenu-sep" />
               <button
-                className="wf-menu-fav-del"
-                onClick={() => onDeleteFavorite(fav.id)}
-                title={t('layout.sidebar.delete')}
+                className="wf-umenu-row danger wf-press"
+                onClick={() => { onClose(); useAuthStore.getState().logout() }}
               >
-                <Trash2 size={11} />
+                <span className="wf-umenu-ic"><LogOut size={14} /></span>
+                <span>{t('layout.usermenu.logout')}</span>
               </button>
-            </div>
-          ))}
-        </>
-      )}
+            </>
+          )}
+        </div>
+
+        {/* 二级页：语言 */}
+        <div className="wf-umenu-page">
+          <button
+            className="wf-umenu-row wf-press"
+            onClick={() => setP2(false)}
+          >
+            <span className="wf-umenu-ic"><ChevronLeft size={14} /></span>
+            <span>{t('layout.usermenu.language')}</span>
+          </button>
+          <div className="wf-umenu-sep" />
+          <button
+            className={cn('wf-umenu-row wf-press', i18n.language === 'zh-CN' && 'on')}
+            onClick={() => handleSetLanguage('zh-CN')}
+          >
+            <span>简体中文</span>
+            {i18n.language === 'zh-CN' && <Check size={14} className="wf-umenu-check" />}
+          </button>
+          <button
+            className={cn('wf-umenu-row wf-press', i18n.language === 'en-US' && 'on')}
+            onClick={() => handleSetLanguage('en-US')}
+          >
+            <span>English</span>
+            {i18n.language === 'en-US' && <Check size={14} className="wf-umenu-check" />}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -362,9 +488,26 @@ function SearchPalette({
 
 // ── Sidebar ────────────────────────────────────────────
 
-export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse, onOpenLogin }: SidebarProps) {
+export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse, onOpenLogin, onOpenSettings, onOpenMesLogin, knowledgeEnabled }: SidebarProps) {
   const { t } = useTranslation()
-  const { user, isLoggedIn, isMesLoggedIn, isCloudLoggedIn, isWebsiteLoggedIn, websiteAccount, cloudAccount } = useAuthStore()
+  const { user, isLoggedIn, isMesLoggedIn, isWebsiteLoggedIn, websiteAccount } = useAuthStore()
+
+  const badge = isWebsiteLoggedIn && websiteAccount?.plan
+    ? websiteAccount.plan
+    : isWebsiteLoggedIn && isMesLoggedIn
+      ? 'Online'
+      : isMesLoggedIn
+        ? 'MES'
+        : null
+
+  const subtitle = isWebsiteLoggedIn && !isMesLoggedIn
+    ? 'Website'
+    : isWebsiteLoggedIn && isMesLoggedIn
+      ? 'Online'
+      : isMesLoggedIn && user
+        ? `MES · ${user.systemCode}`
+        : t('layout.sidebar.notLoggedIn')
+
   const license = useLicenseStore((s) => s.license)
   const usage = useQuotaStore((s) => s.usage)
   const permissions = usePermissionStore((s) => s.permissions)
@@ -372,8 +515,10 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
   // ── nav items ──
   const coreIconMap: Record<string, React.ReactNode> = {
     chat: <MessageSquare size={20} />,
-    workflow: <Workflow size={20} />,
+    browse: <FolderOpen size={20} />,
   }
+  // 文件浏览浮层的"选中"态=窗口开着且未最小化（它不是视图，activeView 永不等于它）
+  const browseVisible = useBrowseDirectoryStore((s) => s.isOpen && !s.minimized)
   const coreItems = CORE_ITEMS
     .filter((id) => {
       const feat = FEATURE_FLAGS[id as keyof typeof FEATURE_FLAGS]
@@ -387,12 +532,13 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     }))
 
   const isMoreAvailable = (item: (typeof MORE_ITEMS)[number]): boolean => {
+    if ('requiresKnowledge' in item && item.requiresKnowledge && !knowledgeEnabled) return false
+    if ('requiresMes' in item && item.requiresMes && !isMesLoggedIn) return false
     if (isFeatureHidden(item.feature)) return false
     if (!item.feature) return true
-    if (!isPreview && !supportsLicenseActivation) {
+    if (!supportsLicenseActivation) {
       return permissions ? permissions.features.includes(item.feature) : true
     }
-    if (isPreview || !supportsLicenseActivation) return true
     // license 未加载（null）不应当作"无授权"而隐藏全部入口——
     // 否则 external Online 用户在 license 初始化前看不到任何工具。
     if (!license) return true
@@ -410,7 +556,6 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     loadConversations,
     createConversation,
     deleteConversation,
-    setCurrentConversation,
     updateConversationTitle,
   } = useConversationStore()
 
@@ -420,15 +565,23 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     deleteFavorite,
   } = useFavoriteStore()
 
-  const {
-    messages,
-    sendMessage,
-    clearMessages,
-    loadMessages,
-    setLoading,
-    setStreaming,
-    stopStreaming,
-  } = useChatStore()
+  // 2026-08-12 用户拍板：内联搜索框撤掉（很少用；logo 右侧搜索图标 + Ctrl+K 浮层足够），
+  // 会话列表永远渲染全量，「对话」字样只保留必要的按钮。
+  // 2026-09-01 二阶段：任务会话（parentConversationId 有值）不进主列表——
+  // 入口=父会话任务卡；旧数据/IndexedDB 存量该字段为 undefined，== null 放行。
+  const visibleConversations = conversations.filter((c) => c.parentConversationId == null)
+
+  // 标题刷新进行中集合（手动刷新/自动生成的 spinner 都据此渲染）
+  const titleRefreshingIds = useTitleRefreshStore((s) => s.refreshingIds)
+
+  // 2026-07-31 订阅风暴修复：整店订阅导致侧栏随每个流式 chunk 重渲染；
+  // messages 本就从未使用，六个 action 引用稳定，逐个精准订阅。
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const clearMessages = useChatStore((s) => s.clearMessages)
+  const detachConversationView = useChatStore((s) => s.detachConversationView)
+  const attachConversationView = useChatStore((s) => s.attachConversationView)
+  // 2026-09-04 会话后台化：运行中会话的"安静徽标"数据源（有主 loop 在跑的会话 id）
+  const runningConversationIds = useMainLoopRunStore((s) => s.runningIds)
 
   useEffect(() => {
     if (!isLoggedIn) return
@@ -437,14 +590,14 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
   }, [isLoggedIn, loadConversations, loadFavorites])
 
   useEffect(() => {
-    useConversationTitleStore.getState().syncFromConversations(conversations)
+    syncFromConversations(conversations)
   }, [conversations])
 
   // ── local state ──
   const [ctxMenu, setCtxMenu] = useState<{ conv: { id: number; title: string }; x: number; y: number } | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [userMenuPos, setUserMenuPos] = useState<{ bottom: number; left: number } | null>(null)
+  const [userMenuPos, setUserMenuPos] = useState<{ bottom: number; left: number; width?: number } | null>(null)
 
   // ── 历史对话：滚动淡化 ──
   const convListRef = useRef<HTMLDivElement>(null)
@@ -484,25 +637,26 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
   }, [])
 
   // ── handlers ──
+  // 2026-09-04 会话后台化：切换=detach/attach（有 run 的会话视图入 stash，loop 继续后台跑），
+  // 不再 stopStreaming——进不进会话只是渲染差别，agent 逻辑一直在跑和落库。
   const handleSelectConversation = (id: number) => {
     if (activeView !== 'chat') onNavigate('chat')
-    stopStreaming()
-    setCurrentConversation(id)
-    clearMessages()
-    setLoading(false)
-    setStreaming(false)
-    loadMessages(id)
+    if (id === currentConversationId) return
+    detachConversationView()
+    attachConversationView(id)
   }
 
   const handleNewConversation = async () => {
     if (activeView !== 'chat') onNavigate('chat')
-    stopStreaming()
-    setLoading(false)
-    setStreaming(false)
+    detachConversationView()
     const id = await createConversation(t('chat.chatView.newConversation'))
     if (id) {
-      clearMessages()
+      attachConversationView(id)
       useFileStore.getState().clearPendingFiles()
+    } else {
+      // 创建失败（toast 已提示）：视图已清空，重载当前会话消息恢复视图
+      const cur = useConversationStore.getState().currentConversationId
+      if (cur != null) attachConversationView(cur)
     }
   }
 
@@ -522,6 +676,12 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     setCtxMenu(null)
   }
 
+  // 手动刷新标题（2026-08-14 恢复入口）：复用 store 的 refreshConversationTitle，
+  // 非当前会话也会从存储层取用户消息组合，不会张冠李戴。标题写回即反馈。
+  const handleRefreshTitle = (id: number) => {
+    void useChatStore.getState().refreshConversationTitle(id)
+  }
+
   const handleRenameSave = (id: number, newTitle: string) => {
     const trimmed = newTitle.trim()
     if (trimmed) updateConversationTitle(id, trimmed)
@@ -529,8 +689,19 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
   }
 
   const handleDeleteConv = (id: number) => {
+    const conv = conversations.find((c) => c.id === id)
+    const running = runningConversationIds.includes(id)
+    // 简单确认（同卸载包 confirm 先例）；运行中会话多一句警示
+    const message = running
+      ? t('layout.sidebar.deleteRunningConfirm', { title: conv?.title ?? '' })
+      : t('layout.sidebar.deleteConfirm', { title: conv?.title ?? '' })
+    if (!confirm(message)) {
+      setCtxMenu(null)
+      return
+    }
     if (currentConversationId === id) clearMessages()
-    deleteConversation(id)
+    // 删除会先停掉该会话的后台 run（conversationStore 内），完成后同步视图流式态
+    void deleteConversation(id).then(() => useChatStore.getState().syncStreaming())
     setCtxMenu(null)
   }
 
@@ -539,10 +710,30 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     handleSelectConversation(id)
   }
 
-  const handleOpenUserMenu = (e: React.MouseEvent) => {
+  const handleToggleUserMenu = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (userMenuPos) {
+      setUserMenuPos(null)
+      return
+    }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    setUserMenuPos({ bottom: window.innerHeight - rect.top + 8, left: rect.right - 200 })
+    if (isCollapsed) {
+      // 折叠态侧栏仅 56px，物理装不下整宽菜单：保持现状，从头像锚点向右展开（不越界）
+      setUserMenuPos({ bottom: window.innerHeight - rect.top + 8, left: rect.left + 8 })
+      return
+    }
+    // 展开态（248px）：菜单宽度=侧栏内宽（左右各 12px），严格隶属侧栏（蓝图 .usermenu）
+    const sideEl = (e.currentTarget as HTMLElement).closest('.wf-sidebar')
+    const sideRect = sideEl?.getBoundingClientRect()
+    if (!sideRect) {
+      setUserMenuPos({ bottom: window.innerHeight - rect.top + 8, left: rect.right - 220 })
+      return
+    }
+    setUserMenuPos({
+      bottom: window.innerHeight - rect.top + 8,
+      left: sideRect.left + 12,
+      width: sideRect.width - 24,
+    })
   }
 
   const handleUserMenuNavigate = (view: string) => {
@@ -555,7 +746,11 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     handleSendFavorite(prompt)
   }
 
-  const isChatActive = activeView === 'chat'
+  const handleGearClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setUserMenuPos(null)
+    onOpenSettings()
+  }
 
   return (
     <aside className={cn('wf-sidebar', isCollapsed && 'collapsed')}>
@@ -566,7 +761,7 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
           onClick={isCollapsed ? onToggleCollapse : undefined}
           title={isCollapsed ? t('layout.sidebar.expand') : undefined}
         >
-          <img src="./iris-logo.svg" alt="Iris" className="wf-sidebar-ico" />
+          <img src="./logo.ico" alt="WonWork" className="wf-sidebar-ico" />
           {!isCollapsed && <span>Won<b>Work</b></span>}
         </div>
         {!isCollapsed && (
@@ -600,20 +795,19 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
         </>
       )}
 
-      {/* ── 新建对话 ── */}
-      {isChatActive && (
-        <div className={cn('wf-sidebar-new-conv', isCollapsed && 'collapsed')}>
-          <button onClick={handleNewConversation}>
-            <Plus size={isCollapsed ? 20 : 17} />
-            {!isCollapsed && t('layout.sidebar.newConversation')}
-          </button>
-        </div>
-      )}
+      {/* ── 新建对话（2026-08-08 侧栏稳定化：全视图常驻，不再随视图撤掉——
+          撤掉会导致导航行上下跳动；handleNewConversation 内部自带回 chat 导航） ── */}
+      <div className={cn('wf-sidebar-new-conv', isCollapsed && 'collapsed')}>
+        <button onClick={handleNewConversation}>
+          <Plus size={isCollapsed ? 20 : 17} />
+          {!isCollapsed && t('layout.sidebar.newConversation')}
+        </button>
+      </div>
 
       {/* ── 导航：核心 + 工具，全部扁平 ── */}
       <nav className={cn('wf-sidebar-nav', isCollapsed && 'collapsed')}>
         {coreItems.map((item) => {
-          const isActive = activeView === item.id
+          const isActive = item.id === 'browse' ? browseVisible : activeView === item.id
           return (
             <button
               key={item.id}
@@ -628,12 +822,12 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
         })}
       </nav>
 
-      {/* ── 收起态：设置 + 工具以图标按钮平铺（与核心导航同款），替代 ··· 菜单 ── */}
+      {/* ── 收起态：设置 + 工具以图标按钮平铺（与核心导航同款） ── */}
       {isCollapsed && (
         <nav className="wf-sidebar-nav collapsed wf-sidebar-nav-tools">
           <button
-            onClick={() => onNavigate('settings')}
-            className={cn('wf-sidebar-nav-item', activeView === 'settings' && 'active')}
+            onClick={onOpenSettings}
+            className="wf-sidebar-nav-item"
             title={t('layout.sidebar.settings')}
           >
             <span className="wf-sidebar-nav-icon"><Settings size={20} /></span>
@@ -651,8 +845,9 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
         </nav>
       )}
 
-      {/* ── 对话历史（占满剩余空间，上下淡化提示可滚动） ── */}
-      {isChatActive && !isCollapsed && (
+      {/* ── 对话历史（占满剩余空间，上下淡化提示可滚动；全视图常驻=跨视图快切器，
+          切会话/新建内部都会先回 chat 再执行，走廊开着点会话也会关走廊回家） ── */}
+      {!isCollapsed && (
         <div className="wf-sidebar-conversations">
           <div className="wf-sidebar-conv-wrap">
             <div className={cn('wf-conv-fade top', convScroll.canUp && 'show')} />
@@ -662,11 +857,12 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
               onScroll={updateConvScroll}
             >
               <div className="wf-sidebar-conv-list">
-                {conversations.length === 0 && (
+                {visibleConversations.length === 0 && (
                   <p className="wf-sidebar-empty">{t('layout.sidebar.noConversations')}</p>
                 )}
-                {conversations.map((conv) => {
+                {visibleConversations.map((conv) => {
                   const isActive = currentConversationId === conv.id
+                  const isRunning = runningConversationIds.includes(conv.id)
 
                   if (renamingId === conv.id) {
                     return (
@@ -683,9 +879,14 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
                     <div
                       key={conv.id}
                       onClick={() => handleSelectConversation(conv.id)}
-                      className={cn('wf-sidebar-conv-item', isActive && 'active')}
+                      className={cn('wf-sidebar-conv-item', isActive && 'active', isRunning && 'running')}
                     >
-                      <span className="wf-sidebar-conv-title">{conv.title}</span>
+                      <span className="wf-sidebar-conv-title">
+                        {titleRefreshingIds.has(conv.id) && (
+                          <Loader2 size={11} className="wf-sidebar-conv-spinner animate-spin" />
+                        )}
+                        <span className="wf-sidebar-conv-title-text">{conv.title}</span>
+                      </span>
                       <button
                         className="wf-sidebar-conv-more"
                         onClick={(e) => handleOpenCtxMenu(e, conv)}
@@ -703,38 +904,43 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
         </div>
       )}
 
-      {/* spacer：非 chat 视图时把底部用户行推到底 */}
-      {!(isChatActive && !isCollapsed) && <div className="flex-1 min-h-0" />}
+      {/* spacer：收起态把底部用户行推到底（展开态由对话历史 flex-1 承担） */}
+      {isCollapsed && <div className="flex-1 min-h-0" />}
 
-      {/* ── 底部：用户 + ··· 菜单（设置/工具/快捷指令收纳） ── */}
+      {/* ── 底部：用户块 + 上弹菜单 ── */}
       <div className={cn('wf-sidebar-bottom', isCollapsed && 'collapsed')}>
-        <div className="wf-sidebar-user-row">
-          <button onClick={onOpenLogin} className="wf-sidebar-user">
-            <div className={cn('wf-sidebar-avatar', isLoggedIn && 'logged-in')}>
-              <span>{isLoggedIn && user?.realName ? user.realName.charAt(0) : '?'}</span>
-            </div>
-            {!isCollapsed && (
-              <div className="wf-sidebar-user-text">
-                <p>{isLoggedIn && user?.realName ? user.realName : t('layout.sidebar.clickToLogin')}</p>
-                <p>
-                  {isWebsiteLoggedIn
-                    ? (isMesLoggedIn ? 'Online' : 'Website')
-                    : isCloudLoggedIn ? 'Wongoing'
-                    : IS_STANDALONE ? 'Standalone'
-                    : isMesLoggedIn ? 'MES' : t('layout.sidebar.notLoggedIn')}
-                </p>
-              </div>
-            )}
-            {!isCollapsed && !isLoggedIn && <LogIn size={12} />}
-          </button>
-          {!isCollapsed && (
+        <div
+          className={cn('wf-ublock', isCollapsed && 'collapsed', !isCollapsed && 'wf-press')}
+          onClick={!isCollapsed ? handleToggleUserMenu : undefined}
+        >
+          {isCollapsed ? (
             <button
-              className="wf-sidebar-user-more"
-              onClick={handleOpenUserMenu}
-              title={t('layout.sidebar.moreActions')}
+              className={cn('wf-ublock-avatar', isLoggedIn ? 'logged-in' : 'guest', 'wf-press')}
+              onClick={handleToggleUserMenu}
+              title={isLoggedIn && user?.realName ? user.realName : t('layout.sidebar.clickToLogin')}
             >
-              <MoreHorizontal size={15} />
+              <span>{isLoggedIn && user?.realName ? user.realName.charAt(0) : '?'}</span>
             </button>
+          ) : (
+            <>
+              <div className={cn('wf-ublock-avatar', isLoggedIn ? 'logged-in' : 'guest')}>
+                <span>{isLoggedIn && user?.realName ? user.realName.charAt(0) : '?'}</span>
+              </div>
+              <div className="wf-ublock-id">
+                <div className="wf-ublock-nm" title={isLoggedIn && user?.realName ? user.realName : undefined}>
+                  <span>{isLoggedIn && user?.realName ? user.realName : t('layout.sidebar.clickToLogin')}</span>
+                  {badge && <span className="wf-ublock-badge">{badge}</span>}
+                </div>
+                <div className="wf-ublock-sub" title={subtitle}>{subtitle}</div>
+              </div>
+              <button
+                className="wf-ublock-gear wf-press"
+                onClick={handleGearClick}
+                title={t('layout.usermenu.settings')}
+              >
+                <Settings size={16} />
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -746,18 +952,21 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
         position={ctxMenu ? { top: ctxMenu.y, left: ctxMenu.x } : { top: 0, left: 0 }}
         onClose={() => setCtxMenu(null)}
         onRename={handleRename}
+        onRefreshTitle={handleRefreshTitle}
         onDelete={handleDeleteConv}
         isActive={ctxMenu?.conv.id === currentConversationId}
       />
 
-      {/* ── 用户 ··· 菜单：设置 + 工具 + 快捷指令 ── */}
+      {/* ── 用户上弹菜单 ── */}
       <UserMenu
         open={!!userMenuPos}
         position={userMenuPos ?? { bottom: 0, left: 0 }}
         onClose={() => setUserMenuPos(null)}
+        onOpenLogin={onOpenLogin}
+        onOpenSettings={onOpenSettings}
+        onOpenMesLogin={onOpenMesLogin}
         onNavigate={handleUserMenuNavigate}
         moreItems={moreItems}
-        activeView={activeView}
         favorites={favorites}
         onSendFavorite={handleUserMenuFavorite}
         onDeleteFavorite={deleteFavorite}
@@ -767,7 +976,7 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
       <SearchPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        conversations={conversations}
+        conversations={visibleConversations}
         currentId={currentConversationId}
         onSelect={handlePaletteSelect}
       />

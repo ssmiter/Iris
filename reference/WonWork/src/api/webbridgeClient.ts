@@ -8,6 +8,7 @@ import type {
   ElementSelector,
   WorkspaceFileInfo,
   StageInputEvent,
+  BrowserWindowCommand,
 } from '@/types/webbridge'
 
 export interface StatusInfo {
@@ -16,14 +17,19 @@ export interface StatusInfo {
   chrome_ready?: boolean
   chrome_error?: string
   browser_path?: string
+  headless?: boolean
+  debug_port?: number
 }
 
 export interface WebBridgeClientOptions {
   onMessage?: (response: WebBridgeResponse) => void
   onStatusChange?: (status: ConnectionStatus) => void
   onRecordedAction?: (action: BrowserAction) => void
+  onUserInteraction?: (interaction: { kind?: string; at?: number }) => void
   /** 接管模式：screencast 帧（base64 JPEG） */
   onScreencastFrame?: (base64Jpeg: string) => void
+  /** 断线重连前获取新的短期 Runtime 会话地址。 */
+  refreshUrl?: () => Promise<string>
 }
 
 let requestIdCounter = 0
@@ -134,6 +140,7 @@ export class WebBridgeClient {
   private reconnectDelayMs = 2000
   private status: ConnectionStatus = 'disconnected'
   private mock = false
+  private credential = ''
   /** screencast 帧处理器：可在连接后动态挂/摘（HMR 或晚于 connect 的订阅场景） */
   private screencastHandler: ((base64Jpeg: string) => void) | null = null
 
@@ -162,6 +169,9 @@ export class WebBridgeClient {
     this.url = url
     this.options = options || {}
     this.mock = url === 'mock://localhost' || url.startsWith('mock:')
+    this.credential = this.mock
+      ? ''
+      : new URL(url).searchParams.get('access_token') || ''
 
     if (this.mock) {
       this.setStatus('connected')
@@ -229,7 +239,12 @@ export class WebBridgeClient {
     if (this.mock) {
       return ''
     }
-    return this.url.replace(/^ws/, 'http').replace(/\/ws$/, '')
+    const runtimeUrl = new URL(this.url)
+    runtimeUrl.protocol = runtimeUrl.protocol === 'wss:' ? 'https:' : 'http:'
+    runtimeUrl.pathname = runtimeUrl.pathname.replace(/\/ws$/, '')
+    runtimeUrl.search = ''
+    runtimeUrl.hash = ''
+    return runtimeUrl.toString().replace(/\/$/, '')
   }
 
   async checkStatus(): Promise<StatusInfo> {
@@ -242,7 +257,11 @@ export class WebBridgeClient {
     }
 
     try {
-      const response = await fetch(`${this.httpBaseUrl}/status`, { method: 'GET', credentials: 'omit' })
+      const response = await fetch(`${this.httpBaseUrl}/status`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.credential}` },
+        credentials: 'omit',
+      })
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
@@ -259,7 +278,10 @@ export class WebBridgeClient {
 
     const response = await fetch(`${this.httpBaseUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${this.credential}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(body),
       credentials: 'omit',
       signal,
@@ -326,6 +348,21 @@ export class WebBridgeClient {
   async stopScreencast(): Promise<{ success: boolean; error?: string }> {
     if (this.mock) return { success: true }
     return this.send<{ success: boolean; error?: string }>({ type: 'stop_screencast' })
+  }
+
+  async closeBrowser(): Promise<{ success: boolean; error?: string }> {
+    if (this.mock) return { success: true }
+    return this.send<{ success: boolean; error?: string }>({ type: 'close_browser' })
+  }
+
+  async browserWindow(command: BrowserWindowCommand): Promise<{
+    success: boolean
+    mode?: 'native' | 'headless' | 'unsupported'
+    command?: BrowserWindowCommand
+    error?: string
+  }> {
+    if (this.mock) return { success: true, mode: 'headless', command }
+    return this.send({ type: 'browser_window', payload: { command } })
   }
 
   /** 接管模式：转发用户输入到真实浏览器（点击/滚动/文本/按键） */
@@ -409,6 +446,11 @@ export class WebBridgeClient {
   }
 
   private handleResponse(response: WebBridgeResponse): void {
+    if (response.type === 'browser_user_interaction') {
+      this.options.onUserInteraction?.((response.payload || {}) as { kind?: string; at?: number })
+      this.options.onMessage?.(response)
+      return
+    }
     if (response.type === 'recorded_action' && response.payload) {
       this.options.onRecordedAction?.(response.payload as BrowserAction)
       return
@@ -454,7 +496,18 @@ export class WebBridgeClient {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      this.connect(this.url, this.options)
+      void (async () => {
+        try {
+          const url = this.options.refreshUrl
+            ? await this.options.refreshUrl()
+            : this.url
+          this.connect(url, this.options)
+        } catch {
+          this.setStatus('error')
+          this.options.onStatusChange?.('error')
+          this.scheduleReconnect()
+        }
+      })()
     }, this.reconnectDelayMs)
   }
 

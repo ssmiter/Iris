@@ -6,8 +6,6 @@ import com.iris.tools.core.ToolRuntimeException;
 import com.iris.tools.core.CapabilityAvailability;
 import com.iris.tools.core.CapabilityAvailabilityService;
 import com.iris.tools.catalog.CapabilityDirectoryCatalog.DirectoryDefinition;
-import com.iris.agent.pipeline.PipelineDefinitionRegistry;
-import com.iris.agent.pipeline.PipelineDefinitionRegistry.Binding;
 import com.iris.tools.catalog.CapabilityCatalogSource.Definition;
 import com.iris.retrieval.HybridRetrievalEngine;
 import org.springframework.stereotype.Service;
@@ -45,7 +43,6 @@ public class CapabilityService {
     private final ToolRegistry registry;
     private final CapabilityAvailabilityService availability;
     private final CapabilityDirectoryCatalog directoryCatalog;
-    private final PipelineDefinitionRegistry pipelines;
     private final HybridRetrievalEngine retrieval;
     private final DirectoryStatsService directoryStats;
     private final List<CapabilityCatalogSource> extensionSources;
@@ -54,7 +51,6 @@ public class CapabilityService {
             ToolRegistry registry,
             CapabilityAvailabilityService availability,
             CapabilityDirectoryCatalog directoryCatalog,
-            PipelineDefinitionRegistry pipelines,
             HybridRetrievalEngine retrieval,
             DirectoryStatsService directoryStats,
             List<CapabilityCatalogSource> extensionSources
@@ -62,7 +58,6 @@ public class CapabilityService {
         this.registry = registry;
         this.availability = availability;
         this.directoryCatalog = directoryCatalog;
-        this.pipelines = pipelines;
         this.retrieval = retrieval;
         this.directoryStats = directoryStats;
         this.extensionSources = List.copyOf(extensionSources);
@@ -76,7 +71,7 @@ public class CapabilityService {
                 ))
                 .map(this::document),
                 java.util.stream.Stream.concat(
-                        pipelines.all().stream().map(this::document),
+                        java.util.stream.Stream.<CatalogDocument>empty(),
                         extensionDefinitions().stream().map(this::document)
                 )
         )
@@ -105,16 +100,6 @@ public class CapabilityService {
             String path = binding.capabilityPath();
             if (!DomainCatalog.visible(systemCode, path)) continue;
             // 沿路径向上累计每一级目录
-            String[] segs = path.substring(1).split("/");
-            StringBuilder cur = new StringBuilder();
-            for (String seg : segs) {
-                cur.append('/').append(seg);
-                counts.merge(cur.toString(), 1, Integer::sum);
-            }
-        }
-        for (Binding binding : pipelines.all()) {
-            String path = binding.definition().capabilityPath();
-            if (!DomainCatalog.visible(systemCode, path)) continue;
             String[] segs = path.substring(1).split("/");
             StringBuilder cur = new StringBuilder();
             for (String seg : segs) {
@@ -163,24 +148,6 @@ public class CapabilityService {
             if (slash >= 0) {
                 String child = prefix + remainder.substring(0, slash);
                 directories.merge(child, 1, Integer::sum);
-            } else {
-                items.add(card(binding));
-            }
-        }
-        for (Binding binding : pipelines.all()) {
-            String path = binding.definition().capabilityPath();
-            if (!DomainCatalog.visible(systemCode, path)
-                    || !path.startsWith(prefix)) {
-                continue;
-            }
-            String remainder = path.substring(prefix.length());
-            int slash = remainder.indexOf('/');
-            if (slash >= 0) {
-                directories.merge(
-                        prefix + remainder.substring(0, slash),
-                        1,
-                        Integer::sum
-                );
             } else {
                 items.add(card(binding));
             }
@@ -383,16 +350,12 @@ public class CapabilityService {
                 .findFirst();
     }
 
-    public Optional<Binding> readPipeline(
+    /** 后端 Pipeline 编排已删除（docs/46）：管道定义发现恒为空。 */
+    public Optional<Object> readPipeline(
             String capabilityPath,
             String systemCode
     ) {
-        String path = normalizePath(capabilityPath);
-        return pipelines.findByPath(path)
-                .filter(binding -> DomainCatalog.visible(
-                        systemCode,
-                        binding.definition().capabilityPath()
-                ));
+        return Optional.empty();
     }
 
     public Optional<Definition> readExtension(
@@ -580,27 +543,6 @@ public class CapabilityService {
         );
     }
 
-    private CatalogDocument document(Binding binding) {
-        var definition = binding.definition();
-        java.util.ArrayList<String> parameters = new java.util.ArrayList<>();
-        definition.inputSchema().path("properties")
-                .fieldNames().forEachRemaining(parameters::add);
-        parameters.sort(String::compareTo);
-        return new CatalogDocument(
-                null,
-                "pipeline",
-                definition.capabilityPath(),
-                definition.name(),
-                "",
-                definition.description(),
-                String.join(" ", parameters),
-                definition.id() + " " + definition.version()
-                        + " pipeline",
-                "standard",
-                "available",
-                "本地 Pipeline Definition 已注册"
-        );
-    }
 
     private CatalogDocument document(Definition definition) {
         List<String> parameters = new ArrayList<>();
@@ -778,20 +720,6 @@ public class CapabilityService {
         );
     }
 
-    private CapabilityCard card(Binding binding) {
-        var definition = binding.definition();
-        return new CapabilityCard(
-                definition.id(),
-                definition.version(),
-                "pipeline",
-                definition.name(),
-                definition.capabilityPath(),
-                definition.description(),
-                "standard",
-                "available",
-                "本地 Pipeline Definition 已注册"
-        );
-    }
 
     private CapabilityCard card(Definition definition) {
         return new CapabilityCard(

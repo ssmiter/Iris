@@ -100,6 +100,7 @@ export class NativeDaemonLauncher implements DaemonLauncher {
     const commandEnv = {
       WEBBRIDGE_PORT: String(port),
       WEBBRIDGE_HEADLESS: 'false',
+      WEBBRIDGE_LIVE_THUMB: 'false',
       ...env,
     }
 

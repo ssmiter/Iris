@@ -3,29 +3,29 @@ package com.iris.task;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.iris.agent.run.RunRoundRepository;
-import com.iris.agent.run.RunRoundRepository.RunRow;
 import com.iris.conversation.application.ConversationEventAppender;
 import com.iris.conversation.application.ConversationEventAppender.EventDraft;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
 /**
  * Projects the complete safe task view into the conversation event stream.
  * The task tables remain canonical; SSE is only the timely projection path.
+ * Run 元数据来自客观层的 client_run 事实表（docs/46），不再依赖后端 Loop 的 run 投影。
  */
 @Service
 public final class TaskEventEmitter {
     private final ConversationEventAppender events;
-    private final RunRoundRepository runs;
+    private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
 
     public TaskEventEmitter(
             ConversationEventAppender events,
-            RunRoundRepository runs,
+            JdbcClient jdbc,
             ObjectMapper objectMapper
     ) {
         this.events = events;
-        this.runs = runs;
+        this.jdbc = jdbc;
         this.objectMapper = objectMapper;
     }
 
@@ -34,9 +34,18 @@ public final class TaskEventEmitter {
             JsonNode taskView,
             String runId
     ) {
-        RunRow run = runs.findRun(runId).orElseThrow(
-                () -> new IllegalStateException("找不到任务状态所属 Run")
-        );
+        RunRef run = jdbc.sql("""
+                SELECT turn_id, parent_run_id, root_run_id
+                FROM client_run WHERE run_id = :runId
+                """)
+                .param("runId", runId)
+                .query((rs, n) -> new RunRef(
+                        rs.getString("turn_id"),
+                        rs.getString("parent_run_id"),
+                        rs.getString("root_run_id")
+                ))
+                .optional()
+                .orElse(new RunRef(null, null, runId));
         ObjectNode payload = objectMapper.createObjectNode();
         payload.set("task", taskView);
         events.append(new EventDraft(
@@ -54,4 +63,6 @@ public final class TaskEventEmitter {
                 payload
         ));
     }
+
+    private record RunRef(String turnId, String parentRunId, String rootRunId) { }
 }

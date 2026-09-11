@@ -1,11 +1,5 @@
 package com.iris.conversation.application;
 
-import com.iris.agent.model.ModelAttemptRepository;
-import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
-import com.iris.agent.run.AgentRunLauncher;
-import com.iris.agent.run.ToolProjectionService;
-import com.iris.agent.pipeline.PipelineRunLauncher;
-import com.iris.agent.pipeline.PipelineRunRepository;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.AttentionCommands.AttentionResponse;
 import com.iris.conversation.domain.AttentionCommands.RespondAttentionRequest;
@@ -28,30 +22,15 @@ import java.util.Map;
 public class AttentionCommandService {
     private final ToolRuntime runtime;
     private final ToolRuntimeRepository toolFacts;
-    private final ModelAttemptRepository modelFacts;
-    private final ToolProjectionService projections;
-    private final AgentRunLauncher runs;
-    private final PipelineRunLauncher pipelineRuns;
-    private final PipelineRunRepository pipelines;
     private final WorkspaceService workspace;
 
     public AttentionCommandService(
             ToolRuntime runtime,
             ToolRuntimeRepository toolFacts,
-            ModelAttemptRepository modelFacts,
-            ToolProjectionService projections,
-            AgentRunLauncher runs,
-            PipelineRunLauncher pipelineRuns,
-            PipelineRunRepository pipelines,
             WorkspaceService workspace
     ) {
         this.runtime = runtime;
         this.toolFacts = toolFacts;
-        this.modelFacts = modelFacts;
-        this.projections = projections;
-        this.runs = runs;
-        this.pipelineRuns = pipelineRuns;
-        this.pipelines = pipelines;
         this.workspace = workspace;
     }
 
@@ -88,18 +67,6 @@ public class AttentionCommandService {
                         "找不到这条待响应请求。",
                         Map.of("attentionId", attentionId)
                 ));
-        RoundToolCall call = execution.roundId() == null
-                ? null : modelFacts
-                        .roundToolCalls(execution.roundId())
-                        .stream()
-                        .filter(candidate -> candidate.toolCallId().equals(
-                                execution.toolCallId()
-                        ))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Attention has no canonical Model ToolCall"
-                        ));
-
         RuntimeResult result;
         try {
             result = runtime.decideUserInput(
@@ -122,26 +89,8 @@ public class AttentionCommandService {
             throw mapRuntimeProblem(exception, attentionId);
         }
 
-        boolean resumeRequested;
-        if (execution.roundId() == null) {
-            String stepRunId = pipelines
-                    .waitingPipelineForExecution(result.executionId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Attention has no waiting Pipeline step"
-                    ));
-            projections.projectPipeline(
-                    execution.runId(),
-                    stepRunId,
-                    com.fasterxml.jackson.databind.node.NullNode.getInstance(),
-                    result
-            );
-            resumeRequested = result.terminal()
-                    && pipelineRuns.launch(execution.runId());
-        } else {
-            projections.project(execution.roundId(), call, result);
-            resumeRequested = result.terminal()
-                    && runs.resume(execution.runId());
-        }
+        // 客观能力层：响应只推进用户输入事实，不唤醒任何后端 Run。
+        boolean resumeRequested = false;
         return new AttentionResponse(
                 attentionId,
                 execution.inputRequestId(),

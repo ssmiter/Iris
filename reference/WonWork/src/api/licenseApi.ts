@@ -1,4 +1,4 @@
-import { isMescli, isPreview } from '@/config/product'
+import { isMescli } from '@/config/product'
 import { fetchApi } from './client'
 import { cloudApi } from './cloudApi'
 import { isWebsiteOnline } from '@/utils/runtimeMode'
@@ -13,7 +13,6 @@ import { DEFAULT_FEATURES_BY_TIER } from '@/config/product'
 
 const LICENSE_STORAGE_KEY = 'wonwork_license_info'
 const FINGERPRINT_STORAGE_KEY = 'wonwork_machine_fingerprint'
-const PREVIEW_LICENSE_PREFIX = 'WW-PREVIEW-'
 
 function generateHardwareId(): string {
   const existing = localStorage.getItem(FINGERPRINT_STORAGE_KEY)
@@ -56,16 +55,6 @@ function saveLicense(license: LicenseInfo): void {
   localStorage.setItem(LICENSE_STORAGE_KEY, JSON.stringify(license))
 }
 
-function readLicense(): LicenseInfo | null {
-  const raw = localStorage.getItem(LICENSE_STORAGE_KEY)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as LicenseInfo
-  } catch {
-    return null
-  }
-}
-
 function licenseStatusFromCloud(status: string): LicenseInfo['status'] {
   switch (status) {
     case 'active':
@@ -103,58 +92,6 @@ const mescliLicenseApi = {
     return fetchApi<{ success: boolean }>('/api/license/deactivate', {
       method: 'POST',
     })
-  },
-}
-
-// ==================== Preview 实现（本地演示） ====================
-
-const previewLicenseApi = {
-  getLicense: async (): Promise<LicenseInfo | null> => {
-    const license = readLicense()
-    if (!license) return null
-
-    const now = new Date().toISOString()
-    if (license.expiresAt && license.expiresAt < now) {
-      license.status = 'expired'
-      saveLicense(license)
-    }
-    return license
-  },
-
-  activate: async (req: LicenseActivationRequest): Promise<LicenseActivationResponse> => {
-    await new Promise((resolve) => setTimeout(resolve, 400))
-
-    const key = req.licenseKey.trim()
-    if (!key.startsWith(PREVIEW_LICENSE_PREFIX)) {
-      return {
-        success: false,
-        error: `无效的 Preview License，应以 ${PREVIEW_LICENSE_PREFIX} 开头`,
-      }
-    }
-
-    const now = new Date()
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
-
-    const license: LicenseInfo = {
-      licenseKey: key,
-      productName: 'WonWork Preview',
-      status: 'active',
-      issuedAt: now.toISOString(),
-      expiresAt,
-      maxMachines: 1,
-      activatedMachines: 1,
-      features: ['byok', 'local_model', 'offline_mode'],
-    }
-
-    saveLicense(license)
-    buildFingerprint()
-
-    return { success: true, license }
-  },
-
-  deactivate: async (): Promise<{ success: boolean }> => {
-    localStorage.removeItem(LICENSE_STORAGE_KEY)
-    return { success: true }
   },
 }
 
@@ -226,10 +163,6 @@ const onlineLicenseApi = {
   },
 }
 
-export const licenseApi = isMescli
-  ? mescliLicenseApi
-  : isPreview
-    ? previewLicenseApi
-    : onlineLicenseApi
+export const licenseApi = isMescli ? mescliLicenseApi : onlineLicenseApi
 
 export { buildFingerprint }

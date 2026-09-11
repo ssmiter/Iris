@@ -13,22 +13,26 @@
  *   content 与 tool_done 合批——让"工具完成 + 答案开始"发生在同一帧；
  *   工具在短车道窗口内 start+done → 自然实现终态前置（投影器同时看到 start+done 事件）。
  *
- * 节拍公式：flushInterval = clamp(1200, 1200 × sqrt(pendingEvents / 4), 2000) ms
+ * 节拍公式：flushInterval = clamp(100, 100 × sqrt(pendingEvents / 4), 250) ms
  *
  * 触发条件（任一满足即立即冲刷）：
  *  ① 自适应节拍到达
- *  ② 答案量子：answer.delta 文本累计 ≥ 120 字
+ *  ② 答案量子：answer.delta 文本累计 ≥ 48 字
  *  ③ 页面从隐藏恢复可见
  *
  * 设计依据：wonwork-render-kernel-design-v2.0.md §4
  * + 离散→连续平滑化计划 proud-sniffing-whale.md §A
+ * + 丝滑交互改造（2026-07-26）：常规车道 1200/2000ms → 100/250ms。
+ *   数据以细密脉冲到达，视觉时钟（useReveal）才能抹平成连续生长；
+ *   1.2s 大脉冲下任何揭示策略都会"吐一段、停一下"。
+ *   flush 成本可控：drainOps 是增量投影，onAssistantUpdate 仅内存 set（无 persist）。
  */
 
 // ── 设计 tokens ────────────────────────────────────────────
 
-const BASE_INTERVAL = 1200   // ms，无积压时的基准间隔
-const MAX_INTERVAL = 2000    // ms，积压再多也不超过
-const ANSWER_QUANTUM = 120   // 字，答案文本累计阈值
+const BASE_INTERVAL = 100   // ms，无积压时的基准间隔（细密数据节拍，供视觉时钟抹平）
+const MAX_INTERVAL = 250    // ms，积压再多也不超过
+const ANSWER_QUANTUM = 48   // 字，答案文本累计阈值
 const TOOL_START_INTERVAL = 600  // ms，短车道工具启动缓冲窗口
 
 // ── types ──────────────────────────────────────────────────
@@ -178,7 +182,7 @@ export class RenderScheduler {
 
   private _calcInterval(): number {
     if (this._pendingCount <= 1) return BASE_INTERVAL
-    // flushInterval = clamp(1200, 1200 × sqrt(pending / 4), 2000)
+    // flushInterval = clamp(100, 100 × sqrt(pending / 4), 250)
     const raw = BASE_INTERVAL * Math.sqrt(this._pendingCount / 4)
     return Math.min(Math.max(raw, BASE_INTERVAL), MAX_INTERVAL)
   }

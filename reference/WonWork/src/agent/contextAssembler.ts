@@ -26,6 +26,10 @@ export interface AssembleContextOptions {
   userMessage: ChatMessage
   skillPrompts?: string[]
   memoryPrompt?: string
+  /** 尾随 meta 注入（记忆索引等动态状态）：追加在当前用户消息正文之后，
+   *  不进 system 前缀——前缀保持静态以保缓存，动态状态挂轨迹末尾获得注意力权重。
+   *  与 Claude Code 的 system-reminder 附身用户消息同一模式，全 provider 兼容。 */
+  trailingMeta?: string
   contextWindow: number
   /** 给模型输出留出的 token 预算，默认 4096 */
   reserveTokens?: number
@@ -37,10 +41,10 @@ export interface AssembleContextOptions {
   totalToolResultBudget?: number
   /** 历史消息保留的优先级策略；默认 'claude-code-style' */
   truncationStrategy?: 'claude-code-style' | 'recent-only'
-  /** 可选的压缩器：当截断严重时，用模型压缩被丢弃的早期对话 */
-  compressor?: (messages: Message[]) => Promise<{ summary: string; compressedCount: number }>
-  /** 强制压缩：即使 droppedCount < 2，也尝试压缩被丢弃的消息（用于 prompt_too_long 重试） */
-  forceCompress?: boolean
+  /** P0-5b（2026-07-28 归档决策冻结）：4.1/4.2 每次实际折叠 tool 结果时回调，
+   *  由调用方把折叠文本一次性写回 store+IndexedDB——一条消息只折一次，
+   *  之后每次装配读到的都是已折叠内容，历史字节永久稳定（前缀缓存命中前提）。 */
+  onArchiveDecisions?: (decisions: Array<{ toolCallId: string; content: string }>) => void
 }
 
 export interface AssembleContextResult {
@@ -68,11 +72,6 @@ export interface AssembleContextResult {
   }
   /** 被丢弃消息明细（用于调试/可观测性） */
   droppedMessages?: Array<{ id?: string; role: string; reason: string }>
-  /** 压缩信息 */
-  compression?: {
-    summary: string
-    compressedCount: number
-  }
 }
 
 const DEFAULT_RESERVE_TOKENS = 4096
@@ -122,8 +121,70 @@ function summarizeToolContent(content: string, maxChars: number, toolCallId?: st
   return `[结果已归档，原始长度 ${content.length} 字符${toolCallId ? `，toolCallId: ${toolCallId}` : ''}]\n预览：${preview}`
 }
 
-function buildUserMessageContent(userMessage: ChatMessage): string {
-  const textParts: string[] = [userMessage.content || '']
+/**
+ * P0-5a（2026-07-28 历史保真）：带 sentTurns 的 assistant 展开为实际发送序列。
+ * 存储形态是"单条合并 assistant + tool 消息紧随其后"，而实际发送是"每轮 assistant +
+ * 该轮 tool 结果交错"。不展开时跨 turn 重装配字节与上轮实际发送不同（前缀缓存全 miss），
+ * 且早轮 tool 消息对不上 toolCalls 会被 normalizer 重构出假 tool_use（arguments 塞结果）。
+ * 旧消息无 sentTurns 时原样通过（按合并单条兜底）。
+ */
+function expandSentTurns(items: ChatMessage[]): ChatMessage[] {
+  const expanded: ChatMessage[] = []
+  for (let i = 0; i < items.length; i++) {
+    const m = items[i]
+    if (m.role !== 'assistant' || !m.sentTurns || m.sentTurns.length === 0) {
+      expanded.push(m)
+      continue
+    }
+    // 收集紧随其后的 tool 消息（直到下一条非 tool），按 toolCallId 归位到各轮
+    const followingTools = new Map<string, ChatMessage>()
+    let end = i + 1
+    while (end < items.length && items[end].role === 'tool') {
+      const tm = items[end]
+      if (tm.toolCallId) followingTools.set(tm.toolCallId, tm)
+      end++
+    }
+    const consumed = new Set<string>()
+    for (const t of m.sentTurns) {
+      // Fix6（2026-08-01）：该轮 wire 上先插过合成 user（max_tokens 续写）时补插回去，
+      // 保持重放字节=实发字节；否则相邻 assistant 被 normalizer 合并，前缀缓存发散。
+      if (t.precededByUserNote) {
+        expanded.push({
+          id: `${m.id}-wire-note`,
+          role: 'user',
+          content: t.precededByUserNote,
+          timestamp: m.timestamp,
+        })
+      }
+      // reasoningContent 用逐轮值覆盖展开：m 上的是全消息累计值，逐轮铺开会让
+      // 每轮都带全量（重复且与实发字节不符）；旧数据无逐轮值则省略（=修复前行为）。
+      expanded.push({ ...m, content: t.content, reasoningContent: t.reasoningContent, toolCalls: t.toolCalls, sentTurns: undefined })
+      for (const tc of t.toolCalls ?? []) {
+        const tm = followingTools.get(tc.id)
+        if (tm && !consumed.has(tc.id)) {
+          expanded.push(tm)
+          consumed.add(tc.id)
+        }
+      }
+    }
+    // 未被任何轮次认领的 tool 消息（异常/旧数据）按原位保留，normalizer 兜底
+    for (const [id, tm] of followingTools) {
+      if (!consumed.has(id)) expanded.push(tm)
+    }
+    i = end - 1
+  }
+  return expanded
+}
+
+/** 剥掉历史消息里冻结的旧记忆索引快照（2026-09-03）：
+ *  索引每轮附在当条用户消息尾部并冻结进 wireContent；重放时只保留当前消息的
+ *  最新一份，历史快照在此剥除，避免 N 条消息堆 N 份索引。 */
+const STALE_MEMORY_INDEX_RE = /\n*<memory_index dir="[^"]*">[\s\S]*?<\/memory_index>/g
+function stripStaleMemoryIndex(content: string): string {
+  return content.includes('<memory_index') ? content.replace(STALE_MEMORY_INDEX_RE, '') : content
+}
+
+export function buildUserMessageContent(userMessage: ChatMessage): string {  const textParts: string[] = [userMessage.content || '']
 
   if (userMessage.attachments && userMessage.attachments.length > 0) {
     textParts.push('\n\n--- 附件 ---')
@@ -199,12 +260,13 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
     userMessage,
     skillPrompts = [],
     memoryPrompt,
+    trailingMeta,
     contextWindow,
     reserveTokens = DEFAULT_RESERVE_TOKENS,
     useFrontendContextBudget = true,
     maxToolResultChars = DEFAULT_MAX_TOOL_RESULT_CHARS,
     totalToolResultBudget = DEFAULT_TOTAL_TOOL_RESULT_BUDGET,
-    compressor,
+    onArchiveDecisions,
   } = options
 
   // 1. 准备所有 system sections（含 memory / skill）
@@ -242,15 +304,22 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
   )
 
   // 3. 准备历史消息
-  const preservedHistoryItems = history.filter((m) => {
+  const filteredHistoryItems = history.filter((m) => {
     if (!m.id) return false
+    // 记忆便签是纯 UI 产物（role=assistant 但 content 为空）——进 wire 会被严格
+    // provider 拒（空 assistant 消息 400），它也不是说给模型听的话
+    if (m.memoryNote) return false
     if (m.role === 'tool') return true
     if (m.role === 'user' || m.role === 'assistant') return true
     return false
   })
 
+  // 3.5 P0-5a：带 sentTurns 的 assistant 展开为实际发送序列（历史=实际发送字节）
+  const preservedHistoryItems = expandSentTurns(filteredHistoryItems)
+
   // 4. 对 tool result 做分层处理：先单条摘要，再按聚合预算归档
   const archivedToolResults: string[] = []
+  const archiveDecisions: Array<{ toolCallId: string; content: string }> = []
   let totalToolChars = 0
   const toolMessageIndices: number[] = []
 
@@ -263,6 +332,7 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
         const summarized = summarizeToolContent(m.content, maxToolResultChars, m.toolCallId)
         if (m.toolCallId && !archivedToolResults.includes(m.toolCallId)) {
           archivedToolResults.push(m.toolCallId)
+          archiveDecisions.push({ toolCallId: m.toolCallId, content: summarized })
         }
         preservedHistoryItems[index] = { ...m, content: summarized }
         totalToolChars -= m.content.length - summarized.length
@@ -270,14 +340,23 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
     }
   })
 
-  // 4.2 聚合预算归档：从最旧的 tool result 开始折叠
-  if (totalToolChars > totalToolResultBudget) {
+  // 4.2 聚合预算归档：从最旧的 tool result 开始折叠。
+  // 批量摊销（2026-08-01 Fix7）：稳态下 tool 总量缓慢爬过 budget，旧逻辑每轮只折一条
+  // 最旧 tool——折叠点在最前，身后前缀每轮全 miss。改为超 25% 才触发、一次折回 budget
+  // 以内，折叠事件从"每轮一次"摊薄为"积累 25% 才一次"。
+  if (totalToolChars > totalToolResultBudget * 1.25) {
     for (const index of toolMessageIndices) {
       const m = preservedHistoryItems[index]
       if (m.role === 'tool' && m.content && !m.content.startsWith('[结果已归档')) {
         const summarized = summarizeToolContent(m.content, Math.min(maxToolResultChars, 500), m.toolCallId)
         if (m.toolCallId && !archivedToolResults.includes(m.toolCallId)) {
           archivedToolResults.push(m.toolCallId)
+        }
+        // 决策冻结：即使是同一条的二次折叠（4.1 折过 4.2 再折），也以最后一次文本写回
+        if (m.toolCallId) {
+          const existing = archiveDecisions.findIndex((d) => d.toolCallId === m.toolCallId)
+          if (existing !== -1) archiveDecisions[existing] = { toolCallId: m.toolCallId, content: summarized }
+          else archiveDecisions.push({ toolCallId: m.toolCallId, content: summarized })
         }
         preservedHistoryItems[index] = { ...m, content: summarized }
         totalToolChars -= m.content.length - summarized.length
@@ -286,10 +365,25 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
     }
   }
 
+  // P0-5b：归档决策一次性写回（调用方负责 store+IndexedDB），此后该消息字节永久稳定
+  if (archiveDecisions.length > 0) {
+    try {
+      onArchiveDecisions?.(archiveDecisions)
+    } catch (err) {
+      console.warn('[contextAssembler] 归档决策写回回调失败:', err)
+    }
+  }
+
   const preservedHistory: Message[] = preservedHistoryItems.map((m) => {
     const msg: Message = {
       role: m.role,
-      content: m.content,
+      // Fix4（2026-08-01 前缀缓存保真）：user 消息优先用发送时冻结的 wireContent
+      // （含 trailingMeta 记忆索引/最近文件注记），重放字节=实发字节；
+      // 旧消息无此字段时回退裸 content（重载冷缓存，defer P2）。
+      // 2026-09-03：历史消息尾部的旧记忆索引快照剥离——旧索引的价值只在发送当时，
+      // 上下文只留最新一份（附在当前用户消息上）。剥离是确定性的，早期消息字节
+      // 逐轮稳定（前缀缓存更友好），且消除"N 条用户消息堆 N 份索引"的膨胀。
+      content: stripStaleMemoryIndex(m.wireContent ?? m.content),
     }
     if (m.toolCalls && m.toolCalls.length > 0) {
       msg.toolCalls = m.toolCalls
@@ -300,10 +394,16 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
     return msg
   })
 
-  // 5. 当前用户消息永远保留
+  // 5. 当前用户消息永远保留；trailingMeta（记忆索引等动态状态）附在正文之后，
+  // 随消息一同参与 token 估算与截断保护（用户消息永不丢，meta 因此也永不丢）。
+  // Fix4：发送方（chatStore）已把含 trailingMeta 的完整 wire 文本冻结进 wireContent，
+  // 这里原样取用；无冻结快照时（旧路径/单测）现场拼装兜底。
   const currentUserMessage: Message = {
     role: 'user',
-    content: buildUserMessageContent(userMessage),
+    content:
+      userMessage.wireContent ??
+      buildUserMessageContent(userMessage) +
+        (trailingMeta ? `\n\n${trailingMeta}` : ''),
     structuredData: userMessage.structuredData,
   }
 
@@ -362,6 +462,8 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
 
   const keptHistory: Message[] = []
   const droppedMessages: Array<{ id?: string; role: string; reason: string }> = []
+  // 消息 → 原始位置索引（墓碑消息是新对象，恢复顺序时靠它找到原位）
+  const orderIndex = new Map<Message, number>(preservedHistory.map((m, i) => [m, i]))
   let historyTokens = 0
   let droppedCount = 0
 
@@ -374,18 +476,37 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
       historyTokens += item.tokens
     } else {
       droppedCount++
+      // 工具结果不整条丢弃：原地留"已执行、结果被移除"的墓碑，保住 tool_use/tool_result 配对。
+      // 否则发送前 messageNormalizer 会补「（工具执行结果缺失…）」——长对话里模型会误读为
+      // "该调用当时没执行/我当时编造了数据"，进而否定自己基于真实返回得出的历史结论
+      //（2026-08-14 长对话过度思考的根因定位）。
+      if (item.message.role === 'tool') {
+        const tombstone: Message = {
+          ...item.message,
+          content:
+            '（该调用当时已执行完成；原始结果为释放上下文空间被移除。你当时基于真实返回得出的结论仍然有效；确需原始数据时，用当前可用工具重新查询即可。）',
+        }
+        keptHistory.push(tombstone)
+        orderIndex.set(tombstone, item.index)
+        const tombstoneTokens = estimateMessageTokens(tombstone)
+        remainingTokens = Math.max(0, remainingTokens - tombstoneTokens)
+        historyTokens += tombstoneTokens
+      }
       droppedMessages.push({
         id: item.original.id,
         role: item.original.role,
-        reason: `超出 token 预算（优先级 ${item.priority}，需要 ${item.tokens} tokens，剩余 ${remainingTokens}）`,
+        reason:
+          item.message.role === 'tool'
+            ? `结果超出预算，原地留墓碑（优先级 ${item.priority}，原 ${item.tokens} tokens）`
+            : `超出 token 预算（优先级 ${item.priority}，需要 ${item.tokens} tokens，剩余 ${remainingTokens}）`,
       })
     }
   }
 
-  // 恢复原始顺序
+  // 恢复原始顺序（墓碑消息不在 preservedHistory 里，经 orderIndex 找原位）
   keptHistory.sort((a, b) => {
-    const idxA = preservedHistory.indexOf(a)
-    const idxB = preservedHistory.indexOf(b)
+    const idxA = orderIndex.get(a) ?? -1
+    const idxB = orderIndex.get(b) ?? -1
     return idxA - idxB
   })
 
@@ -403,37 +524,9 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
     truncationReason = `已归档 ${archivedToolResults.length} 条超长 tool result`
   }
 
-  // 10. 如果截断严重且提供了压缩器，用模型压缩被丢弃的早期对话
-  let compression: { summary: string; compressedCount: number } | undefined
-  const shouldCompress = compressor && (droppedCount >= 2 || options.forceCompress)
-  if (shouldCompress) {
-    const droppedForCompression = historyWithPriority
-      .filter((item) => !keptHistory.includes(item.message))
-      .sort((a, b) => a.index - b.index)
-      .map((item) => item.message)
-
-    if (droppedForCompression.length >= 2) {
-      try {
-        const result = await compressor(droppedForCompression)
-        if (result.summary) {
-          compression = {
-            summary: result.summary,
-            compressedCount: result.compressedCount || droppedForCompression.length,
-          }
-          const summaryMessage: Message = {
-            role: 'system',
-            content: `[早期对话摘要]\n${result.summary}`,
-          }
-          messages.unshift(summaryMessage)
-          const summaryTokens = estimateMessageTokens(summaryMessage as Message & { attachments?: FileAttachmentDto[] })
-          usedTokens += summaryTokens
-          systemTokens += summaryTokens
-        }
-      } catch (err) {
-        console.warn('[contextAssembler] 压缩历史消息失败:', err)
-      }
-    }
-  }
+  // 10. 旧装配期压缩已于 2026-07-31 退役：摘要不持久化（每次发送重新压缩浪费 token）、
+  // unshift 到 identity 之前破坏 system 前缀缓存、且压缩结果无任何下游消费。
+  // 现役路径 = compactSummaryPipeline（autoCompact 减半重试 + 三次熔断），见 agenticLoop。
 
   return {
     messages,
@@ -452,7 +545,6 @@ export async function assembleRequestMessages(options: AssembleContextOptions): 
       availableTokens,
     },
     droppedMessages,
-    compression,
   }
 }
 

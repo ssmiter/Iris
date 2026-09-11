@@ -34,45 +34,45 @@ export function FilePermissionModal() {
     <div className="wf-file-perm-modal fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closePermissionModal} />
 
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-        <div className="px-6 py-4 border-b border-surface-200 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-surface-800">{t('chat.filePermissionModal.title')}</h2>
+      <div className="relative bg-[var(--wf-card-bg)] rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--wf-line)] flex items-center justify-between">
+          <h2 className="text-base font-semibold text-[var(--wf-ink)]">{t('chat.filePermissionModal.title')}</h2>
           <button
             onClick={closePermissionModal}
-            className="p-1.5 rounded-lg hover:bg-surface-100 text-surface-400"
+            className="p-1.5 rounded-lg hover:bg-[var(--wf-hover)] text-[var(--wf-faint)]"
           >
             <X size={18} />
           </button>
         </div>
 
         <div className="px-6 py-4">
-          <p className="text-sm text-surface-600 mb-3">
+          <p className="text-sm text-[var(--wf-sub)] mb-3">
             {t('chat.filePermissionModal.description')}
           </p>
           <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
             {pendingPermissionFiles.map((file, i) => (
               <div
                 key={i}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-50 border border-surface-100"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--wf-bg)] border border-[var(--wf-hair)]"
               >
                 {file.type.startsWith('image/') ? (
                   <FileImage size={16} className="text-primary-500" />
                 ) : file.type.startsWith('text/') ? (
-                  <FileText size={16} className="text-green-500" />
+                  <FileText size={16} className="text-[var(--wf-ok-ink)]" />
                 ) : (
-                  <File size={16} className="text-amber-500" />
+                  <File size={16} className="text-[var(--wf-warn-ink)]" />
                 )}
-                <span className="text-sm text-surface-700 flex-1 truncate">{file.name}</span>
-                <span className="text-xs text-surface-400">{formatFileSize(file.size)}</span>
+                <span className="text-sm text-[var(--wf-sub)] flex-1 truncate">{file.name}</span>
+                <span className="text-xs text-[var(--wf-faint)]">{formatFileSize(file.size)}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-surface-200 flex flex-wrap gap-2 justify-end">
+        <div className="px-6 py-4 border-t border-[var(--wf-line)] flex flex-wrap gap-2 justify-end">
           <button
             onClick={denyPendingFiles}
-            className="px-4 py-2 rounded-lg border border-surface-200 text-sm text-surface-600 hover:bg-surface-50 transition-colors"
+            className="px-4 py-2 rounded-lg border border-[var(--wf-line)] text-sm text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors"
           >
             {t('chat.filePermissionModal.deny')}
           </button>

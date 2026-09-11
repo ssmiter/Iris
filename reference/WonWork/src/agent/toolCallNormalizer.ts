@@ -1,3 +1,5 @@
+import type { ToolCall } from '@/types/mescli'
+
 /**
  * 统一的 ToolCall 归一化器
  *
@@ -10,11 +12,9 @@
  *
  * 设计原则：
  * - 不感知 UI、不感知网络、不感知具体工具语义
- * - 只负责把"不稳定的流式 tool_call 事件"变成"稳定的 tool_call 列表"
+ * - 只负责把“不稳定的流式 tool_call 事件”变成“稳定的 tool_call 列表”
  * - 输出与 WonWork 内部 ToolCall 类型一致，可直接进入 toolExecutor
  */
-
-import type { ToolCall } from '@/types/mescli'
 
 export interface NormalizedToolCall extends ToolCall {
   /** 是否已经收到过任何参数片段 */
@@ -73,7 +73,7 @@ export function mergeToolArguments(existing: string, delta: string): string {
   if (delta.startsWith(existing)) return delta
   if (existing.startsWith(delta)) return existing
 
-  // Anthropic/Kimi Code 等可能把 partial_json 以"完整累积 JSON"形式发送，
+  // Anthropic/Kimi Code 等可能把 partial_json 以“完整累积 JSON”形式发送，
   // 而不是增量片段。此时应直接取新的完整 JSON，避免与 existing（如 `{}`）
   // 按字符重叠拼接成 `{}{"path":...}`。
   const deltaTrimmed = delta.trim()
@@ -89,7 +89,15 @@ export function mergeToolArguments(existing: string, delta: string): string {
     }
   }
 
-  // 尝试找 existing 后缀与 delta 前缀的最长重叠
+  // 尝试找 existing 后缀与 delta 前缀的最长重叠，避免 Provider 重发边界片段时重复拼接。
+  //
+  // 历史 BUG（2026-07-24 修复）：这里曾写成
+  //   while (existing[existing.length - 1 - common] === delta[common]) common++
+  // 那是【镜像比较】（existing 倒数第 N 位对 delta 正数第 N 位），不是后缀-前缀重叠。
+  // 当字符串值在分片边界含有镜像重复的字符时（如 existing='…"ab'、delta='ba"…'），
+  // 会错误地啃掉 delta 开头的字符，把合法增量拼成损坏 JSON，工具参数随之报废。
+  // 正确语义：existing 的【后缀】与 delta 的【前缀】相同的部分只保留一份。
+  // 与 anthropicStreamParser.mergePartialJson 的重叠逻辑保持一致。
   let overlap = 0
   const minLen = Math.min(existing.length, delta.length)
   for (let i = 1; i <= minLen; i++) {
@@ -140,6 +148,8 @@ export function extractBestJson(text: string): string | undefined {
 /**
  * 解析并校验 arguments 字符串。
  * 失败时返回错误信息，不静默回退为 {}。
+ *
+ * 若传入 inputSchema，则对空参数且 schema 存在 required 字段的情况返回明确错误。
  */
 export function parseToolArguments(
   raw: string | undefined,
@@ -202,6 +212,8 @@ export function parseToolArguments(
 
 /**
  * 处理 OpenAI 兼容风格的 tool_call delta。
+ *
+ * 输入：一个 tool_calls delta 数组（可能只含 index、id、name、arguments 的某个子集）
  */
 export function feedOpenAIToolCallDelta(
   state: ToolCallNormalizerState,
@@ -259,6 +271,8 @@ export function feedOpenAIToolCallDelta(
 
 /**
  * 处理 Anthropic 风格的 tool_use 事件。
+ *
+ * 输入：content_block_start 或 content_block_delta 解析后的原始数据
  */
 export function feedAnthropicToolUseEvent(
   state: ToolCallNormalizerState,
@@ -302,6 +316,7 @@ export function feedAnthropicToolUseEvent(
   // delta
   const id = state.anthropicIndexToId.get(index)
   if (!id) {
+    // 未收到 start 就收到 delta：用 index 作为临时 id，等 start 到达后再合并
     const fallbackId = `anthropic-index-${index}`
     state.anthropicIndexToId.set(index, fallbackId)
     state.calls.set(fallbackId, {
@@ -323,6 +338,8 @@ export function feedAnthropicToolUseEvent(
   const existing = state.calls.get(id)
   const partialJson = event.partialJson || ''
 
+  // Anthropic 的 partial_json 规范是增量，但部分 Provider 可能发送累积值或完整 JSON。
+  // 先尝试按完整 JSON 解析：如果能解析且比现有内容长，则直接使用。
   let accumulatedArgs = existing?.function.arguments || ''
   if (partialJson) {
     const maybeFullJson = extractBestJson(partialJson)

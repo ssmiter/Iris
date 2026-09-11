@@ -1,6 +1,7 @@
 # 08 · Iris API 契约草案
 
-> 状态：大陆 0 / 节点 0.4 契约定稿候选
+> 状态：2026-09 重构中；Conversation/Workspace/Artifact 读模型继续有效，旧后端 Agent
+> Loop 命令与模型投影事件由 docs/44 的 Frontend Runtime 契约替代。
 >
 > 范围：定义 Frontend 与 Java Backend 的 REST 命令、读模型和 SSE 投影，以及浏览器插件与 WebBridge daemon 的私有边界。本文不冻结数据库列，不是 OpenAPI 生成文件。
 >
@@ -22,9 +23,9 @@ Content-Type: application/json
 
 ## 1. 契约原则
 
-1. Frontend 提交人的命令，不提交 provider messages、全量 Tool schema 或“我已经审批”的事实。
+1. Frontend 提交人的命令以及 Frontend Runtime 产生的有界 Run/Round 事实批次；不提交全量 Tool schema，也不自报风险或“我已经审批”。
 2. Backend 先持久化，再返回接受结果或发 SSE。
-3. REST 负责有限命令和读模型；SSE 是唯一流式通道，禁止轮询运行状态。
+3. Provider 流由 Frontend Runtime 直接消费；Backend SSE 只承载已持久化的后端事实、Tool/审批/外部任务状态，禁止轮询运行状态。
 4. SSE 至少一次投递；Frontend 用稳定 event ID 去重。
 5. 所有 ID 都是不透明字符串，客户端不得解析时间、类型或父子关系。
 6. 写命令带幂等键；并发敏感命令带预期版本。

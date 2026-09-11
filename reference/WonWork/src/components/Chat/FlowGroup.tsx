@@ -1,6 +1,8 @@
 import { memo, useState, useCallback, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { RenderNode } from '@/types/chat'
 import { FlowNode, type TurnPhase } from './FlowNode'
+import { formatToolDisplayName } from '@/utils/toolDisplayNames'
 
 interface FlowGroupProps {
   groupId: string
@@ -14,7 +16,6 @@ interface FlowGroupProps {
   isLastInFlow?: boolean
   isOverridden: (id: string) => boolean
   onToggle: (nodeId: string) => void
-  onClarifyPick?: (nodeId: string, value: string) => void
   onTakeover?: (nodeId: string) => void
   onSkipAttention?: (nodeId: string) => void
   onApprove?: (toolCallId: string) => void
@@ -38,13 +39,13 @@ export const FlowGroup = memo(function FlowGroup({
   isLastInFlow,
   isOverridden,
   onToggle,
-  onClarifyPick,
   onTakeover,
   onSkipAttention,
   onApprove,
   onReject,
   promotedToolCallIds,
 }: FlowGroupProps) {
+  const { t } = useTranslation()
   const [folded, setFolded] = useState(false)
 
   const handleToggleFold = useCallback(() => {
@@ -59,16 +60,16 @@ export const FlowGroup = memo(function FlowGroup({
 
   const icon = groupType === 'parallel' ? '⚡' : '🔁'
   const title = groupType === 'parallel'
-    ? `并行调用 ${totalCount} 个工具`
-    : `重试组 · ${nodes[0] && nodes[0].type === 'tool' ? (nodes[0] as import('@/types/chat').ToolNode).toolName : '工具'}`
+    ? t('chat.flowGroup.parallelTitle', { count: totalCount })
+    : t('chat.flowGroup.retryTitle', { toolName: nodes[0] && nodes[0].type === 'tool' ? formatToolDisplayName((nodes[0] as import('@/types/chat').ToolNode).toolName) : t('chat.flowGroup.tool') })
 
   let statusText = ''
   if (doneCount === totalCount) {
     statusText = errorCount > 0
-      ? `${totalCount} / ${totalCount} 完成 · ${errorCount} 处失败`
-      : `${totalCount} / ${totalCount} 完成`
+      ? t('chat.flowGroup.statusDoneWithErrors', { total: totalCount, errors: errorCount })
+      : t('chat.flowGroup.statusDone', { total: totalCount })
   } else {
-    statusText = `${doneCount} / ${totalCount} 完成`
+    statusText = t('chat.flowGroup.statusProgress', { done: doneCount, total: totalCount })
   }
 
   const statusCls = errorCount > 0 ? 'wf-g-status err' : doneCount === totalCount ? 'wf-g-status ok' : 'wf-g-status'
@@ -107,7 +108,6 @@ export const FlowGroup = memo(function FlowGroup({
               isOverridden={isOverridden(node.id)}
               isLastInFlow={isLastInFlow && idx === nodeStates.length - 1}
               onToggle={onToggle}
-              onClarifyPick={onClarifyPick}
               onTakeover={onTakeover}
               onSkipAttention={onSkipAttention}
               onApprove={onApprove}

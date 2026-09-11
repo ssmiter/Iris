@@ -27,7 +27,7 @@ export interface CloudTokenHubInfo {
   model: string
   endpointId: string
   baseUrl: string
-  monthlyTokenQuota: number
+  monthlyTokenQuota: number | null
 }
 
 export interface TokenHubKeyMeta {

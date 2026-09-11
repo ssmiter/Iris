@@ -2,8 +2,6 @@ package com.iris.tools.catalog;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iris.agent.pipeline.PipelineDefinitionRegistry;
-import com.iris.agent.pipeline.PipelineRunRepository;
 import com.iris.extension.ExtensionProviderService;
 import com.iris.extension.KnowledgeDocumentTool;
 import com.iris.extension.ResidentProcessTool;
@@ -38,8 +36,6 @@ public class CapabilityAdminService {
     private final CapabilityService capabilities;
     private final CapabilityDirectoryCatalog directoryCatalog;
     private final ToolRegistry registry;
-    private final PipelineDefinitionRegistry pipelines;
-    private final PipelineRunRepository pipelineRuns;
     private final List<CapabilityCatalogSource> extensionSources;
     private final ExtensionProviderService extensions;
     private final DirectoryStatsService directoryStats;
@@ -50,8 +46,6 @@ public class CapabilityAdminService {
             CapabilityService capabilities,
             CapabilityDirectoryCatalog directoryCatalog,
             ToolRegistry registry,
-            PipelineDefinitionRegistry pipelines,
-            PipelineRunRepository pipelineRuns,
             List<CapabilityCatalogSource> extensionSources,
             ExtensionProviderService extensions,
             DirectoryStatsService directoryStats,
@@ -61,8 +55,6 @@ public class CapabilityAdminService {
         this.capabilities = capabilities;
         this.directoryCatalog = directoryCatalog;
         this.registry = registry;
-        this.pipelines = pipelines;
-        this.pipelineRuns = pipelineRuns;
         this.extensionSources = List.copyOf(extensionSources);
         this.extensions = extensions;
         this.directoryStats = directoryStats;
@@ -98,10 +90,6 @@ public class CapabilityAdminService {
         int total = 0;
         for (ToolRegistry.ToolBinding binding : registry.all()) {
             accumulate(counts, binding.capabilityPath());
-            total++;
-        }
-        for (PipelineDefinitionRegistry.Binding binding : pipelines.all()) {
-            accumulate(counts, binding.definition().capabilityPath());
             total++;
         }
         for (Definition definition
@@ -302,38 +290,6 @@ public class CapabilityAdminService {
                 ));
             }
         }
-        // Pipeline 不在注册表也不在投影源：按路径命中 Definition 注册表，
-        // 附最近运行（docs/33 §5，管理页视角，不进模型上下文）。
-        Optional<PipelineDefinitionRegistry.Binding> pipeline =
-                pipelines.findByPath(normalized);
-        if (pipeline.isPresent()) {
-            var definition = pipeline.get().definition();
-            List<PipelineRunSummary> recent = pipelineRuns
-                    .recentRunsByDefinition(definition.id(), RECENT_RUNS_LIMIT)
-                    .stream()
-                    .map(run -> new PipelineRunSummary(
-                            run.runId(),
-                            run.triggerKind(),
-                            run.phase().name().toLowerCase(
-                                    java.util.Locale.ROOT),
-                            run.startedAt(),
-                            run.endedAt(),
-                            run.conversationId()
-                    ))
-                    .toList();
-            return Optional.of(new AdminDetail(
-                    new AdminItem(
-                            definition.id(), definition.version(), "pipeline",
-                            definition.name(), normalized,
-                            definition.description(), "standard",
-                            "available", "本地 Pipeline Definition 已注册",
-                            "kernel", null, null, null,
-                            pipeline.get().snapshotHash()
-                    ),
-                    objectMapper.valueToTree(definition),
-                    recent
-            ));
-        }
         return extensions.shadowed().stream()
                 .filter(shadow -> shadow.capabilityPath().equals(normalized))
                 .findFirst()
@@ -414,19 +370,12 @@ public class CapabilityAdminService {
                     found.manifestHash()
             );
         }
-        String manifestHash = null;
-        if ("pipeline".equals(card.kind())) {
-            manifestHash = pipelines.findByPath(card.path())
-                    .map(PipelineDefinitionRegistry.Binding::snapshotHash)
-                    .orElse(null);
-        } else {
-            manifestHash = extensionSources.stream()
-                    .map(source -> source.findByPath(card.path()))
-                    .flatMap(Optional::stream)
-                    .findFirst()
-                    .map(Definition::manifestHash)
-                    .orElse(null);
-        }
+        String manifestHash = extensionSources.stream()
+                .map(source -> source.findByPath(card.path()))
+                .flatMap(Optional::stream)
+                .findFirst()
+                .map(Definition::manifestHash)
+                .orElse(null);
         return new AdminItem(
                 card.id(), card.version(), card.kind(), card.name(),
                 card.path(), card.description(), card.riskLevel(),

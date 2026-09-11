@@ -2,6 +2,7 @@ import type { PipelineDefinition, PipelineTransportOptions } from '@/agent/pipel
 import { runPipeline, createPipelineTransport } from '@/agent/pipelineRunner'
 import { buildSessionTitlePrompt, type SessionTitleInput } from './prompt'
 import { useConversationStore } from '@/stores/conversationStore'
+import { useTitleRefreshStore } from '@/stores/conversationTitleStore'
 import { isDefaultTitle } from '@/utils/conversationTitle'
 
 /**
@@ -27,15 +28,21 @@ export const sessionTitlePipeline: PipelineDefinition<SessionTitleInput, Session
         typeof (value as Record<string, unknown>).title === 'string'
       ) {
         const title = (value as Record<string, unknown>).title as string
-        const trimmed = title.trim().replace(/[，。！？、；：“”‘’（）【】\n\r]/g, '')
-        if (trimmed.length >= 2 && trimmed.length <= 12) {
+        let trimmed = title.trim().replace(/[，。！？、；：“”‘’（）【】\n\r]/g, '')
+        // 与 prompt 的「最长 15 字」对齐（2026-08-14 用户拍板：6-13 为宜）。
+        // 超长不判失败——标题是装饰性产物，截断永远优于让一次成功生成被丢弃。
+        if (trimmed.length >= 2) {
+          if (trimmed.length > 15) trimmed = trimmed.slice(0, 15)
           return { title: trimmed }
         }
       }
       return null
     },
   },
-  maxTokens: 256,
+  // 4000（2026-08-14 用户拍板）：推理系模型的思考过程也吃 maxTokens，
+  // 小额度会被思考耗光导致正文为空、parse_failed（当天实测踩中）。
+  // 标题 JSON 本身只需几十 token，大额度不增加正常路径成本。
+  maxTokens: 4000,
   temperature: 0.3,
   maxRetries: 2,
   timeoutMs: 30_000,
@@ -48,11 +55,20 @@ export interface SessionTitleTransportOptions extends Omit<PipelineTransportOpti
   conversationId: number
 }
 
+/** 生成结果：ok=false 时 error 区分原因（调用方据此决定提示口径） */
+export interface SessionTitleResult {
+  ok: boolean
+  /** 'aborted'=被更新的请求取代 | 'skipped'=自动路径主动放弃 | 'circuit_open'=熔断中 | 其他=pipeline 错误 */
+  error?: string
+}
+
 /**
  * 生成会话标题并写回会话列表。
  *
- * - 失败静默，不影响主对话。
- * - 写回前校验 conversationId 是否仍为当前活跃会话。
+ * - 失败静默（返回 false，不抛出），不影响主对话；手动刷新场景的失败提示
+ *   由调用方（chatStore.refreshConversationTitle manual 分支）负责。
+ * - 进行中会登记 useTitleRefreshStore（侧栏标题左侧 spinner 据此渲染）。
+ * - 写回前校验（仅自动生成时）：conversationId 仍为当前活跃会话。
  * - 自动生成时（autoOnly=true）只在标题仍为默认标题时才写回。
  */
 export async function generateSessionTitle(
@@ -60,7 +76,7 @@ export async function generateSessionTitle(
   conversationId: number,
   transportOpts: SessionTitleTransportOptions,
   options?: { autoOnly?: boolean }
-): Promise<void> {
+): Promise<SessionTitleResult> {
   // 1. 取消同一会话的旧请求
   const oldController = sessionTitleControllers.get(conversationId)
   if (oldController && !oldController.signal.aborted) {
@@ -68,6 +84,7 @@ export async function generateSessionTitle(
   }
   const controller = new AbortController()
   sessionTitleControllers.set(conversationId, controller)
+  useTitleRefreshStore.getState().markRefreshing(conversationId)
 
   const transport = createPipelineTransport({
     provider: transportOpts.provider,
@@ -84,26 +101,42 @@ export async function generateSessionTitle(
       signal: controller.signal,
     })
 
-    if (!result.ok || !result.value) return
+    if (!result.ok || !result.value) {
+      // aborted 是被更新的点击取代，属正常；其余原因留痕便于排查
+      // （熔断 circuit_open / 超时 / 解析失败都曾表现为"点了没反应"）
+      if (result.error && result.error !== 'aborted') {
+        console.warn(`[sessionTitle] 生成失败：${result.error}（attempts=${result.attempts}）`)
+      }
+      return { ok: false, error: result.error ?? 'unknown' }
+    }
 
     const { title } = result.value
 
-    // 2. 校验仍是当前会话
-    const conversationStore = useConversationStore.getState()
-    const currentConversationId = conversationStore.currentConversationId
-    if (currentConversationId !== conversationId) return
-
-    // 3. 自动生成时，若用户已手动修改标题则不覆盖
+    // 2. 自动生成时校验仍是当前会话（用户切走了就不打扰）；
+    // 手动刷新（autoOnly=false）按 id 写回目标会话即可——右键菜单可以刷新
+    // 非当前会话，此时它本就不是活跃会话，不能因此被丢弃。
     if (options?.autoOnly) {
+      const conversationStore = useConversationStore.getState()
+      if (conversationStore.currentConversationId !== conversationId) return { ok: false, error: 'skipped' }
+
+      // 若用户已手动修改标题则不覆盖
       const currentConversation = conversationStore.getCurrentConversation()
-      if (!currentConversation || !isDefaultTitle(currentConversation.title)) return
+      if (!currentConversation || !isDefaultTitle(currentConversation.title)) return { ok: false, error: 'skipped' }
     }
 
-    await conversationStore.updateConversationTitle(conversationId, title)
-  } catch {
+    await useConversationStore.getState().updateConversationTitle(conversationId, title)
+    return { ok: true }
+  } catch (err) {
     // pipeline 本身已静默，但这里再兜一次
+    console.warn('[sessionTitle] 生成异常：', err)
+    return { ok: false, error: 'exception' }
   } finally {
-    sessionTitleControllers.delete(conversationId)
+    // 竞态护栏：本请求可能已被更新的请求 supersede（旧请求 finally 不能清掉
+    // 新请求的 controller 登记与 spinner 状态）
+    if (sessionTitleControllers.get(conversationId) === controller) {
+      sessionTitleControllers.delete(conversationId)
+      useTitleRefreshStore.getState().clearRefreshing(conversationId)
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { InlineTable, extractTableRows } from './InlineTable'
 import type { ArtifactNode } from '@/types/chat'
 
@@ -12,6 +13,7 @@ interface ArtifactModalProps {
  * 按 Esc 或点击关闭/遮罩关闭。
  */
 export function ArtifactModal({ artifact, onClose }: ArtifactModalProps) {
+  const { t } = useTranslation()
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -55,7 +57,7 @@ export function ArtifactModal({ artifact, onClose }: ArtifactModalProps) {
         <div className="wf-modal-bar">
           <span>{artifact.title}</span>
           <button className="wf-btn" onClick={onClose}>
-            关闭 Esc
+            {t('chat.artifactModal.closeEsc')}
           </button>
         </div>
         <div className="wf-modal-body">
@@ -72,7 +74,7 @@ export function ArtifactModal({ artifact, onClose }: ArtifactModalProps) {
                       className="wf-chart-bar"
                       style={{
                         height: `${(b.val / max) * 180}px`,
-                        background: b.color || '#2563eb',
+                        background: b.color || 'var(--wf-accent)',
                       }}
                     />
                     <span className="wf-chart-x">{b.label}</span>
@@ -81,7 +83,7 @@ export function ArtifactModal({ artifact, onClose }: ArtifactModalProps) {
               })}
             </div>
           ) : (
-            <div className="text-sm text-surface-600 font-mono whitespace-pre-wrap">
+            <div className="text-sm text-[var(--wf-sub)] font-mono whitespace-pre-wrap">
               {JSON.stringify(payload, null, 2).slice(0, 2000)}
             </div>
           )}

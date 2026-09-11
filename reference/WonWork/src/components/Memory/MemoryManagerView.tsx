@@ -1,212 +1,119 @@
 import { useTranslation } from 'react-i18next'
 import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/utils'
-import { useMemoryStore } from '@/stores/memoryStore'
-import type { MemoryEntry, MemoryEntryType, MemoryLayer, MemoryPriority, MemoryStatus } from '@/types/memory'
-import {
-  MEMORY_ENTRY_TYPES,
-  MEMORY_LAYERS,
-  MEMORY_PRIORITIES,
-  MEMORY_STATUSES,
-} from '@/types/memory'
-import {
-  Brain,
-  Plus,
-  Search,
-  Trash2,
-  Pencil,
-  Check,
-  X,
-  Tag,
-  Clock,
-  Layers,
-  Filter,
-  Archive,
-  RefreshCw,
-} from 'lucide-react'
-
-const LAYER_COLORS: Record<MemoryLayer | 'all', string> = {
-  all: 'bg-surface-200 text-surface-700',
-  working: 'bg-amber-100 text-amber-700',
-  episodic: 'bg-blue-100 text-blue-700',
-  semantic: 'bg-green-100 text-green-700',
-  procedural: 'bg-purple-100 text-purple-700',
-}
-
-const TYPE_COLORS: Record<MemoryEntryType, string> = {
-  conversation: 'bg-indigo-100 text-indigo-700',
-  fact: 'bg-blue-100 text-blue-700',
-  preference: 'bg-emerald-100 text-emerald-700',
-  decision: 'bg-orange-100 text-orange-700',
-  action: 'bg-amber-100 text-amber-700',
-  observation: 'bg-cyan-100 text-cyan-700',
-  error: 'bg-red-100 text-red-700',
-  summary: 'bg-violet-100 text-violet-700',
-  code: 'bg-slate-100 text-slate-700',
-  relationship: 'bg-pink-100 text-pink-700',
-  note: 'bg-amber-100 text-amber-700',
-}
-
-const PRIORITY_COLORS: Record<MemoryPriority, string> = {
-  critical: 'bg-red-100 text-red-700',
-  high: 'bg-orange-100 text-orange-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-green-100 text-green-700',
-  ephemeral: 'bg-slate-100 text-slate-700',
-}
-
-const STATUS_COLORS: Record<MemoryStatus, string> = {
-  active: 'bg-green-100 text-green-700',
-  archived: 'bg-slate-100 text-slate-700',
-  consolidated: 'bg-blue-100 text-blue-700',
-  expired: 'bg-red-100 text-red-700',
-  pending_review: 'bg-yellow-100 text-yellow-700',
-}
+import { useFileMemoryStore } from '@/stores/fileMemoryStore'
+import type { MemoryFileEntry, MemoryFileType } from '@/types/memoryFile'
+import { MEMORY_FILE_TYPES, buildMemoryFileContent, memoryFileName } from '@/types/memoryFile'
+import { MEMORY_FILE_TYPE_VALUES, fileTypeLabelKey, FILE_TYPE_BADGE } from './fileTypeUi'
+import { Brain, Plus, Search, Trash2, Pencil, Check, X, Clock, Filter } from 'lucide-react'
 
 function formatDate(iso: string, locale: string): string {
   return new Date(iso).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')
 }
 
-function emptyEntry(): Partial<MemoryEntry> {
-  return {
-    layer: 'semantic',
-    type: 'note',
-    priority: 'medium',
-    status: 'active',
-    content: '',
-    summary: '',
-    tags: [],
-  }
+interface Draft {
+  name: string
+  description: string
+  type: MemoryFileType | ''
+  content: string
 }
 
+function emptyDraft(): Draft {
+  return { name: '', description: '', type: '', content: '' }
+}
+
+/**
+ * 记忆管理页（2026-09-03 文件化重写）：~/.wonwork/memory/ 目录的直面管理。
+ * 一条记忆 = 一个 .md 文件（frontmatter: name/description/type）+ MEMORY.md 索引行。
+ * 旧模型的 layer/status/priority/source/tags/consolidate 随 SQLite 链路退役——
+ * 这里的操作就是文件操作：新增=写文件+索引行，编辑=改写文件，删除=删文件+移除索引行。
+ * 模型用文件原语管同一组文件，两边操作的是同一个事实源。
+ */
 export function MemoryManagerView() {
   const { t, i18n } = useTranslation()
-  const store = useMemoryStore()
-  const {
-    entries,
-    activeLayer,
-    activeTypes,
-    activeStatuses,
-    searchQuery,
-    isLoading,
-    initialized,
-    initialize,
-    remember,
-    deleteMemory,
-    updateMemory,
-    archiveMemory,
-    consolidate,
-    setActiveLayer,
-    setActiveTypes,
-    setActiveStatuses,
-    setSearchQuery,
-    getVisibleMemories,
-  } = store
+  const entries = useFileMemoryStore((s) => s.entries)
+  const initialized = useFileMemoryStore((s) => s.initialized)
+  const initialize = useFileMemoryStore((s) => s.initialize)
+  const writeMemoryFile = useFileMemoryStore((s) => s.writeMemoryFile)
+  const deleteMemoryWithIndex = useFileMemoryStore((s) => s.deleteMemoryWithIndex)
+  const upsertIndexLine = useFileMemoryStore((s) => s.upsertIndexLine)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeTypes, setActiveTypes] = useState<string[]>([])
+  const [isAdding, setIsAdding] = useState(false)
+  const [editEntry, setEditEntry] = useState<MemoryFileEntry | null>(null)
+  const [draft, setDraft] = useState<Draft>(emptyDraft())
 
   useEffect(() => {
-    if (!initialized) initialize()
+    if (!initialized) void initialize()
   }, [initialized, initialize])
 
-  const visible = useMemo(() => getVisibleMemories(), [getVisibleMemories, entries, activeLayer, activeTypes, activeStatuses, searchQuery])
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [isAdding, setIsAdding] = useState(false)
-  const [editEntry, setEditEntry] = useState<MemoryEntry | null>(null)
-  const [draft, setDraft] = useState<Partial<MemoryEntry>>(emptyEntry())
-
-  useEffect(() => {
-    setSelectedIds(new Set())
-  }, [activeLayer, activeTypes, activeStatuses, searchQuery])
-
-  const allSelected = visible.length > 0 && visible.every((m) => selectedIds.has(m.id))
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  const visible = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return entries.filter((e) => {
+      if (activeTypes.length > 0 && !activeTypes.includes(e.type || '')) return false
+      if (!q) return true
+      return `${e.name}\n${e.description}\n${e.content}\n${e.relativePath}`.toLowerCase().includes(q)
     })
-  }
+  }, [entries, searchQuery, activeTypes])
 
-  const toggleAll = () => {
-    if (allSelected) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(visible.map((m) => m.id)))
-    }
-  }
-
-  const toggleType = (type: MemoryEntryType) => {
+  const toggleType = (type: string) => {
     setActiveTypes(
-      activeTypes.includes(type) ? activeTypes.filter((t) => t !== type) : [...activeTypes, type]
+      activeTypes.includes(type) ? activeTypes.filter((x) => x !== type) : [...activeTypes, type]
     )
   }
 
-  const toggleStatus = (status: MemoryStatus) => {
-    setActiveStatuses(
-      activeStatuses.includes(status)
-        ? activeStatuses.filter((s) => s !== status)
-        : [...activeStatuses, status]
-    )
-  }
-
+  /** 新增：写文件 + 索引行（名称缺省时取描述/正文首段） */
   const handleAdd = async () => {
-    if (!draft.content?.trim()) return
-    await remember({
-      content: draft.content.trim(),
-      layer: draft.layer,
-      type: draft.type,
-      priority: draft.priority,
-      status: draft.status,
-      summary: draft.summary,
-      tags: draft.tags,
-    })
+    if (!draft.content.trim()) return
+    const name = draft.name.trim() || draft.description.trim() || draft.content.trim().slice(0, 20)
+    const description = draft.description.trim() || draft.content.trim().slice(0, 30)
+    const slug = memoryFileName(name).replace(/\.md$/, '')
+    let path = `${slug}.md`
+    const taken = new Set(entries.map((e) => e.relativePath))
+    for (let i = 2; taken.has(path); i++) path = `${slug}-${i}.md`
+    const ok = await writeMemoryFile(
+      path,
+      buildMemoryFileContent(name, description, draft.type || undefined, draft.content.trim())
+    )
+    if (ok) await upsertIndexLine(path, name, description)
     setIsAdding(false)
-    setDraft(emptyEntry())
+    setDraft(emptyDraft())
   }
 
+  /** 编辑：改写同一文件（路径不变）；名称/描述变化时同步索引行 */
   const handleSaveEdit = async () => {
-    if (!editEntry || !draft.content?.trim()) return
-    await updateMemory(editEntry.id, {
-      content: draft.content.trim(),
-      layer: draft.layer,
-      type: draft.type,
-      priority: draft.priority,
-      status: draft.status,
-      summary: draft.summary,
-      tags: draft.tags,
-    })
+    if (!editEntry || !draft.content.trim()) return
+    const name = draft.name.trim() || editEntry.name
+    const description = draft.description.trim() || editEntry.description
+    const ok = await writeMemoryFile(
+      editEntry.relativePath,
+      buildMemoryFileContent(name, description, draft.type || undefined, draft.content.trim())
+    )
+    if (ok) await upsertIndexLine(editEntry.relativePath, name, description)
     setEditEntry(null)
-    setDraft(emptyEntry())
+    setDraft(emptyDraft())
   }
 
-  const startEdit = (entry: MemoryEntry) => {
+  /** 删除：文件+索引行一步净（store 统一入口，与覆层遗忘同路径） */
+  const handleDelete = async (entry: MemoryFileEntry) => {
+    await deleteMemoryWithIndex(entry.relativePath)
+  }
+
+  const startEdit = (entry: MemoryFileEntry) => {
     setEditEntry(entry)
     setDraft({
-      layer: entry.layer,
-      type: entry.type,
-      priority: entry.priority,
-      status: entry.status,
+      name: entry.name,
+      description: entry.description,
+      type: (MEMORY_FILE_TYPES as string[]).includes(entry.type) ? (entry.type as MemoryFileType) : '',
       content: entry.content,
-      summary: entry.summary || '',
-      tags: entry.tags,
     })
   }
 
   const closeDialog = () => {
     setIsAdding(false)
     setEditEntry(null)
-    setDraft(emptyEntry())
-  }
-
-  const handleDeleteSelected = async () => {
-    for (const id of selectedIds) await deleteMemory(id)
-    setSelectedIds(new Set())
-  }
-
-  const handleArchiveSelected = async () => {
-    for (const id of selectedIds) await archiveMemory(id)
-    setSelectedIds(new Set())
+    setDraft(emptyDraft())
   }
 
   const renderDialog = () => {
@@ -214,138 +121,85 @@ export function MemoryManagerView() {
     if (!isOpen) return null
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-          <div className="px-6 py-4 border-b border-surface-200 flex items-center justify-between">
-            <h3 className="text-base font-semibold text-surface-800">
+        <div
+          className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl"
+          style={{ background: 'var(--wf-card-bg)', boxShadow: 'var(--wf-pop)' }}
+        >
+          <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--wf-hair)' }}>
+            <h3 className="text-[15px] font-semibold" style={{ color: 'var(--wf-ink)' }}>
               {isAdding ? t('memory.memoryManager.addMemory') : t('memory.memoryManager.edit')}
             </h3>
-            <button onClick={closeDialog} className="text-surface-400 hover:text-surface-600">
+            <button
+              onClick={closeDialog}
+              className="wf-press p-1.5 rounded-lg"
+              style={{ color: 'var(--wf-mut)' }}
+            >
               <X size={18} />
             </button>
           </div>
           <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  {t('memory.memoryManager.layer')}
+                <label className="block text-[12px] font-medium mb-1" style={{ color: 'var(--wf-sub)' }}>
+                  {t('memory.file.name')}
                 </label>
-                <select
-                  value={draft.layer || 'semantic'}
-                  onChange={(e) => setDraft({ ...draft, layer: e.target.value as MemoryLayer })}
-                  className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
-                >
-                  {MEMORY_LAYERS.map((l) => (
-                    <option key={l} value={l}>
-                      {t(`memory.layers.${l}`)}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  value={draft.name}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  className="wf-ink-input"
+                  placeholder={t('memory.file.namePlaceholder')}
+                />
               </div>
               <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
+                <label className="block text-[12px] font-medium mb-1" style={{ color: 'var(--wf-sub)' }}>
                   {t('memory.memoryManager.type')}
                 </label>
                 <select
-                  value={draft.type || 'note'}
-                  onChange={(e) => setDraft({ ...draft, type: e.target.value as MemoryEntryType })}
-                  className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
+                  value={draft.type}
+                  onChange={(e) => setDraft({ ...draft, type: e.target.value as MemoryFileType | '' })}
+                  className="wf-ink-select"
                 >
-                  {MEMORY_ENTRY_TYPES.map((tp) => (
+                  <option value="">{t('memory.fileTypes.note')}</option>
+                  {MEMORY_FILE_TYPE_VALUES.map((tp) => (
                     <option key={tp} value={tp}>
-                      {t(`memory.types.${tp}`)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  {t('memory.memoryManager.priority')}
-                </label>
-                <select
-                  value={draft.priority || 'medium'}
-                  onChange={(e) => setDraft({ ...draft, priority: e.target.value as MemoryPriority })}
-                  className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
-                >
-                  {MEMORY_PRIORITIES.map((p) => (
-                    <option key={p} value={p}>
-                      {t(`memory.priorities.${p}`)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  {t('memory.memoryManager.status')}
-                </label>
-                <select
-                  value={draft.status || 'active'}
-                  onChange={(e) => setDraft({ ...draft, status: e.target.value as MemoryStatus })}
-                  className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
-                >
-                  {MEMORY_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {t(`memory.statuses.${s}`)}
+                      {t(fileTypeLabelKey(tp))}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-surface-600 mb-1">
+              <label className="block text-[12px] font-medium mb-1" style={{ color: 'var(--wf-sub)' }}>
+                {t('memory.file.desc')}
+              </label>
+              <input
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                className="wf-ink-input"
+                placeholder={t('memory.file.descPlaceholder')}
+              />
+            </div>
+            <div>
+              <label className="block text-[12px] font-medium mb-1" style={{ color: 'var(--wf-sub)' }}>
                 {t('memory.memoryManager.content')}
               </label>
               <textarea
-                value={draft.content || ''}
+                value={draft.content}
                 onChange={(e) => setDraft({ ...draft, content: e.target.value })}
-                rows={4}
-                className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm resize-none focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
+                rows={5}
+                className="wf-ink-input resize-none"
                 placeholder={t('memory.memoryManager.contentPlaceholder')}
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-surface-600 mb-1">
-                {t('memory.memoryManager.summary')}
-              </label>
-              <input
-                value={(draft.summary as string) || ''}
-                onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
-                className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
-                placeholder={t('memory.memoryManager.summaryPlaceholder')}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-surface-600 mb-1">
-                {t('memory.memoryManager.tags')}
-              </label>
-              <input
-                value={(draft.tags || []).join(', ')}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    tags: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                  })
-                }
-                className="w-full px-3 py-2 border border-surface-200 rounded-lg text-sm"
-                placeholder={t('memory.memoryManager.tagsPlaceholder')}
-              />
-            </div>
           </div>
-          <div className="px-6 py-4 border-t border-surface-200 flex justify-end gap-2">
-            <button
-              onClick={closeDialog}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-surface-600 hover:bg-surface-100"
-            >
+          <div className="px-6 py-4 border-t flex justify-end gap-2" style={{ borderColor: 'var(--wf-hair)' }}>
+            <button onClick={closeDialog} className="wf-mini-btn wf-press">
               {t('memory.memoryManager.cancel')}
             </button>
             <button
               onClick={editEntry ? handleSaveEdit : handleAdd}
-              disabled={!draft.content?.trim()}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-                draft.content?.trim()
-                  ? 'bg-primary-500 text-white hover:bg-primary-600'
-                  : 'bg-surface-200 text-surface-400 cursor-not-allowed'
-              )}
+              disabled={!draft.content.trim()}
+              className="wf-cta wf-press"
             >
               <Check size={14} />
               {t('memory.memoryManager.save')}
@@ -357,234 +211,123 @@ export function MemoryManagerView() {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 bg-white border-b border-surface-200 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center">
-            <Brain size={20} className="text-primary-600" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-surface-800">{t('memory.memoryManager.title')}</h2>
-            <p className="text-sm text-surface-400">
-              {t('memory.memoryManager.memoryCount', { count: entries.length })}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => consolidate()}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-surface-600 hover:bg-surface-100 transition-colors"
-          >
-            <RefreshCw size={16} />
-            {t('memory.memoryManager.consolidate')}
-          </button>
-          <button
-            onClick={() => {
-              setDraft(emptyEntry())
-              setIsAdding(true)
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-500 text-white hover:bg-primary-600 transition-colors"
-          >
-            <Plus size={16} />
-            {t('memory.memoryManager.addMemory')}
-          </button>
-        </div>
-      </div>
-
-      {/* Search + Filters */}
-      <div className="px-6 py-3 bg-surface-50 border-b border-surface-200 space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t('memory.memoryManager.search')}
-              className="w-full pl-9 pr-3 py-2 border border-surface-200 rounded-lg text-sm focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-400"
-            />
-          </div>
-          {selectedIds.size > 0 && (
-            <div className="flex items-center gap-2">
+    <div
+      className="relative flex flex-col h-full flex-1 min-w-0 wf-mempg"
+      style={{ background: 'var(--wf-bg)', color: 'var(--wf-ink)' }}
+    >
+      {/* 滚动容器 = 房间头 + 内容（wf-room-scroll 治理滚动槽，技能页同律） */}
+      <div className="flex-1 overflow-y-auto wf-room-scroll">
+        {/* sticky 页头：单色图标块 + 标题 + 副标题，操作按钮收进右侧（蓝图三段式） */}
+        <div className="wf-mempg-head">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="wf-mempg-head-ic">
+                <Brain size={20} />
+              </span>
+              <div>
+                <h1 className="text-[20px] font-bold leading-tight" style={{ color: 'var(--wf-ink)' }}>
+                  {t('memory.memoryManager.title')}
+                </h1>
+                <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--wf-mut)' }}>
+                  {t('memory.memoryManager.memoryCount', { count: entries.length })}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
               <button
-                onClick={handleArchiveSelected}
-                className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-surface-600 hover:bg-surface-100"
+                onClick={() => {
+                  setDraft(emptyDraft())
+                  setIsAdding(true)
+                }}
+                className="wf-cta wf-press"
               >
-                <Archive size={16} />
-                {t('memory.memoryManager.archiveSelected')}
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50"
-              >
-                <Trash2 size={16} />
-                {t('memory.memoryManager.deleteSelected')}
+                <Plus size={13} />
+                {t('memory.memoryManager.addMemory')}
               </button>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Layer tabs */}
-        <div className="flex items-center gap-1">
-          {(['all', ...MEMORY_LAYERS] as (MemoryLayer | 'all')[]).map((l) => (
-            <button
-              key={l}
-              onClick={() => setActiveLayer(l)}
-              className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-                activeLayer === l
-                  ? 'bg-primary-500 text-white border-primary-500'
-                  : 'bg-white text-surface-600 border-surface-200 hover:bg-surface-100'
-              )}
-            >
-              {t(`memory.layers.${l}`)}
-            </button>
-          ))}
-        </div>
-
-        {/* Type filter */}
-        <div className="flex flex-wrap items-center gap-1">
-          <Filter size={14} className="text-surface-400 mr-1" />
-          {MEMORY_ENTRY_TYPES.map((tp) => (
-            <button
-              key={tp}
-              onClick={() => toggleType(tp)}
-              className={cn(
-                'px-2 py-0.5 rounded-full text-xs font-medium border transition-colors',
-                activeTypes.includes(tp)
-                  ? 'bg-primary-500 text-white border-primary-500'
-                  : 'bg-white text-surface-600 border-surface-200 hover:bg-surface-100'
-              )}
-            >
-              {t(`memory.types.${tp}`)}
-            </button>
-          ))}
-        </div>
-
-        {/* Status filter */}
-        <div className="flex flex-wrap items-center gap-1">
-          <Layers size={14} className="text-surface-400 mr-1" />
-          {MEMORY_STATUSES.map((s) => (
-            <button
-              key={s}
-              onClick={() => toggleStatus(s)}
-              className={cn(
-                'px-2 py-0.5 rounded-full text-xs font-medium border transition-colors',
-                activeStatuses.includes(s)
-                  ? 'bg-primary-500 text-white border-primary-500'
-                  : 'bg-white text-surface-600 border-surface-200 hover:bg-surface-100'
-              )}
-            >
-              {t(`memory.statuses.${s}`)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* List */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto space-y-3">
-          {visible.length > 0 && (
-            <div className="flex items-center gap-2 text-sm text-surface-600">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleAll}
-                className="rounded border-surface-300"
-              />
-              <span>{t('memory.memoryManager.selectAll')}</span>
+          {/* 搜索 + 类型筛选 */}
+          <div className="pb-4 border-b" style={{ borderColor: 'var(--wf-hair)' }}>
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 wf-mempg-mut pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('memory.memoryManager.search')}
+                  className="wf-ink-input !pl-8"
+                />
+              </div>
             </div>
-          )}
+            <div className="flex flex-wrap items-center gap-1.5 mt-3">
+              <Filter size={13} className="wf-mempg-faint mr-0.5 flex-none" />
+              {(['', ...MEMORY_FILE_TYPE_VALUES] as string[]).map((tp) => (
+                <button
+                  key={tp || '_note'}
+                  onClick={() => toggleType(tp)}
+                  className={cn('wf-mempg-chip wf-press', activeTypes.includes(tp) && 'on')}
+                >
+                  {t(fileTypeLabelKey(tp))}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
+        {/* 列表 */}
+        <div className="wf-mempg-body">
           {visible.length === 0 && (
-            <div className="text-center py-12">
-              <Brain size={48} className="mx-auto text-surface-300 mb-3" />
-              <p className="text-surface-400">
-                {searchQuery || activeTypes.length > 0 || activeStatuses.length > 0 || activeLayer !== 'all'
+            <div className="text-center py-16">
+              <span className="wf-mempg-empty-ic">
+                <Brain size={22} />
+              </span>
+              <p className="text-[13px]" style={{ color: 'var(--wf-mut)' }}>
+                {searchQuery || activeTypes.length > 0
                   ? t('memory.memoryManager.noMatch')
                   : t('memory.memoryManager.noMemories')}
               </p>
             </div>
           )}
 
-          {visible.map((mem) => {
-            const selected = selectedIds.has(mem.id)
-            return (
-              <div
-                key={mem.id}
-                className={cn(
-                  'bg-white border rounded-xl p-4 hover:shadow-sm transition-shadow',
-                  selected ? 'border-primary-400 ring-1 ring-primary-400' : 'border-surface-200'
-                )}
-              >
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+            {visible.map((mem) => (
+              <div key={mem.relativePath} className="wf-mempg-card">
                 <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={() => toggleSelect(mem.id)}
-                    className="mt-1 rounded border-surface-300"
-                  />
                   <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-2">
-                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', LAYER_COLORS[mem.layer])}>
-                        {t(`memory.layers.${mem.layer}`)}
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', FILE_TYPE_BADGE[mem.type] ?? 'bg-surface-200 text-surface-700')}>
+                        {t(fileTypeLabelKey(mem.type))}
                       </span>
-                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', TYPE_COLORS[mem.type])}>
-                        {t(`memory.types.${mem.type}`)}
-                      </span>
-                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', PRIORITY_COLORS[mem.priority])}>
-                        {t(`memory.priorities.${mem.priority}`)}
-                      </span>
-                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_COLORS[mem.status])}>
-                        {t(`memory.statuses.${mem.status}`)}
-                      </span>
-                      <span className="text-xs text-surface-400 flex items-center gap-1">
+                      <span className="text-xs wf-mempg-mut flex items-center gap-1">
                         <Clock size={12} />
-                        {formatDate(mem.created_at, i18n.language)}
+                        {formatDate(mem.lastModified, i18n.language)}
                       </span>
-                      {mem.access_count > 0 && (
-                        <span className="text-xs text-surface-400">
-                          {t('memory.memoryManager.accessCount', { count: mem.access_count })}
-                        </span>
-                      )}
+                      <span className="text-xs wf-mempg-mut">{mem.relativePath}</span>
                     </div>
 
-                    <p className="text-sm text-surface-800 whitespace-pre-wrap">{mem.content}</p>
-                    {mem.summary && (
-                      <p className="text-xs text-surface-500 mt-1">{mem.summary}</p>
+                    {(mem.name || mem.description) && (
+                      <p className="text-[13px] font-medium" style={{ color: 'var(--wf-ink)' }}>
+                        {mem.name || mem.description}
+                      </p>
                     )}
-                    {(mem.tags || []).length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1 mt-2">
-                        {(mem.tags || []).map((tag) => (
-                          <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-100 text-surface-600 text-xs">
-                            <Tag size={10} />
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    <p className="text-[13px] whitespace-pre-wrap mt-1" style={{ color: 'var(--wf-ink)' }}>
+                      {mem.content}
+                    </p>
                   </div>
 
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
                       onClick={() => startEdit(mem)}
-                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 transition-colors"
+                      className="p-1.5 rounded-lg wf-press wf-mempg-icbtn wf-mempg-icbtn-neu"
                       title={t('memory.memoryManager.edit')}
                     >
                       <Pencil size={14} />
                     </button>
                     <button
-                      onClick={() => archiveMemory(mem.id)}
-                      className="p-1.5 rounded-lg text-surface-400 hover:text-slate-500 hover:bg-slate-50 transition-colors"
-                      title={t('memory.memoryManager.archive')}
-                    >
-                      <Archive size={14} />
-                    </button>
-                    <button
-                      onClick={() => deleteMemory(mem.id)}
-                      className="p-1.5 rounded-lg text-surface-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      onClick={() => void handleDelete(mem)}
+                      className="p-1.5 rounded-lg wf-press wf-mempg-icbtn wf-mempg-icbtn-red"
                       title={t('memory.memoryManager.delete')}
                     >
                       <Trash2 size={14} />
@@ -592,8 +335,8 @@ export function MemoryManagerView() {
                   </div>
                 </div>
               </div>
-            )
-          })}
+            ))}
+          </div>
         </div>
       </div>
 

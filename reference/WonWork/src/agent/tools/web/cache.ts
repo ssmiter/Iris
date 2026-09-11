@@ -34,20 +34,23 @@ export async function writeWebCache(
 
   await writeFile(cachedPath, content, { encoding: 'utf-8' })
 
-  const summary = buildSummary(kind, payload)
+  const summary = buildSummary(kind, payload, cachedPath)
 
   return { cachedPath, summary }
 }
 
-function buildSummary(kind: 'search' | 'fetch', payload: Record<string, unknown>): string {
+function buildSummary(kind: 'search' | 'fetch', payload: Record<string, unknown>, cachedPath: string): string {
+  // 2026-07-29 结构性修复：模型可见文本就是这段 summary（extractOutputText 命中 summary 字段，
+  // cached_path 字段留在 structuredData 里永远到不了模型）——路径必须内嵌在文本里，
+  // 否则模型深读搜索结果只能 glob 猜路径。
   if (kind === 'search') {
     const query = String(payload.query || '')
     const results = Array.isArray(payload.results) ? payload.results : []
-    return `搜索 "${query}" 的 ${results.length} 条结果已缓存。`
+    return `搜索 "${query}" 的 ${results.length} 条结果已缓存到 ${cachedPath}；如需深读完整结果，可用 read_file（带 offset/limit 参数）读取该文件。`
   }
 
   const url = String(payload.url || '')
   const title = String(payload.title || '')
   const totalChars = typeof payload.totalChars === 'number' ? payload.totalChars : 0
-  return `页面 ${title ? `"${title}"` : url}（${totalChars} 字符）已缓存。`
+  return `页面 ${title ? `"${title}"` : url}（${totalChars} 字符）已缓存到 ${cachedPath}。`
 }

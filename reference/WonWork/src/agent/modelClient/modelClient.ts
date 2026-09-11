@@ -1,3 +1,8 @@
+import type { Message, ToolDefinition, StreamChunk } from '@/types/mescli'
+import type { ExecutionMode } from '@/agent/types'
+import type { EffortLevel } from '@/services/modelCapabilityRegistry'
+import { useProviderProfileStore } from '@/stores/providerProfileStore'
+
 /**
  * ModelClient 抽象层
  *
@@ -9,9 +14,6 @@
  * 当前采用回调式流接口（与 WonWork 现有 SSE 架构兼容），
  * 未来可演进为 AsyncIterable<StreamChunk>。
  */
-
-import type { Message, ToolDefinition, StreamChunk } from '@/types/mescli'
-import type { ExecutionMode } from '@/agent/types'
 
 export interface ModelClientRequest {
   provider: string
@@ -30,6 +32,12 @@ export interface ModelClientRequest {
   systemCode?: string
   /** 是否保存到历史记录；内部工作流生成/修复等调用应设为 false */
   saveToHistory?: boolean
+  /**
+   * 思考强度档位（2026-09-04，语义照抄 claude-code effort）：undefined=不发送
+   * （上游默认 high）。装配层已按 modelSupportsEffort 门控——不支持的模型恒为
+   * undefined，各 client 只做 wire 映射不做能力判断。
+   */
+  effort?: EffortLevel
 }
 
 export interface ModelClientStreamCallbacks {
@@ -63,6 +71,17 @@ export async function createModelClient(
   const factory = MODEL_CLIENT_REGISTRY.get(providerId)
   if (factory) {
     return factory(baseUrl)
+  }
+
+  // 供应商预设库（2026-09-07）：profile:<id> 按 profile.meta.apiFormat 路由，
+  // 不走 isAnthropicCompatibleProvider 的 baseUrl 猜测（预设显式声明了协议）。
+  if (providerId.startsWith('profile:')) {
+    if (getProfileApiFormat(providerId) === 'anthropic') {
+      const { createAnthropicModelClient } = await import('./anthropicModelClient')
+      return createAnthropicModelClient(providerId, baseUrl)
+    }
+    const { createOpenAIModelClient } = await import('./openaiModelClient')
+    return createOpenAIModelClient(providerId, baseUrl)
   }
 
   // 未知 provider：尝试识别 Anthropic 兼容，否则按 OpenAI 兼容兜底
@@ -122,13 +141,27 @@ export function providerSupportsDeferredLoading(
   providerId: string,
   model?: string
 ): boolean {
-  if (!isAnthropicCompatibleProvider(providerId, undefined)) return false
+  // 供应商预设库：协议由 profile.meta.apiFormat 显式声明
+  if (providerId.startsWith('profile:')) {
+    // 同步路径用静态 import 的 store（无环：store 不依赖 modelClient）
+    const format = getProfileApiFormat(providerId)
+    if (format !== 'anthropic') return false
+  } else if (!isAnthropicCompatibleProvider(providerId, undefined)) {
+    return false
+  }
   // 已知不支持 tool_reference 的模型模式（如 haiku）
   if (model) {
     const lower = model.toLowerCase()
     if (lower.includes('haiku')) return false
   }
   return true
+}
+
+/** profile:<id> → apiFormat（查不到=undefined，调用方按非 anthropic 处理） */
+function getProfileApiFormat(providerId: string): 'anthropic' | 'openai' | undefined {
+  // 无环：providerProfileStore → client.ts 不依赖 modelClient
+  const id = providerId.slice('profile:'.length)
+  return useProviderProfileStore.getState().profiles.find((p) => p.id === id)?.meta.apiFormat
 }
 
 /**

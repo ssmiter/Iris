@@ -41,7 +41,7 @@ export interface UserPermissions {
 
 export type ToolRiskLevel = 'read_only' | 'standard' | 'elevated' | 'destructive'
 
-export type ToolTier = 'domain_operation' | 'primitive' | 'admin' | 'workflow'
+export type ToolTier = 'domain_operation' | 'primitive' | 'admin'
 
 export type ToolLoadStrategy = 'always_load' | 'category_load' | 'deferred'
 
@@ -123,6 +123,8 @@ export interface ToolCatalogItem {
   tags?: string[]
   /** 业务域 / 系统范围（v1.2） */
   scopes?: string[]
+  /** 能力目录路径（v1.6 flat 清单携带，如 /sls/sls_plan_list） */
+  path?: string
 }
 
 export interface ToolInvokeResult {
@@ -335,8 +337,6 @@ export interface CapabilitiesResponse {
   primitiveTools?: ToolCatalogItem[]
   /** 管理员工具（v1.3） */
   adminTools?: ToolCatalogItem[]
-  /** 工作流工具（v1.4） */
-  workflowTools?: ToolCatalogItem[]
   /** 后端支持的功能标识（用于灰度开关，可选） */
   features?: string[]
   /** 后端版本号 */
@@ -376,6 +376,17 @@ export interface WorkspaceNode {
 export interface WorkspaceListResponse {
   path: string
   nodes: WorkspaceNode[]
+  /** 后端能力回声：true=子树全量返回（2026-08-31 递归单请求快路径）；缺省/false=仅单层 */
+  recursive?: boolean
+}
+
+/** 盘符枚举（浏览目录浮层「我的电脑」位点；路径统一正斜杠形如 "C:/"） */
+export interface WorkspaceDrive {
+  path: string
+  /** 卷标（可能为空串） */
+  label?: string
+  totalBytes?: number
+  freeBytes?: number
 }
 
 export interface WorkspaceReadResponse {
@@ -386,6 +397,58 @@ export interface WorkspaceReadResponse {
   mimeType?: string
   downloadUrl?: string
   updatedAt?: string
+  /** 文件总行数（请求带 offset/limit 行切片时由后端给出） */
+  totalLines?: number
+}
+
+/** 服务端内容检索（2026-08-02，POST /api/workspace/grep）——一次请求消灭前端 grep 的 N+1 串行读 */
+export interface WorkspaceGrepRequest {
+  path?: string
+  pattern: string
+  glob?: string
+  caseInsensitive?: boolean
+  /** 命中上限，后端默认 500、最高 2000 */
+  maxResults?: number
+}
+
+export interface WorkspaceGrepMatch {
+  path: string
+  line: number
+  content: string
+}
+
+export interface WorkspaceGrepResponse {
+  matches: WorkspaceGrepMatch[]
+  /** true = 达到命中/扫描预算被截断，结果不完整 */
+  truncated: boolean
+  scannedFiles: number
+}
+
+/** 服务端 glob（2026-09-01 P0-7，POST /api/workspace/glob）——登记根下"拉全量本地过滤"等于遍历整棵树，必须后端化 */
+export interface WorkspaceGlobRequest {
+  path?: string
+  pattern: string
+  /** 命中上限，后端钳 1-2000 */
+  maxResults?: number
+}
+
+export interface WorkspaceGlobResponse {
+  matches: string[]
+  truncated: boolean
+  scannedFiles: number
+}
+
+/**
+ * 后台命令任务事件（2026-09-01 二阶段切片2，GET /api/workspace/shell/tasks/{id}/wait 响应）：
+ * exited=终态（exit_code/killed/tail 尾部输出）；stalled=45s 无输出提醒（last_line=末行）；
+ * heartbeat=长等待保活（无事件，前端重发 wait）。
+ */
+export interface ShellTaskEvent {
+  type: 'exited' | 'stalled' | 'heartbeat'
+  exit_code: number | null
+  killed: boolean
+  last_line: string | null
+  tail: string | null
 }
 
 export interface WorkspaceWriteRequest {
@@ -394,6 +457,8 @@ export interface WorkspaceWriteRequest {
   append?: boolean
   /** 内容编码；默认 'utf-8'，传 'base64' 时后端会解码为二进制字节写入 */
   encoding?: 'utf-8' | 'base64'
+  /** browse=true=浏览面板用户通道（2026-09-09 二阶段）：只跳目录登记闸，模型侧缺省 false */
+  browse?: boolean
 }
 
 /**
@@ -428,6 +493,8 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool'
 export interface Message {
   role: MessageRole
   content: string
+  /** thinking 模型的推理内容：同一工具链内的后续请求必须原样回传（Kimi 系上游缺失即 400） */
+  reasoningContent?: string
   toolCalls?: ToolCall[]
   toolCallId?: string
   toolCallName?: string
@@ -449,6 +516,12 @@ export interface Message {
   /** v1.0 瀑布流渲染节点（会话可视化 Phase 1）。
    *  可选字段，旧消息为 undefined 时前端用 legacyToRenderNodes() 合成。 */
   renderNodes?: import('./chat').RenderNode[]
+  /** 分层加载线字段（§16.6）：消息在会话内的序号（仅分层查询返回） */
+  index?: number
+  /** 分层加载线字段：所属轮次序号（role=user 且非补充消息开启新一轮） */
+  turnIndex?: number
+  /** 分层加载线字段：true=轻量行（重字段已剥离、content 截断为预览，按轮补拉还原） */
+  light?: boolean
 }
 
 export interface ToolCall {
@@ -501,6 +574,12 @@ export interface ChatRequest {
    * 后端 Anthropic 系 Provider 只能写死默认值，长输出被截断（2026-07-24 补）。
    */
   maxTokens?: number
+  /**
+   * 思考强度档位（2026-09-04，照抄 claude-code effort 语义）：前端已按
+   * modelSupportsEffort 门控，后端 Anthropic 链映射 output_config.effort +
+   * beta 头，OpenAI 链映射 reasoning_effort；undefined=不发送（上游默认）。
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max'
 }
 
 export type StreamChunkType =
@@ -561,13 +640,25 @@ export interface Conversation {
   id: number
   userId: number
   title: string
-  systemCode: string
+  /** 后端 Conversation 模型无此列（单机全可见拍板后不出库）——运行时为 undefined，读取方必须判空 */
+  systemCode?: string
   createdAt: string
   updatedAt: string
+  /** 2026-08-04 双写改造：backend=后端 SQLite 权威存储（新会话）；local=IndexedDB 存量（r74 时代遗留，原样可读）。仅 getConversations 合并列表时填充。 */
+  source?: 'backend' | 'local'
+  /** 任务会话（2026-09-01 二阶段）：派生它的父会话 id；null/undefined=顶层会话（侧栏主列表只显示顶层） */
+  parentConversationId?: number | null
+  /** 任务会话状态机：running/done/error/cancelled；null/undefined=非任务会话 */
+  taskState?: 'running' | 'done' | 'error' | 'cancelled' | null
+  /** 项目目录绑定（2026-09-09 文件浏览二阶段）：物理路径正斜杠归一；null/undefined=未绑定。
+   *  仅 Local 车道落列（SQL Server 车道恒无）；最近项目/项目会话列表=前端对本字段 GROUP BY 派生 */
+  projectPath?: string | null
 }
 
 export interface CreateConversationRequest {
   title?: string
+  /** 任务会话：派生它的父会话 id（缺省=顶层会话） */
+  parentConversationId?: number
 }
 
 export interface UpdateTitleRequest {
@@ -596,115 +687,6 @@ export interface UpdateFavoriteRequest {
   prompt: string
 }
 
-// ==================== 工作流 ====================
-
-export interface StartWorkflowRequest {
-  workflowCode: string
-}
-
-export interface StartWorkflowResponse {
-  sessionId: string
-  workflowName: string
-  step: WorkflowStepResponse
-}
-
-export interface WorkflowStepResponse {
-  type: string
-  success: boolean
-  error?: string
-  step?: WorkflowStep
-  context?: WorkflowContext
-  summary?: string
-  result?: WorkflowResult
-}
-
-export interface WorkflowStep {
-  id: string
-  name: string
-  type: string
-  prompt?: string
-  optional?: boolean
-  options?: WorkflowOption[]
-  fields?: WorkflowField[]
-  searchTool?: string
-  displayField?: string
-  valueField?: string
-  summaryTemplate?: string
-}
-
-export interface WorkflowOption {
-  label: string
-  value: string
-}
-
-export interface WorkflowField {
-  id: string
-  name: string
-  type: WorkflowFieldType
-  required: boolean
-  description?: string
-  defaultValue?: string
-  source?: string
-  sourceDb?: string
-  searchTool?: string
-  displayField?: string
-  valueField?: string
-  autoFillFrom?: string
-  autoCalc?: string
-  min?: number
-  max?: number
-  pattern?: string
-  unit?: string
-  options?: { value: string; label: string }[]
-}
-
-export type WorkflowFieldType =
-  | 'Text'
-  | 'Number'
-  | 'Decimal'
-  | 'Date'
-  | 'DateTime'
-  | 'Select'
-  | 'SearchSelect'
-  | 'Checkbox'
-  | 'TextArea'
-
-export interface WorkflowStartResponse {
-  success: boolean
-  error?: string
-  sessionId?: string
-  workflowName?: string
-  step?: WorkflowStepResponse
-}
-
-export interface WorkflowContext {
-  sessionId: string
-  workflowCode: string
-  currentStepId: string
-  isCompleted: boolean
-  collectedData: Record<string, unknown>
-}
-
-export interface WorkflowResult {
-  success: boolean
-  message: string
-  documentNo?: string
-  extraData?: unknown
-}
-
-export interface WorkflowSearchRequest {
-  toolName: string
-  keyword: string
-  limit?: number
-}
-
-export interface WorkflowSearchResponse {
-  success: boolean
-  message?: string
-  items: unknown[]
-  raw?: unknown
-}
-
 // ==================== 配置 ====================
 
 export interface ProviderConfig {
@@ -712,8 +694,6 @@ export interface ProviderConfig {
   model: string
   baseUrl: string
   isEnabled?: boolean
-  /** 当主模型限流/不可用时尝试的 fallback 模型（同 provider） */
-  fallbackModel?: string
 }
 
 export interface UserConfigDto {
@@ -912,8 +892,8 @@ export interface SubmitPaymentProofRequest {
 
 // ==================== API Key ====================
 
-export type ApiKeyScope = 'chat' | 'workflow' | 'swarm' | 'all'
-export type ApiKeyProvider = 'platform' | 'openai' | 'kimi' | 'claude' | 'deepseek' | 'custom'
+export type ApiKeyScope = 'chat' | 'swarm' | 'all'
+export type ApiKeyProvider = 'platform' | 'openai' | 'kimi' | 'claude' | 'deepseek' | 'custom' | 'anthropic'
 
 export interface ApiKeyDto {
   id: string
@@ -922,6 +902,8 @@ export interface ApiKeyDto {
   name: string
   provider: ApiKeyProvider
   baseUrl?: string
+  /** custom（OpenAI 兼容端点）无内置默认模型，模型随 Key 记录；其余 provider 可空 */
+  model?: string
   /** 仅创建时返回一次，后续不可见 */
   key?: string
   keyHint?: string
@@ -936,6 +918,8 @@ export interface CreateApiKeyRequest {
   name: string
   provider: ApiKeyProvider
   baseUrl?: string
+  /** provider=custom 时必填（无内置默认模型） */
+  model?: string
   key: string
   scope?: ApiKeyScope
   isDefault?: boolean

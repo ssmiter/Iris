@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWebBridgeStore } from '@/stores/webbridgeStore'
 import { useChatStore } from '@/stores/chatStore'
 import type { WebBridgeLogEntry } from '@/types/webbridge'
@@ -24,7 +25,7 @@ interface WebBridgeStageProps {
 }
 
 /** 字幕条目：从 store 日志映射为舞台字幕 */
-function logToSubtitle(entry: WebBridgeLogEntry): { text: string; kind: '' | 'err' | 'heal' } {
+function logToSubtitle(entry: WebBridgeLogEntry, t: (key: string) => string): { text: string; kind: '' | 'err' | 'heal' } {
   if (entry.type === 'error') return { text: `✗ ${entry.message}`, kind: 'err' }
   if (entry.type === 'system') {
     // 接管/交还等系统事件用愈合色
@@ -36,7 +37,7 @@ function logToSubtitle(entry: WebBridgeLogEntry): { text: string; kind: '' | 'er
     if (entry.result) {
       return entry.result.success
         ? { text: desc, kind: '' }
-        : { text: `✗ ${desc}：${entry.result.error_message || '失败'}`, kind: 'err' }
+        : { text: `✗ ${desc}：${entry.result.error_message || t('chat.webBridgeStage.failed')}`, kind: 'err' }
     }
     return { text: `${desc}…`, kind: '' }
   }
@@ -50,6 +51,7 @@ function normalizeFrame(raw: string | null, mime: 'png' | 'jpeg'): string | null
 }
 
 export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText }: WebBridgeStageProps) {
+  const { t } = useTranslation()
   const {
     status,
     isExecuting,
@@ -61,15 +63,13 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
     currentScreenshotMime,
     logs,
     pauseRequested,
-    requestTakeover,
-    handbackToAI,
-    sendStageInput,
+    pauseAI,
+    resumeAI,
   } = useWebBridgeStore()
-  const { pendingApprovals, approveToolCall, rejectToolCall } = useChatStore((s) => ({
-    pendingApprovals: s.pendingApprovals,
-    approveToolCall: s.approveToolCall,
-    rejectToolCall: s.rejectToolCall,
-  }))
+  // 2026-07-31 订阅风暴修复：对象选择器无 shallow → 每次 set 都重渲染；拆开订阅
+  const pendingApprovals = useChatStore((s) => s.pendingApprovals)
+  const approveToolCall = useChatStore((s) => s.approveToolCall)
+  const rejectToolCall = useChatStore((s) => s.rejectToolCall)
 
   // 本轮的 webbridge 审批（与对话内审批卡同源， whichever 先点都生效）
   const wbApproval = useMemo(
@@ -100,7 +100,7 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
   const lastFrame = frames[frames.length - 1] || null
 
   // 字幕轨：store.logs 新→旧，取最近两条，展示时旧在上
-  const subtitles = useMemo(() => logs.slice(0, 2).reverse().map(logToSubtitle), [logs])
+  const subtitles = useMemo(() => logs.slice(0, 2).reverse().map((e) => logToSubtitle(e, t)), [logs, t])
 
   // 进度：当前工作流的步骤进度（原语工具无工作流时不显示）
   const workflow = currentWorkflowId ? workflows.find((w) => w.id === currentWorkflowId) : null
@@ -153,33 +153,6 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
     setTimeout(() => setClickFx((prev) => prev.filter((f) => f.id !== id)), 600)
   }
 
-  const handleViewClick = (e: React.MouseEvent) => {
-    if (!pauseRequested) return
-    const c = toViewportCoords(e.clientX, e.clientY)
-    if (!c) return
-    pulse(c.relX, c.relY)
-    sendStageInput({ kind: 'click', x: c.x, y: c.y })
-  }
-
-  const handleViewWheel = (e: React.WheelEvent) => {
-    if (!pauseRequested) return
-    const c = toViewportCoords(e.clientX, e.clientY)
-    if (!c) return
-    sendStageInput({ kind: 'scroll', x: c.x, y: c.y, deltaY: e.deltaY })
-  }
-
-  const handleViewKeyDown = (e: React.KeyboardEvent) => {
-    if (!pauseRequested) return
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // 可打印字符（含中文输入法上屏后的字符）走 insertText
-      sendStageInput({ kind: 'text', text: e.key })
-    } else {
-      sendStageInput({ kind: 'key', key: e.key })
-    }
-  }
-
   // 接管时视口自动获得焦点以接收键盘
   useEffect(() => {
     if (pauseRequested) viewRef.current?.focus()
@@ -193,14 +166,14 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
         <button className="wb-stage-chip" onClick={() => lastFrame && setLightbox(true)}>
           {lastFrame && (
             <span className="wb-stage-chip-mini">
-              <img src={lastFrame} alt="最终画面" />
+              <img src={lastFrame} alt={t('chat.webBridgeStage.finalFrame')} />
             </span>
           )}
-          <span>🌐 浏览器任务完成{statsText ? ` · ${statsText}` : ''}{lastFrame ? ' · 点击查看最终画面' : ''}</span>
+          <span>🌐 {t('chat.webBridgeStage.taskComplete')}{statsText ? ` · ${statsText}` : ''}{lastFrame ? ` · ${t('chat.webBridgeStage.clickToViewFinal')}` : ''}</span>
         </button>
         {lightbox && lastFrame && (
           <div className="wb-lightbox" onClick={() => setLightbox(false)}>
-            <img src={lastFrame} alt="浏览器最终画面" />
+            <img src={lastFrame} alt={t('chat.webBridgeStage.finalFrame')} />
             <div className="wb-lightbox-cap">{pageTitle || url}</div>
           </div>
         )}
@@ -223,9 +196,9 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
           </div>
           <button
             className="wb-st-take"
-            onClick={() => (pauseRequested ? handbackToAI() : requestTakeover())}
+            onClick={() => (pauseRequested ? resumeAI() : pauseAI())}
           >
-            {pauseRequested ? '▶ 交还 AI' : '⏸ 接管'}
+            {pauseRequested ? t('chat.webBridgeStage.resumeAi') : t('chat.webBridgeStage.pauseAi')}
           </button>
         </div>
         {/* 进度条 */}
@@ -235,22 +208,19 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
         {/* 共驾横幅 */}
         {pauseRequested && (
           <div className="wb-st-banner">
-            🖱 共驾中 · AI 已暂停。画面上的点击、滚动、键入都实时作用于浏览器；完成后点「交还 AI」，你的操作会自动告知 AI。
+            {t('chat.webBridgeStage.pausedHint')}
           </div>
         )}
         {/* 视口（接管模式下可点击/滚动/键盘输入，转发真实浏览器） */}
         <div
           ref={viewRef}
           className="wb-st-view"
-          tabIndex={pauseRequested ? 0 : -1}
-          onClick={handleViewClick}
-          onWheel={handleViewWheel}
-          onKeyDown={handleViewKeyDown}
+          tabIndex={-1}
         >
           {frames.length === 0 && (
             <div className="wb-st-empty">
               <div className="wb-st-spin" />
-              <span>{status === 'connected' ? '正在准备浏览器画面…' : '正在连接浏览器服务…'}</span>
+              <span>{status === 'connected' ? t('chat.webBridgeStage.preparingView') : t('chat.webBridgeStage.connectingService')}</span>
             </div>
           )}
           {frames.map((f, i) => (
@@ -278,18 +248,18 @@ export const WebBridgeStage = memo(function WebBridgeStage({ settled, statsText 
           {wbApproval && (
             <div className="wb-st-approve on">
               <div className="wb-ap-card">
-                <div className="wb-ap-title">✋ AI 想要执行浏览器交互操作</div>
+                <div className="wb-ap-title">{t('chat.webBridgeStage.actionApprovalTitle')}</div>
                 <div className="wb-ap-desc">
-                  {wbApproval.impactStatement || wbApproval.reason || '该任务可能包含点击、输入等交互操作，需要人工确认。'}
+                  {wbApproval.impactStatement || wbApproval.reason || t('chat.webBridgeStage.actionApprovalDesc')}
                 </div>
                 <div className="wb-ap-btns">
                   <button className="wb-ap-allow" onClick={() => approveToolCall(wbApproval.toolCallId)}>
-                    允许
+                    {t('chat.webBridgeStage.allow')}
                   </button>
                   <button className="wb-ap-deny" onClick={() => rejectToolCall(wbApproval.toolCallId)}>
-                    拒绝
+                    {t('chat.webBridgeStage.deny')}
                   </button>
-                  <span className="wb-ap-hint">只读操作无需审批 · 交互操作需确认</span>
+                  <span className="wb-ap-hint">{t('chat.webBridgeStage.approvalHint')}</span>
                 </div>
               </div>
             </div>

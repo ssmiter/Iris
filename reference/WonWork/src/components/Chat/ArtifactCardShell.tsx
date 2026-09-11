@@ -19,7 +19,7 @@ export const ArtifactCardShell = memo(function ArtifactCardShell({
   return (
     <div
       className={cn(
-        'mt-2 rounded-xl border border-surface-200 bg-white shadow-sm overflow-hidden',
+        'mt-2 rounded-xl border border-[var(--wf-line)] bg-[var(--wf-card-bg)] shadow-sm overflow-hidden',
         'transition-colors duration-200 motion-reduce:transition-none',
         className
       )}

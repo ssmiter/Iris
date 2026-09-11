@@ -3,11 +3,9 @@ package com.iris.conversation.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.conversation.application.ConversationCommandService;
-import com.iris.conversation.application.CompactionCommandService;
 import com.iris.conversation.application.ConversationEventStreamService;
 import com.iris.conversation.application.ConversationQueryService;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationRequest;
-import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationResponse;
 import com.iris.conversation.domain.ConversationCommands.CreateBranchRequest;
 import com.iris.conversation.domain.ConversationCommands.CreateBranchResponse;
@@ -15,21 +13,12 @@ import com.iris.conversation.domain.ConversationCommands.CreateTurnRequest;
 import com.iris.conversation.domain.ConversationCommands.TurnAcceptance;
 import com.iris.conversation.domain.ConversationViews.ArchiveConversationRequest;
 import com.iris.conversation.domain.ConversationViews.ArchiveConversationResponse;
-import com.iris.conversation.domain.ConversationViews.ContextUsageView;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
 import com.iris.conversation.domain.ConversationViews.ConversationView;
 import com.iris.conversation.domain.ConversationViews.RenameConversationRequest;
 import com.iris.conversation.domain.ConversationViews.RenameConversationResponse;
-import com.iris.agent.model.ModelContextWindowPlanner.ContextBudget;
-import com.iris.agent.run.AgentRunLauncher;
-import com.iris.agent.model.CompactionLauncher;
-import com.iris.agent.model.CompactionRepository;
-import com.iris.conversation.domain.CompactionViews.CompactionView;
-import com.iris.conversation.domain.CompactionViews.CreateCompactionRequest;
-import com.iris.conversation.domain.CompactionViews.CreateCompactionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +38,13 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 
+/**
+ * 会话历史 API（客观能力层，docs/46）。
+ *
+ * <p>只接受/返回结构化事实：会话、分支、Turn 的创建与读取、重命名、归档，
+ * 以及事实事件流。不启动任何模型 Run——前端 Agent Runtime 拿到
+ * TurnAcceptance 后自行驱动 Loop，并通过 /api/chat/proxy 取模型流。</p>
+ */
 @RestController
 @RequestMapping("/api/v1")
 public class ConversationController {
@@ -56,29 +52,17 @@ public class ConversationController {
     private final ConversationEventStreamService eventStream;
     private final ConversationQueryService queries;
     private final ObjectMapper objectMapper;
-    private final AgentRunLauncher agentRuns;
-    private final CompactionCommandService compactionCommands;
-    private final CompactionRepository compactions;
-    private final CompactionLauncher compactionLauncher;
 
     public ConversationController(
             ConversationCommandService commands,
             ConversationEventStreamService eventStream,
             ConversationQueryService queries,
-            ObjectMapper objectMapper,
-            AgentRunLauncher agentRuns,
-            CompactionCommandService compactionCommands,
-            CompactionRepository compactions,
-            CompactionLauncher compactionLauncher
+            ObjectMapper objectMapper
     ) {
         this.commands = commands;
         this.eventStream = eventStream;
         this.queries = queries;
         this.objectMapper = objectMapper;
-        this.agentRuns = agentRuns;
-        this.compactionCommands = compactionCommands;
-        this.compactions = compactions;
-        this.compactionLauncher = compactionLauncher;
     }
 
     @GetMapping("/conversations")
@@ -98,21 +82,6 @@ public class ConversationController {
             @RequestParam(value = "limit", defaultValue = "50") int limit
     ) {
         return queries.view(conversationId, branchId, beforeTurnId, limit);
-    }
-
-    @GetMapping("/conversations/{conversationId}/context-usage")
-    public Mono<ContextUsageView> contextUsage(
-            @PathVariable String conversationId,
-            @RequestParam("branchId") String branchId
-    ) {
-        return queries.contextUsage(conversationId, branchId)
-                .map(usage -> usage.limit() > 0
-                        ? usage
-                        : new ContextUsageView(
-                                usage.used(),
-                                ContextBudget.defaults().maxInputTokens(),
-                                0
-                        ));
     }
 
     @PatchMapping("/conversations/{conversationId}")
@@ -159,6 +128,10 @@ public class ConversationController {
                         .body(response));
     }
 
+    /**
+     * 接受一条用户输入并落库为 Turn 事实。只持久化，不启动模型。
+     * rootRunId 是前端 Runtime 可认领的运行身份占位（client_run 表）。
+     */
     @PostMapping("/conversations/{conversationId}/turns")
     public Mono<ResponseEntity<TurnAcceptance>> createTurn(
             @PathVariable String conversationId,
@@ -169,8 +142,6 @@ public class ConversationController {
                         commands.acceptTurn(conversationId, idempotencyKey, request)
                 )
                 .subscribeOn(Schedulers.boundedElastic())
-                .doOnNext(response ->
-                        agentRuns.launch(response.rootRunId()))
                 .map(response -> ResponseEntity
                         .status(HttpStatus.ACCEPTED)
                         .body(response));
@@ -188,42 +159,9 @@ public class ConversationController {
                         request
                 ))
                 .subscribeOn(Schedulers.boundedElastic())
-                .doOnNext(response ->
-                        agentRuns.launch(response.rootRunId()))
                 .map(response -> ResponseEntity
                         .status(HttpStatus.CREATED)
                         .body(response));
-    }
-
-    @PostMapping("/conversations/{conversationId}/compactions")
-    public Mono<ResponseEntity<CreateCompactionResponse>> createCompaction(
-            @PathVariable String conversationId,
-            @RequestHeader("Idempotency-Key") String idempotencyKey,
-            @Valid @RequestBody CreateCompactionRequest request
-    ) {
-        return Mono.fromCallable(() -> compactionCommands.create(
-                        conversationId,
-                        idempotencyKey,
-                        request
-                ))
-                .subscribeOn(Schedulers.boundedElastic())
-                .doOnNext(response ->
-                        compactionLauncher.launch(response.runId()))
-                .map(response -> ResponseEntity
-                        .status(HttpStatus.ACCEPTED)
-                        .body(response));
-    }
-
-    @GetMapping("/compactions/{runId}")
-    public Mono<CompactionView> compaction(@PathVariable String runId) {
-        return Mono.fromCallable(() -> compactions.view(runId)
-                        .orElseThrow(() -> new ApiProblemException(
-                                HttpStatus.NOT_FOUND,
-                                "compaction_not_found",
-                                "not_found",
-                                "找不到这次上下文整理运行。"
-                        )))
-                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping(

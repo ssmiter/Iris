@@ -1,3 +1,4 @@
+import { normalizeToolCalls } from '@/utils/normalizeToolCalls'
 import type { Message, ToolDefinition, StreamChunk, LocalModelProvider } from '@/types/mescli'
 import type {
   ModelClient,
@@ -6,8 +7,7 @@ import type {
 } from './modelClient'
 import { buildLocalModelMessages } from './messageNormalizer'
 import { createRetryableStream, type StreamAttempt } from './retryingStream'
-import { useUsageStore, buildTodayUsageRecord } from '@/stores/usageStore'
-import { estimateTextTokens } from '@/utils/tokenEstimator'
+import { createUsageTrackingCallbacks } from './usageTracking'
 
 /**
  * 本地模型 ModelClient
@@ -204,7 +204,6 @@ function parseOllamaLine(line: string, callbacks: ModelClientStreamCallbacks): v
     // ignore
   }
 }
-
 function parseOpenAICompatibleLine(line: string, callbacks: ModelClientStreamCallbacks): void {
   if (!line.startsWith('data: ')) return
   const data = line.slice(6)
@@ -226,59 +225,4 @@ function parseOpenAICompatibleLine(line: string, callbacks: ModelClientStreamCal
   } catch {
     // ignore
   }
-}
-
-function normalizeToolCalls(raw: unknown[]): StreamChunk['toolCalls'] {
-  return raw.map((tc: any) => ({
-    id: tc.id || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: 'function' as const,
-    function: {
-      name: tc.function?.name || '',
-      arguments:
-        typeof tc.function?.arguments === 'string'
-          ? tc.function.arguments
-          : JSON.stringify(tc.function?.arguments || {}),
-    },
-  }))
-}
-
-function createUsageTrackingCallbacks(
-  request: ModelClientRequest,
-  userCallbacks: ModelClientStreamCallbacks
-): {
-  callbacks: ModelClientStreamCallbacks
-  reportUsage: () => void
-} {
-  let outputText = ''
-
-  const reportUsage = () => {
-    const inputText = request.messages.map((m) => m.content).join('\n')
-    const tokensIn = estimateTextTokens(inputText)
-    const tokensOut = estimateTextTokens(outputText)
-    if (tokensIn > 0 || tokensOut > 0) {
-      useUsageStore.getState().report(
-        buildTodayUsageRecord({
-          tokensIn,
-          tokensOut,
-          apiCalls: 1,
-        })
-      )
-    }
-  }
-
-  const callbacks: ModelClientStreamCallbacks = {
-    onChunk: (chunk) => {
-      if (chunk.type === 'content') {
-        outputText += chunk.content || ''
-      }
-      userCallbacks.onChunk(chunk)
-    },
-    onError: (error) => userCallbacks.onError(error),
-    onDone: () => {
-      reportUsage()
-      userCallbacks.onDone()
-    },
-  }
-
-  return { callbacks, reportUsage }
 }

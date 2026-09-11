@@ -14,6 +14,8 @@
  */
 
 import { memo, useCallback, useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -24,6 +26,8 @@ import { workspaceApi } from '@/api/client'
 import { downloadFile } from '@/utils/downloadFile'
 import { normalizeMarkdown } from '@/utils/markdownNormalizer'
 import { Portal } from '@/components/common/Portal'
+import { WorkflowGraph } from '@/components/Chat/WorkflowGraph'
+import { workflowApi } from '@/api/workflowApi'
 
 /** 获取用于下载的最终 URL（/api/workspace/download，attachment 强制下载） */
 function getDownloadUrl(artifact: FileCardArtifact): string {
@@ -80,6 +84,7 @@ function getPreviewUrl(artifact: FileCardArtifact): string {
 // ── 大图表 ────────────────────────────────────────────────
 
 function BigChart({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
   const bars = artifact.chartData?.bars
   const title = artifact.chartData?.title
 
@@ -118,12 +123,13 @@ function BigChart({ artifact }: { artifact: FileCardArtifact }) {
     )
   }
 
-  return <div className="wf-pv-note">暂无图表数据</div>
+  return <div className="wf-pv-note">{t('chat.previewPane.noChartData')}</div>
 }
 
 // ── 大表格 ────────────────────────────────────────────────
 
 function BigTable({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
   const { columns, rows } = artifact.tableData || { columns: [], rows: [] as string[][] }
   const [fetchedData, setFetchedData] = useState<{ columns: string[]; rows: string[][] } | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
@@ -146,7 +152,7 @@ function BigTable({ artifact }: { artifact: FileCardArtifact }) {
         // 尝试解析为 CSV
         const lines = text.trim().split('\n')
         if (lines.length === 0) {
-          setFetchError('文件为空')
+          setFetchError(t('chat.previewPane.fileEmpty'))
           return
         }
 
@@ -169,23 +175,23 @@ function BigTable({ artifact }: { artifact: FileCardArtifact }) {
   const displayRows = fetchedData?.rows || rows
 
   if (isFetching) {
-    return <div className="wf-pv-note">加载表格数据中...</div>
+    return <div className="wf-pv-note">{t('chat.previewPane.loadingTable')}</div>
   }
 
   if (fetchError) {
     return (
       <div className="wf-pv-note">
-        表格数据加载失败：{fetchError}
+        {t('chat.previewPane.tableLoadFailed', { error: fetchError })}
         <br />
-        <a href={getDownloadUrl(artifact)} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>
-          ⤓ 直接下载查看
+        <a href={getDownloadUrl(artifact)} target="_blank" rel="noopener noreferrer" className="wf-pv-link">
+          ⤓ {t('chat.previewPane.downloadToView')}
         </a>
       </div>
     )
   }
 
   if (displayColumns.length === 0) {
-    return <div className="wf-pv-note">暂无表格数据</div>
+    return <div className="wf-pv-note">{t('chat.previewPane.noTableData')}</div>
   }
 
   return (
@@ -205,6 +211,7 @@ function BigTable({ artifact }: { artifact: FileCardArtifact }) {
 // ── 文档视图 ──────────────────────────────────────────────
 
 function DocView({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
   // docHtml（来自后端 Markdown→HTML 预渲染）优先
   if (artifact.docHtml) {
     return <div className="wf-doc-view" dangerouslySetInnerHTML={{ __html: artifact.docHtml }} />
@@ -218,13 +225,14 @@ function DocView({ artifact }: { artifact: FileCardArtifact }) {
 
   return (
     <div className="wf-doc-view">
-      <p>{artifact.caption || '文档内容待加载'}</p>
+      <p>{artifact.caption || t('chat.previewPane.docPending')}</p>
     </div>
   )
 }
 
 /** 轻量 fetch + ReactMarkdown 渲染，带 loading/error 态 */
 function DocFetchView({ url, caption }: { url: string; caption: string }) {
+  const { t } = useTranslation()
   const [md, setMd] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -243,10 +251,10 @@ function DocFetchView({ url, caption }: { url: string; caption: string }) {
   if (err) {
     return (
       <div className="wf-doc-view">
-        <p className="wf-pv-note">文档加载失败：{err}</p>
+        <p className="wf-pv-note">{t('chat.previewPane.docLoadFailed', { error: err })}</p>
         <p style={{ marginTop: 8 }}>
-          <a href={url} target="_blank" rel="noopener noreferrer" className="wf-pv-act" style={{ color: '#2563eb' }}>
-            ⤓ 直接下载查看
+          <a href={url} target="_blank" rel="noopener noreferrer" className="wf-pv-act wf-pv-link">
+            ⤓ {t('chat.previewPane.downloadToView')}
           </a>
         </p>
       </div>
@@ -256,7 +264,7 @@ function DocFetchView({ url, caption }: { url: string; caption: string }) {
   if (md === null) {
     return (
       <div className="wf-doc-view">
-        <p className="wf-pv-note">加载中...</p>
+        <p className="wf-pv-note">{t('chat.previewPane.loading')}</p>
       </div>
     )
   }
@@ -264,7 +272,7 @@ function DocFetchView({ url, caption }: { url: string; caption: string }) {
   return (
     <div className="wf-doc-view">
       {caption && <p className="wf-doc-caption">{caption}</p>}
-      <div className="wf-prose">
+      <div className="wf-prose wf-md">
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
           {normalizeMarkdown(md)}
         </ReactMarkdown>
@@ -275,7 +283,8 @@ function DocFetchView({ url, caption }: { url: string; caption: string }) {
 
 // ── 图片灯箱（点击放大到页面中央查看，Esc/点击空白关闭） ──────────────
 
-function ZoomableImage({ url, alt, caption }: { url: string; alt: string; caption?: string }) {
+export function ZoomableImage({ url, alt, caption }: { url: string; alt: string; caption?: string }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
@@ -289,18 +298,18 @@ function ZoomableImage({ url, alt, caption }: { url: string; alt: string; captio
 
   return (
     <>
-      <div className="wf-pv-image wf-pv-image-zoomable" onClick={() => setOpen(true)} title="点击放大查看">
+      <div className="wf-pv-image wf-pv-image-zoomable" onClick={() => setOpen(true)} title={t('chat.previewPane.clickToZoom')}>
         <img
           src={url}
           alt={alt}
           style={{ maxWidth: '100%', borderRadius: 8 }}
         />
-        <div className="wf-pv-zoom-hint">⤢ 点击放大</div>
+        <div className="wf-pv-zoom-hint">⤢ {t('chat.previewPane.zoomHint')}</div>
       </div>
       {open && (
         <Portal>
           <div className="wf-lightbox" onClick={() => setOpen(false)}>
-            <button className="wf-lightbox-close" aria-label="关闭" onClick={() => setOpen(false)}>✕</button>
+            <button className="wf-lightbox-close" aria-label={t('chat.previewPane.close')} onClick={() => setOpen(false)}>✕</button>
             <img
               src={url}
               alt={alt}
@@ -328,9 +337,160 @@ function ImageView({ artifact }: { artifact: FileCardArtifact }) {
   )
 }
 
+// ── Office 预览（xlsx → SheetJS 表格；docx → mammoth HTML；pptx → 下载型） ──
+
+/** 按扩展名识别 Office 类型——优先于 kind 路由，防止 docx 被当文本抓取出现乱码 */
+function officeTypeOf(fileName: string): 'xlsx' | 'docx' | 'pptx' | null {
+  if (/\.(xlsx|xls)$/i.test(fileName)) return 'xlsx'
+  if (/\.docx$/i.test(fileName)) return 'docx'
+  if (/\.(pptx|ppt)$/i.test(fileName)) return 'pptx'
+  return null
+}
+
+/** 拉取文件二进制（arrayBuffer），供 SheetJS / mammoth 解析 */
+async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return r.arrayBuffer()
+}
+
+function OfficeFetchError({ artifact, error }: { artifact: FileCardArtifact; error: string }) {
+  const { t } = useTranslation()
+  return (
+    <div className="wf-pv-note">
+      {t('chat.previewPane.previewParseFailed', { error })}
+      <br />
+      <a href={getDownloadUrl(artifact)} target="_blank" rel="noopener noreferrer" className="wf-pv-link">
+        ⤓ {t('chat.previewPane.openInOffice')}
+      </a>
+    </div>
+  )
+}
+
+/** Excel 预览：首个工作表渲染为表格（前 100 行），多表给出提示 */
+function ExcelPreview({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'error'; error: string }
+    | { status: 'done'; columns: string[]; rows: string[][]; totalRows: number; sheetName: string; sheetCount: number }
+  >({ status: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    const url = getPreviewUrl(artifact)
+    ;(async () => {
+      try {
+        const buf = await fetchArrayBuffer(url)
+        const XLSX = await import('xlsx')
+        const wb = XLSX.read(buf, { type: 'array' })
+        const sheetName = wb.SheetNames[0]
+        const sheet = wb.Sheets[sheetName]
+        // header:1 → 二维数组；raw:false 让单元格按显示文本取值（日期/数字格式友好）
+        const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+          header: 1,
+          raw: false,
+          defval: '',
+        })
+        const MAX_COLS = 30
+        const MAX_ROWS = 100
+        const columns = (grid[0] ?? []).slice(0, MAX_COLS).map((c, i) => String(c ?? '') || t('chat.previewPane.columnN', { n: i + 1 }))
+        const dataRows = grid
+          .slice(1)
+          .filter((r) => r.some((c) => c !== '' && c != null))
+        const rows = dataRows
+          .slice(0, MAX_ROWS)
+          .map((r) => columns.map((_, ci) => String(r[ci] ?? '')))
+        if (!cancelled) {
+          setState({
+            status: 'done',
+            columns,
+            rows,
+            totalRows: dataRows.length,
+            sheetName,
+            sheetCount: wb.SheetNames.length,
+          })
+        }
+      } catch (e) {
+        if (!cancelled) setState({ status: 'error', error: e instanceof Error ? e.message : String(e) })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [artifact])
+
+  if (state.status === 'loading') return <div className="wf-pv-note">{t('chat.previewPane.parsingExcel')}</div>
+  if (state.status === 'error') return <OfficeFetchError artifact={artifact} error={state.error} />
+
+  const sheetHint = state.sheetCount > 1
+    ? t('chat.previewPane.sheetCountHint', { count: state.sheetCount })
+    : ''
+  const rowsHint = state.totalRows > state.rows.length
+    ? t('chat.previewPane.showingRows', { shown: state.rows.length, total: state.totalRows })
+    : t('chat.previewPane.totalRows', { count: state.totalRows })
+
+  return (
+    <div>
+      <div className="wf-pv-note" style={{ marginBottom: 6 }}>
+        {t('chat.previewPane.sheetName', { name: state.sheetName })}{sheetHint}{rowsHint}
+      </div>
+      <table className="wf-big-table">
+        <thead>
+          <tr>{state.columns.map((c, i) => <th key={i}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {state.rows.map((row, ri) => (
+            <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Word 预览：mammoth 转 HTML 直接渲染（docx 是二进制，绝不能按文本抓取——否则满屏乱码） */
+function DocxPreview({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
+  const [state, setState] = useState<
+    { status: 'loading' } | { status: 'error'; error: string } | { status: 'done'; html: string }
+  >({ status: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    const url = getPreviewUrl(artifact)
+    ;(async () => {
+      try {
+        const buf = await fetchArrayBuffer(url)
+        const mammoth = await import('mammoth')
+        const result = await mammoth.convertToHtml({ arrayBuffer: buf })
+        if (!cancelled) setState({ status: 'done', html: result.value })
+      } catch (e) {
+        if (!cancelled) setState({ status: 'error', error: e instanceof Error ? e.message : String(e) })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [artifact])
+
+  if (state.status === 'loading') return <div className="wf-pv-note">{t('chat.previewPane.parsingWord')}</div>
+  if (state.status === 'error') return <OfficeFetchError artifact={artifact} error={state.error} />
+  return <div className="wf-doc-view wf-prose wf-md" dangerouslySetInnerHTML={{ __html: state.html }} />
+}
+
+/** 下载型视图：暂不支持在线预览的格式（pptx 等），明确告知而不是显示乱码或空白 */
+function DownloadOnlyView({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
+  return (
+    <div className="wf-pv-unknown">
+      <div className="wf-pv-icon">📄</div>
+      <p>{artifact.fileName}</p>
+      <p className="wf-pv-note">{t('chat.previewPane.unsupportedFormat')}</p>
+    </div>
+  )
+}
+
 // ── 未知类型 ──────────────────────────────────────────────
 
 function UnknownView({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
   // 如果 MIME 是图片或文件扩展名是图片格式，用 previewUrl 直接展示
   const isImageLike =
     artifact.mimeType?.startsWith('image/') ||
@@ -365,9 +525,47 @@ function UnknownView({ artifact }: { artifact: FileCardArtifact }) {
     <div className="wf-pv-unknown">
       <div className="wf-pv-icon">📄</div>
       <p>{artifact.fileName}</p>
-      <p className="wf-pv-note">{artifact.mimeType || '未知类型'}</p>
+      <p className="wf-pv-note">{artifact.mimeType || t('chat.previewPane.unknownType')}</p>
     </div>
   )
+}
+
+// ── 工作流视图（WorkFlow JSON → 地铁图投影） ─────────────────────
+
+function WorkflowView({ artifact }: { artifact: FileCardArtifact }) {
+  const { t } = useTranslation()
+  const [hydrated, setHydrated] = useState<{ doc: import('@/types/workflow').WorkflowDoc; errors: string[] } | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  // 会话水合路径只有索引行（无内嵌 doc）：按 id 从工作流目录重读
+  useEffect(() => {
+    if (artifact.workflowData || hydrated || loadFailed) return
+    const id = artifact.fileName.replace(/\.json$/i, '')
+    let cancelled = false
+    workflowApi
+      .readWorkflow(id)
+      .then((doc) => {
+        if (cancelled) return
+        if (doc) setHydrated({ doc, errors: [] })
+        else setLoadFailed(true)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [artifact, hydrated, loadFailed])
+
+  const data = artifact.workflowData ?? hydrated
+  if (!data) {
+    return (
+      <div className="wf-pv-note">
+        {loadFailed ? t('chat.previewPane.workflowLoadFailed') : t('chat.previewPane.loading')}
+      </div>
+    )
+  }
+  return <WorkflowGraph doc={data.doc} errors={data.errors} />
 }
 
 // ── PreviewPane ───────────────────────────────────────────
@@ -377,7 +575,14 @@ export const PreviewPane = memo(function PreviewPane({
 }: {
   artifact: FileCardArtifact
 }) {
+  const { t } = useTranslation()
   const open = useArtifactDockStore((s) => s.open)
+  const removeArtifact = useArtifactDockStore((s) => s.removeArtifact)
+
+  // 从坞中移除：移除当前预览产物（自然关预览，墓碑防水合复活）
+  const handleRemoveFromDock = useCallback(() => {
+    removeArtifact(artifact.id)
+  }, [removeArtifact, artifact.id])
 
   const handleDownload = useCallback(() => {
     const url = getDownloadUrl(artifact)
@@ -388,14 +593,28 @@ export const PreviewPane = memo(function PreviewPane({
 
   const handleCopyPath = useCallback(() => {
     navigator.clipboard?.writeText(artifact.path)
-  }, [artifact.path])
+      .then(() => toast.success(t('chat.workspaceFilesPanel.copied')))
+      .catch(() => toast.error(t('chat.workspaceFilesPanel.copyFailed')))
+  }, [artifact.path, t])
 
   const handleLocate = useCallback(() => {
     open(artifact.id, 'files')
   }, [artifact.id, open])
 
   const renderContent = () => {
+    // Office 二进制按扩展名优先路由：xlsx/docx 有专用解析器，pptx 等走下载型；
+    // 不能落到 doc/unknown 的文本抓取路径（二进制当文本渲染 = 乱码）
+    switch (officeTypeOf(artifact.fileName)) {
+      case 'xlsx':
+        return <ExcelPreview artifact={artifact} />
+      case 'docx':
+        return <DocxPreview artifact={artifact} />
+      case 'pptx':
+        return <DownloadOnlyView artifact={artifact} />
+    }
     switch (artifact.kind) {
+      case 'workflow':
+        return <WorkflowView artifact={artifact} />
       case 'chart':
         return <BigChart artifact={artifact} />
       case 'table':
@@ -414,31 +633,41 @@ export const PreviewPane = memo(function PreviewPane({
   return (
     <div className="wf-pv-wrap">
       {/* Head */}
-      <div className="wf-pv-head">
+      <div className="wf-pv-head relative">
         <span
           className="wf-pv-type"
           style={{ color: artifact.accent, background: artifact.accentBg }}
         >
           {typeLabel}
         </span>
-        <div className="wf-pv-caption">{artifact.caption}</div>
+        <div className="wf-pv-caption pr-9">{artifact.caption}</div>
         <div className="wf-pv-meta">
           {artifact.fileName}
           {artifact.size && <> · {artifact.size}</>}
           {artifact.path && <> · {artifact.path}</>}
         </div>
+        <button
+          className="wf-fabtn wf-press absolute right-3 top-3"
+          onClick={handleRemoveFromDock}
+          title={t('chat.board.removeProd')}
+          aria-label={t('chat.board.removeProd')}
+        >
+          ✕
+        </button>
       </div>
 
-      {/* Actions */}
+      {/* Actions（工作流无下载——不走 workspace 下载链） */}
       <div className="wf-pv-actions">
-        <button className="wf-pv-act" onClick={handleDownload}>
-          ⤓ 下载
-        </button>
+        {artifact.kind !== 'workflow' && (
+          <button className="wf-pv-act" onClick={handleDownload}>
+            ⤓ {t('chat.fileActions.download')}
+          </button>
+        )}
         <button className="wf-pv-act" onClick={handleCopyPath}>
-          ⧉ 复制路径
+          ⧉ {t('chat.fileActions.copyPath')}
         </button>
         <button className="wf-pv-act" onClick={handleLocate}>
-          ⌖ 在工作区中定位
+          ⌖ {t('chat.fileActions.locateInWorkspace')}
         </button>
       </div>
 

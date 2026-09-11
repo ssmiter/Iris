@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { websiteCloudApi } from '@/api/websiteCloudApi'
 import { useRuntimeConfigStore } from '@/stores/runtimeConfigStore'
 import type { CloudPlan, CloudPlanListItem, TokenHubKeyMeta } from '@/types/tokenhub'
+import { formatTokenQuota } from '@/utils/tokenQuota'
 import {
   CreditCard,
   Loader2,
@@ -67,6 +68,16 @@ export function PaymentSettingsView() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // 套餐名/描述：后端与兜底数据都是中文，展示层按当前语言翻译；未知套餐原样透传
+  const planName = useCallback(
+    (key: string, name: string) => t(`settings.payment.plans.${key}.name`, { defaultValue: name }),
+    [t]
+  )
+  const planDesc = useCallback(
+    (key: string, desc: string) => t(`settings.payment.plans.${key}.description`, { defaultValue: desc }),
+    [t]
+  )
+
   const loadStatus = useCallback(async () => {
     setIsLoading(true)
     setError(null)
@@ -95,17 +106,17 @@ export function PaymentSettingsView() {
   const pricingUrl = `${websiteBaseUrl.replace(/\/$/, '')}/pricing.html`
 
   return (
-    <div className="bg-white border border-surface-200 rounded-xl p-5 space-y-5">
+    <div className="bg-[var(--wf-card-bg)] border border-[var(--wf-line)] rounded-xl p-5 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <CreditCard size={16} className="text-surface-500" />
-          <h3 className="text-sm font-semibold text-surface-700">{t('settings.payment.title')}</h3>
+          <CreditCard size={16} className="text-[var(--wf-mut)]" />
+          <h3 className="text-sm font-semibold text-[var(--wf-sub)]">{t('settings.payment.title')}</h3>
         </div>
         <button
           onClick={loadStatus}
           disabled={isLoading}
-          className="p-1.5 rounded-lg text-surface-400 hover:bg-surface-100 transition-colors disabled:opacity-50"
+          className="p-1.5 rounded-lg text-[var(--wf-faint)] hover:bg-[var(--wf-hover)] transition-colors disabled:opacity-50"
           title={t('settings.payment.refresh')}
         >
           <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
@@ -113,13 +124,13 @@ export function PaymentSettingsView() {
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-          <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="p-3 bg-[var(--wf-err-bg)] border border-[var(--wf-err-line)] rounded-lg flex items-start gap-2">
+          <AlertCircle size={16} className="text-[var(--wf-err-ink)] flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm text-[var(--wf-err-ink)]">{error}</p>
             <button
               onClick={() => setError(null)}
-              className="text-xs text-red-600 underline mt-1 hover:text-red-800"
+              className="text-xs text-[var(--wf-err-ink)] underline mt-1 hover:text-[var(--wf-err-ink)]"
             >
               {t('settings.payment.dismiss')}
             </button>
@@ -128,65 +139,68 @@ export function PaymentSettingsView() {
       )}
 
       {/* 当前套餐状态 */}
-      <div className="p-4 bg-surface-50 border border-surface-200 rounded-lg space-y-3">
+      <div className="p-4 bg-[var(--wf-bg)] border border-[var(--wf-line)] rounded-lg space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Cloud size={16} className="text-primary-500" />
-            <span className="text-sm font-medium text-surface-700">
+            <span className="text-sm font-medium text-[var(--wf-sub)]">
               {t('settings.payment.currentPlan')}
             </span>
           </div>
           {isLoading && !plan ? (
-            <Loader2 size={14} className="animate-spin text-surface-400" />
+            <Loader2 size={14} className="animate-spin text-[var(--wf-faint)]" />
           ) : (
             <span
               className={cn(
                 'text-xs px-2 py-0.5 rounded-full font-medium',
                 plan && plan.key !== 'free'
                   ? 'bg-primary-100 text-primary-700'
-                  : 'bg-surface-200 text-surface-600'
+                  : 'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)]'
               )}
             >
-              {plan?.name ?? t('settings.payment.noPlan')}
+              {plan ? planName(plan.key, plan.name) : t('settings.payment.noPlan')}
             </span>
           )}
         </div>
 
         {plan?.tokenHub && (
-          <div className="space-y-1 text-sm text-surface-600">
-            <p className="text-xs text-surface-500">
+          <div className="space-y-1 text-sm text-[var(--wf-sub)]">
+            <p className="text-xs text-[var(--wf-mut)]">
               {t('settings.payment.model', { model: plan.tokenHub.model })}
               {' · '}
               {t('settings.payment.monthlyQuota', {
-                count: plan.tokenHub.monthlyTokenQuota.toLocaleString(),
+                count: formatTokenQuota(
+                  plan.tokenHub.monthlyTokenQuota,
+                  t('settings.quota.unlimited'),
+                ),
               })}
             </p>
             <div className="flex items-center gap-2">
-              <KeyRound size={14} className="text-surface-400" />
+              <KeyRound size={14} className="text-[var(--wf-faint)]" />
               {keyMeta ? (
                 <>
                   <code className="font-mono text-xs">{keyMeta.keyHint}</code>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                  <span className="wf-badge-ok">
                     {t('settings.payment.keyActive')}
                   </span>
                 </>
               ) : (
-                <span className="text-xs text-surface-500">{t('settings.payment.keyPending')}</span>
+                <span className="text-xs text-[var(--wf-mut)]">{t('settings.payment.keyPending')}</span>
               )}
             </div>
           </div>
         )}
 
         {plan && !plan.tokenHub && plan.key !== 'free' && (
-          <p className="text-xs text-amber-600">{t('settings.payment.provisioning')}</p>
+          <p className="text-xs text-[var(--wf-warn-ink)]">{t('settings.payment.provisioning')}</p>
         )}
       </div>
 
       {/* 可购套餐 */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <Package size={14} className="text-surface-400" />
-          <span className="text-xs font-medium text-surface-500">
+          <Package size={14} className="text-[var(--wf-faint)]" />
+          <span className="text-xs font-medium text-[var(--wf-mut)]">
             {t('settings.payment.availablePlans')}
           </span>
         </div>
@@ -198,21 +212,21 @@ export function PaymentSettingsView() {
                 key={p.key}
                 className={cn(
                   'p-3 border rounded-lg',
-                  isCurrent ? 'border-primary-300 bg-primary-50' : 'border-surface-200 bg-white'
+                  isCurrent ? 'border-primary-300 bg-primary-50' : 'border-[var(--wf-line)] bg-[var(--wf-card-bg)]'
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-surface-700">{p.name}</span>
+                  <span className="text-sm font-medium text-[var(--wf-sub)]">{planName(p.key, p.name)}</span>
                   <span className="text-sm font-semibold text-primary-600">
                     ¥{p.price}
-                    <span className="text-xs font-normal text-surface-400">
+                    <span className="text-xs font-normal text-[var(--wf-faint)]">
                       {t('settings.payment.perMonth')}
                     </span>
                   </span>
                 </div>
-                {p.description && <p className="text-xs text-surface-500 mt-1">{p.description}</p>}
+                {p.description && <p className="text-xs text-[var(--wf-mut)] mt-1">{planDesc(p.key, p.description)}</p>}
                 {p.monthlyTokenQuota != null && (
-                  <p className="text-xs text-surface-500 mt-1">
+                  <p className="text-xs text-[var(--wf-mut)] mt-1">
                     {p.monthlyTokenQuota.toLocaleString()} tokens
                     {t('settings.payment.perMonth')}
                   </p>
@@ -237,7 +251,7 @@ export function PaymentSettingsView() {
           <ExternalLink size={14} />
           {t('settings.payment.buyAtWebsite')}
         </a>
-        <p className="text-xs text-surface-400 text-center">{t('settings.payment.buyHint')}</p>
+        <p className="text-xs text-[var(--wf-faint)] text-center">{t('settings.payment.buyHint')}</p>
       </div>
     </div>
   )

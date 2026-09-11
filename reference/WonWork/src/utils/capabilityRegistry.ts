@@ -52,7 +52,7 @@ const ALL_CAPABILITIES: CapabilityItem[] = [
   {
     id: 'webbridge',
     name: '浏览器自动化',
-    description: '通过 WebBridge 自动化浏览器操作：访问网页、提取数据、填写表单、截图、执行自动化测试等。',
+    description: '操作 WonWork 浏览器：访问网页、提取数据、填写表单、截图、执行自动化测试等。',
     category: 'webbridge',
     requires: ['webbridge_connected'],
   },
@@ -144,7 +144,7 @@ export function buildCapabilityRegistry(input: BuildRegistryInput): CapabilityRe
     if (cap.id === 'webbridge') {
       if (!webBridgeIsAvailable) {
         isAvailable = false
-        reason = `WebBridge 当前未连接（状态：${webBridgeStatus}），无法执行浏览器自动化。`
+        reason = `浏览器当前未连接（状态：${webBridgeStatus}），无法执行网页操作。`
       }
     }
 

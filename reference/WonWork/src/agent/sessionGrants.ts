@@ -1,16 +1,11 @@
 /**
- * 会话级权限授权记忆（打磨任务2 S4 拍板项 D3）。
- *
- * 典型用途：/project 首次写入确认——与权限模式正交（bypass 全部自动也不例外），
- * 用户在会话内首次确认后授予 project-write，后续 /project 写入直接放行。
+ * 会话级权限授权记忆。
  *
  * 独立成模块而非放进 store：chatStore 与 agenticLoop 互相引用，
  * 授权记忆放这里双方都能 import 而不产生循环依赖。
  * 不持久化——刷新页面后需重新确认（会话语义 = 本次打开的对话）。
+ * 2026-09-01 P0-7：/project 轨退役后暂无在用的授权键，机制保留给未来的会话级授权。
  */
-
-/** /project 写入授权键 */
-export const PROJECT_WRITE_GRANT = 'project-write'
 
 const grants = new Map<string, Set<string>>()
 

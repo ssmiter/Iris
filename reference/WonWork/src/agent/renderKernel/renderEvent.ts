@@ -56,6 +56,8 @@ export interface AttentionPayload {
   toolName?: string
   prompt?: string
   options?: string[]
+  /** 与 options 平行的可选描述数组（chip tooltip / 副行小字） */
+  optionHints?: string[]
   toolCallId?: string
 }
 
@@ -70,7 +72,7 @@ export type RenderEvent =
   | { seq: number; ts: number; turnId: string; type: 'node.error'; id: string; error: ErrorInfo }
   | { seq: number; ts: number; turnId: string; type: 'artifact.present'; artifact: ArtifactPayload; roundIndex: number }
   | { seq: number; ts: number; turnId: string; type: 'attention.request'; attention: AttentionPayload }
-  | { seq: number; ts: number; turnId: string; type: 'attention.resolve'; id: string; result: 'resolved' | 'skipped' | 'timeout'; value?: string }
+  | { seq: number; ts: number; turnId: string; type: 'attention.resolve'; id: string; result: 'resolved' | 'skipped' | 'timeout' | 'cancelled'; value?: string }
   | { seq: number; ts: number; turnId: string; type: 'answer.delta'; roundIndex: number; text: string }
   | { seq: number; ts: number; turnId: string; type: 'answer.done'; roundIndex: number }
   | { seq: number; ts: number; turnId: string; type: 'answer.error'; roundIndex: number; error: ErrorInfo }
@@ -124,7 +126,7 @@ export const eventFactory = {
     return { type: 'attention.request', attention }
   },
 
-  attentionResolve(id: string, result: 'resolved' | 'skipped' | 'timeout', value?: string): RawRenderEvent {
+  attentionResolve(id: string, result: 'resolved' | 'skipped' | 'timeout' | 'cancelled', value?: string): RawRenderEvent {
     return { type: 'attention.resolve', id, result, value }
   },
 

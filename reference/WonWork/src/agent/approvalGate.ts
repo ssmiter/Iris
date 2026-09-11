@@ -22,30 +22,47 @@ export interface ApprovalDecision {
   reason?: string
 }
 
+/**
+ * 审批终态（2026-07-31）：此前 requestApproval 只回 boolean，resolve 携带的
+ * reason（用户拒绝理由 / '请求已超时失效' / '用户中断'）在 await 处被丢弃，
+ * 导致超时与中断在工具结果里被一律误标为"用户拒绝"。
+ */
+export interface ApprovalOutcome {
+  approved: boolean
+  reason?: string
+}
+
 export interface ApprovalGateCallbacks {
   onApprovalRequested: (request: ApprovalRequest, resolve: ApprovalResolve) => void
 }
 
 export interface ApprovalGate {
-  requestApproval(request: ApprovalRequest): Promise<boolean>
+  requestApproval(request: ApprovalRequest): Promise<ApprovalOutcome>
   resolve(toolCallId: string, approved: boolean, reason?: string): void
   abort(): void
   getDecisions(): ApprovalDecision[]
 }
 
 export function createApprovalGate(callbacks: ApprovalGateCallbacks): ApprovalGate {
-  const pending = new Map<string, { resolve: ApprovalResolve; rejected: boolean }>()
+  const pending = new Map<string, { resolve: (outcome: ApprovalOutcome) => void; rejected: boolean }>()
   const decisions: ApprovalDecision[] = []
-  // 同一 toolCallId 的终态决策（含拒绝）。重复请求必须复用终态，
-  // 否则"并发重复审批 + 用户拒绝"会让第二路请求错误放行。
-  const settled = new Map<string, boolean>()
+  // 同一 toolCallId 的终态决策（含拒绝理由）。重复请求必须复用终态，
+  // 否则“并发重复审批 + 用户拒绝”会让第二路请求错误放行。
+  const settled = new Map<string, ApprovalOutcome>()
 
   function recordDecision(toolCallId: string, approved: boolean, reason?: string): void {
     if (!approved) return
     decisions.push({ toolCallId, approved: true, reason })
   }
 
-  function requestApproval(request: ApprovalRequest): Promise<boolean> {
+  function settle(toolCallId: string, approved: boolean, reason?: string): ApprovalOutcome {
+    const outcome: ApprovalOutcome = { approved, reason }
+    settled.set(toolCallId, outcome)
+    recordDecision(toolCallId, approved, reason)
+    return outcome
+  }
+
+  function requestApproval(request: ApprovalRequest): Promise<ApprovalOutcome> {
     const prior = settled.get(request.toolCallId)
     if (prior !== undefined) {
       return Promise.resolve(prior)
@@ -61,7 +78,7 @@ export function createApprovalGate(callbacks: ApprovalGateCallbacks): ApprovalGa
             return
           }
           if (!pending.has(request.toolCallId)) {
-            resolve(false)
+            resolve({ approved: false })
             return
           }
           setTimeout(check, 50)
@@ -70,7 +87,7 @@ export function createApprovalGate(callbacks: ApprovalGateCallbacks): ApprovalGa
       })
     }
 
-    return new Promise<boolean>((resolve) => {
+    return new Promise<ApprovalOutcome>((resolve) => {
       pending.set(request.toolCallId, { resolve, rejected: false })
       callbacks.onApprovalRequested(request, (approved, reason) => {
         const entry = pending.get(request.toolCallId)
@@ -78,9 +95,7 @@ export function createApprovalGate(callbacks: ApprovalGateCallbacks): ApprovalGa
         if (!approved) {
           entry.rejected = true
         }
-        settled.set(request.toolCallId, approved)
-        recordDecision(request.toolCallId, approved, reason)
-        entry.resolve(approved, reason)
+        entry.resolve(settle(request.toolCallId, approved, reason))
         pending.delete(request.toolCallId)
       })
     })
@@ -92,17 +107,14 @@ export function createApprovalGate(callbacks: ApprovalGateCallbacks): ApprovalGa
     if (!approved) {
       entry.rejected = true
     }
-    settled.set(toolCallId, approved)
-    recordDecision(toolCallId, approved, reason)
-    entry.resolve(approved, reason)
+    entry.resolve(settle(toolCallId, approved, reason))
     pending.delete(toolCallId)
   }
 
   function abort(): void {
     for (const [toolCallId, entry] of pending) {
       entry.rejected = true
-      settled.set(toolCallId, false)
-      entry.resolve(false, '用户中断')
+      entry.resolve(settle(toolCallId, false, '用户中断'))
       pending.delete(toolCallId)
     }
   }

@@ -1,11 +1,5 @@
 package com.iris.conversation.application;
 
-import com.iris.agent.model.ModelAttemptRepository;
-import com.iris.agent.model.ModelAttemptRepository.RoundToolCall;
-import com.iris.agent.run.AgentRunLauncher;
-import com.iris.agent.run.ToolProjectionService;
-import com.iris.agent.pipeline.PipelineRunLauncher;
-import com.iris.agent.pipeline.PipelineRunRepository;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ApprovalCommands.ApprovalDecisionResponse;
 import com.iris.conversation.domain.ApprovalCommands.DecideApprovalRequest;
@@ -32,30 +26,15 @@ import java.util.Map;
 public class ApprovalCommandService {
     private final ToolRuntime runtime;
     private final ToolRuntimeRepository toolFacts;
-    private final ModelAttemptRepository modelFacts;
-    private final ToolProjectionService projections;
-    private final AgentRunLauncher runs;
-    private final PipelineRunLauncher pipelineRuns;
-    private final PipelineRunRepository pipelines;
     private final WorkspaceService workspace;
 
     public ApprovalCommandService(
             ToolRuntime runtime,
             ToolRuntimeRepository toolFacts,
-            ModelAttemptRepository modelFacts,
-            ToolProjectionService projections,
-            AgentRunLauncher runs,
-            PipelineRunLauncher pipelineRuns,
-            PipelineRunRepository pipelines,
             WorkspaceService workspace
     ) {
         this.runtime = runtime;
         this.toolFacts = toolFacts;
-        this.modelFacts = modelFacts;
-        this.projections = projections;
-        this.runs = runs;
-        this.pipelineRuns = pipelineRuns;
-        this.pipelines = pipelines;
         this.workspace = workspace;
     }
 
@@ -91,18 +70,6 @@ public class ApprovalCommandService {
                         "找不到这条审批请求。",
                         Map.of("approvalId", approvalId)
                 ));
-        RoundToolCall call = execution.roundId() == null
-                ? null : modelFacts
-                        .roundToolCalls(execution.roundId())
-                        .stream()
-                        .filter(candidate -> candidate.toolCallId().equals(
-                                execution.toolCallId()
-                        ))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Approval has no canonical Model ToolCall"
-                        ));
-
         RuntimeResult result;
         try {
             result = runtime.decideApproval(
@@ -127,26 +94,9 @@ public class ApprovalCommandService {
             throw mapRuntimeProblem(exception, approvalId);
         }
 
-        boolean resumeRequested;
-        if (execution.roundId() == null) {
-            String stepRunId = pipelines
-                    .waitingPipelineForExecution(result.executionId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Approval has no waiting Pipeline step"
-                    ));
-            projections.projectPipeline(
-                    execution.runId(),
-                    stepRunId,
-                    com.fasterxml.jackson.databind.node.NullNode.getInstance(),
-                    result
-            );
-            resumeRequested = result.terminal()
-                    && pipelineRuns.launch(execution.runId());
-        } else {
-            projections.project(execution.roundId(), call, result);
-            resumeRequested = result.terminal()
-                    && runs.resume(execution.runId());
-        }
+        // 客观能力层：审批只推进工具执行事实，不唤醒任何后端 Run。
+        // 前端 Runtime 轮询/订阅执行终态后自行决定下一步。
+        boolean resumeRequested = false;
         return new ApprovalDecisionResponse(
                 approvalId,
                 result.executionId(),

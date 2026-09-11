@@ -1,12 +1,8 @@
 /**
- * projectedBuilder — 事件驱动 RenderNodeBuilder
+ * projectedBuilder — 事件驱动 RenderNodeBuilder（2026-07-31 起为唯一 builder）
  *
- * 实现与 createRenderNodeBuilder() 完全相同的 RenderNodeBuilder 接口，
- * 但内部所有节点变更都通过 EventLog.append() 记录事件，
+ * 所有节点变更都通过 EventLog.append() 记录事件，
  * nodes 通过 TurnProjector.project() 纯函数投影得到。
- *
- * 这是 Phase 1 的兼容层——agenticLoop.ts 只需切换 builder 工厂即可获得
- * 事件溯源能力，其他代码零改动。
  *
  * 设计依据：wonwork-waterfall-final-state-plan-2026-07-18.md §四 Phase 1
  */
@@ -23,11 +19,57 @@ import type {
   AttentionSubtype,
   ArtifactType,
 } from '@/types/chat'
-import type { RenderNodeBuilder } from '@/agent/renderNodeBuilder'
 import { EventLog } from './eventLog'
 import { eventFactory, type RenderEvent } from './renderEvent'
 import { project, type TurnState } from './turnProjector'
 import { plan, applyOps, type RenderOp } from './batchPlanner'
+
+// ── builder 接口（单轨化后唯一定义点；旧 renderNodeBuilder 的闭包实现已退役） ──
+
+export interface RenderNodeBuilder {
+  /** 当前 turn 的所有节点（有序） */
+  readonly nodes: RenderNode[]
+
+  // Thinking
+  startThinking(): ThinkingNode
+  appendThinking(text: string): void
+  finishThinking(): void
+
+  // Verify（ThinkingNode role='verify' 变体）
+  startVerify(): ThinkingNode
+  appendVerify(text: string): void
+  finishVerify(): void
+
+  // Tool
+  startTool(toolCallId: string, toolName: string, args?: string): ToolNode
+  appendToolLog(toolCallId: string, log: string): void
+  finishTool(toolCallId: string, result: { success: boolean; summary: string; result?: unknown }): void
+  errorTool(toolCallId: string, error: string): void
+  cancelTool(toolCallId: string): void
+
+  // Attention
+  requestAttention(reason: string, subtype?: AttentionSubtype, toolName?: string, prompt?: string, options?: string[], toolCallId?: string, optionHints?: string[]): AttentionNode
+  resolveAttention(resolved: boolean, _value?: string, _nodeId?: string): void
+
+  // Artifact
+  addArtifact(artifactType: ArtifactType, title: string, payload: unknown, sourceToolCallId?: string): ArtifactNode
+
+  // Answer
+  startAnswer(): AnswerNode
+  appendAnswer(text: string): void
+  finishAnswer(): void
+  errorAnswer(errorMessage: string): void
+  /** 用户主动停止生成 → answer status='stopped' */
+  stopAnswer(): void
+
+  /** 闭幕所有 running 节点，计算 durationMs */
+  settle(): void
+
+  /** 获取当前正在运行的思考节点（如果有） */
+  readonly thinkingNode: ThinkingNode | null
+  /** 获取当前正在运行的答案节点（如果有） */
+  readonly answerNode: AnswerNode | null
+}
 
 // ── helpers ──────────────────────────────────────────────
 
@@ -283,15 +325,11 @@ export function createProjectedBuilder(turnId?: string): ProjectedBuilder {
       eventLog.append(eventFactory.nodeDelta(nodeId, { groupId }))
     },
 
-    transitionToolToRunning(_toolCallId: string): void {
-      // Projected model: tools are created as 'running' directly (skip queued).
-      // No event needed — the projector handles this implicitly.
-    },
-
     appendToolLog(toolCallId: string, log: string): void {
       const nodeId = _toolNodeIds.get(toolCallId)
       if (!nodeId) return
-      eventLog.append(eventFactory.nodeDelta(nodeId, { log }))
+      // 进度消息是离散事件（pip 行、状态行），归一化换行防止首尾相连
+      eventLog.append(eventFactory.nodeDelta(nodeId, { log: log.endsWith('\n') ? log : log + '\n' }))
     },
 
     finishTool(
@@ -342,7 +380,8 @@ export function createProjectedBuilder(turnId?: string): ProjectedBuilder {
       toolName?: string,
       prompt?: string,
       options?: string[],
-      toolCallId?: string
+      toolCallId?: string,
+      optionHints?: string[]
     ): AttentionNode {
       // 多 attention 并存：不再自动关闭上一个 waiting attention
       const id = `${_turnId}:attention:${nextId()}`
@@ -359,6 +398,7 @@ export function createProjectedBuilder(turnId?: string): ProjectedBuilder {
           toolName,
           prompt,
           options,
+          optionHints,
           toolCallId,
         })
       )
@@ -388,13 +428,18 @@ export function createProjectedBuilder(turnId?: string): ProjectedBuilder {
         }
       }
 
-      eventLog.append(
-        eventFactory.attentionResolve(
-          targetId,
-          resolved ? 'resolved' : 'skipped',
-          value
-        )
-      )
+      // 终态判定（2026-07-31）：此前一切非批准都落成 'skipped'，审批超时
+      // 与"用户主动跳过/拒绝"无法区分（'timeout' 态类型与 CSS 齐备但零代码设置）。
+      // 超时/中断文案由各 resolve 路径自带（chatStore expireToolCall、approvalGate.abort），
+      // 统一在这里归类，调用方无需感知。
+      const result: 'resolved' | 'skipped' | 'timeout' | 'cancelled' = resolved
+        ? 'resolved'
+        : value?.includes('超时')
+          ? 'timeout'
+          : value?.includes('中断')
+            ? 'cancelled'
+            : 'skipped'
+      eventLog.append(eventFactory.attentionResolve(targetId, result, value))
       // 清理对应索引
       for (const [tcId, attnId] of _attentionByToolCallId) {
         if (attnId === targetId) {

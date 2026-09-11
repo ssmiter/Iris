@@ -24,16 +24,16 @@ interface WebBridgeClickInput {
 }
 
 function resolveSelector(input: WebBridgeClickInput): ElementSelector {
+  if (input.selector) {
+    return {
+      selector_type: input.selector_type || 'css',
+      value: input.selector,
+    }
+  }
   if (input.target) {
     return targetToSelector(input.target)
   }
-  if (!input.selector) {
-    throw new Error('必须提供 target 或 selector 之一')
-  }
-  return {
-    selector_type: input.selector_type || 'css',
-    value: input.selector,
-  }
+  throw new Error('必须提供 target 或 selector 之一')
 }
 
 export const webbridgeClickTool = createTool<WebBridgeClickInput, WebBridgePrimitiveResult>({

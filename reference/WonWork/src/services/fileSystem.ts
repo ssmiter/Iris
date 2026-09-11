@@ -1,6 +1,8 @@
 import type { FileEntry, WorkspaceAdapter } from './workspaceAdapters'
 import { getWorkspaceAdapter } from './workspaceAdapters'
 import { trackFileEdit } from './fileHistory'
+import { capabilityFs, isCapabilityPath, type CapabilityHitFile } from './capabilityFs'
+import { knowledgeVfs, isKnowledgePath } from './knowledgeVfs'
 
 /**
  * WonWork 前端虚拟文件系统（VFS）统一入口
@@ -10,6 +12,12 @@ import { trackFileEdit } from './fileHistory'
  * 2. Standalone 模式下使用 IndexedDB + 可选 File System Access API。
  * 3. MESCLI 模式下通过后端 Workspace API 操作实际文件，后端为权威源。
  * 4. 工具层、工作区面板、Agentic 循环均通过此文件访问文件，无需关心底层适配器。
+ * 5. /capabilities/ 前缀路由到只读能力目录虚拟文件系统（capabilityFs），
+ *    能力发现与工作区读写复用同一套 grep/glob/read_file/list_files 原语。
+ * 6. /skills 虚拟目录已随技能文件化退役（2026-09-03）：技能就是 ~/.wonwork/skills/
+ *    下的真实文件，模型用文件原语直读直写，不再需要虚拟发现面。
+ * 7. /knowledge/ 前缀路由到知识库检索目录（knowledgeVfs），卡片只含元数据：
+ *    grep 定位 → knowledge_search 语义检索 / knowledge_read 精读正文。
  */
 
 export type { FileEntry }
@@ -18,11 +26,19 @@ function getAdapter(): WorkspaceAdapter {
   return getWorkspaceAdapter()
 }
 
+const READ_ONLY_CAPABILITIES_ERROR =
+  '/capabilities 是只读能力目录，不支持写操作。使用工具请通过 read_capability("<path>") 加载后调用。'
+
+const READ_ONLY_KNOWLEDGE_ERROR =
+  '/knowledge 是只读知识检索目录，不支持写操作。检索请用 grep/glob 定位后走 knowledge_search / knowledge_read（先 read_capability 加载）；入库请用知识库页面或 knowledge 相关接口。'
+
 /**
- * 读取文件内容
+ * 读取文件内容。
+ * fresh:true 绕开 3s 读缓存强制后端现读——expectedContent 写前对账等正确性敏感场景
+ * 必须比对真实现状（2026-09-01 P0-7 零副本纪律：缓存只服务复读提速，不参与写前对账）。
  */
-export async function readFile(path: string): Promise<FileEntry | undefined> {
-  return getAdapter().readFile(path)
+export async function readFile(path: string, options?: { fresh?: boolean }): Promise<FileEntry | undefined> {
+  return getAdapter().readFile(path, options)
 }
 
 /**
@@ -33,6 +49,8 @@ export async function writeFile(
   content: string,
   options?: { append?: boolean; encoding?: 'utf-8' | 'base64' }
 ): Promise<FileEntry> {
+  if (isCapabilityPath(path)) throw new Error(READ_ONLY_CAPABILITIES_ERROR)
+  if (isKnowledgePath(path)) throw new Error(READ_ONLY_KNOWLEDGE_ERROR)
   await trackFileEdit(path)
   return getAdapter().writeFile(path, content, options)
 }
@@ -41,6 +59,8 @@ export async function writeFile(
  * 删除文件（删前经 fileHistory 备份旧内容）
  */
 export async function deleteFile(path: string): Promise<void> {
+  if (isCapabilityPath(path)) throw new Error(READ_ONLY_CAPABILITIES_ERROR)
+  if (isKnowledgePath(path)) throw new Error(READ_ONLY_KNOWLEDGE_ERROR)
   await trackFileEdit(path)
   return getAdapter().deleteFile(path)
 }
@@ -52,6 +72,8 @@ export async function listFiles(
   path: string,
   options?: { recursive?: boolean }
 ): Promise<{ files: string[]; directories: string[] }> {
+  if (isCapabilityPath(path)) return capabilityFs.listFiles(path, options)
+  if (isKnowledgePath(path)) return knowledgeVfs.listFiles(path, options)
   return getAdapter().listFiles(path, options)
 }
 
@@ -66,17 +88,32 @@ export async function fileExists(path: string): Promise<boolean> {
  * Glob 匹配（简化版，支持 * 和 **）
  */
 export async function globFiles(pattern: string, basePath?: string): Promise<string[]> {
+  if (basePath && isCapabilityPath(basePath)) return capabilityFs.globFiles(pattern, basePath)
+  if (basePath && isKnowledgePath(basePath)) return knowledgeVfs.globFiles(pattern, basePath)
+  // 绝对 glob 模式直接命中 /capabilities 或 /knowledge 挂载点时同样路由
+  if (!basePath && isCapabilityPath(pattern)) return capabilityFs.globFiles(pattern)
+  if (!basePath && isKnowledgePath(pattern)) return knowledgeVfs.globFiles(pattern)
   return getAdapter().globFiles(pattern, basePath)
 }
 
 /**
- * Grep 搜索
+ * Grep 搜索。matches 为截断后的返回集，total 为真实命中总数（> matches.length 即截断），
+ * fileCount 为实际扫描的文件数（仅 /capabilities 与 /knowledge 路由提供，
+ * 用于 0 命中时自证"目录非空"），hitFiles 为按文件聚合视图（同上，按命中密度排序）。
  */
 export async function grepFiles(
   pattern: string,
   options?: { path?: string; glob?: string; caseInsensitive?: boolean }
-): Promise<Array<{ path: string; line: number; content: string }>> {
-  return getAdapter().grepFiles(pattern, options)
+): Promise<{
+  matches: Array<{ path: string; line: number; content: string }>
+  total: number
+  fileCount?: number
+  hitFiles?: CapabilityHitFile[]
+}> {
+  if (options?.path && isCapabilityPath(options.path)) return capabilityFs.grepFiles(pattern, options)
+  if (options?.path && isKnowledgePath(options.path)) return knowledgeVfs.grepFiles(pattern, options)
+  const matches = await getAdapter().grepFiles(pattern, options)
+  return { matches, total: matches.length }
 }
 
 /**

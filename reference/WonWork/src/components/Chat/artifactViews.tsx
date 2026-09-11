@@ -8,6 +8,7 @@
  */
 
 import type { ArtifactNode } from '@/types/chat'
+import { useTranslation } from 'react-i18next'
 import { extractTableRows } from './InlineTable'
 import { InlineTable } from './InlineTable'
 
@@ -40,6 +41,7 @@ export function renderArtifactPreview(artifact: ArtifactNode, onViewFullscreen?:
 // ── Table ──────────────────────────────────────────────────
 
 function TableView({ artifact, onViewFullscreen }: ArtifactViewProps) {
+  const { t } = useTranslation()
   const payload = artifact.payload as { rows?: unknown[]; headers?: string[] }
   const rows = payload?.rows ?? extractTableRows(artifact.payload) ?? []
   const headers = payload?.headers as string[] | undefined
@@ -52,7 +54,7 @@ function TableView({ artifact, onViewFullscreen }: ArtifactViewProps) {
       </div>
       <div className="wf-artifact-actions">
         <button className="wf-artifact-btn" onClick={() => onViewFullscreen?.(artifact.artifactId)}>
-          全屏查看
+          {t('chat.artifactViews.fullscreen')}
         </button>
       </div>
     </div>
@@ -62,6 +64,7 @@ function TableView({ artifact, onViewFullscreen }: ArtifactViewProps) {
 // ── Chart ──────────────────────────────────────────────────
 
 function ChartView({ artifact, onViewFullscreen }: ArtifactViewProps) {
+  const { t } = useTranslation()
   const payload = artifact.payload as Record<string, unknown>
   const bars = (payload?.bars ?? payload?.data ?? []) as { label?: string; value?: number; name?: string; count?: number }[]
   if (!Array.isArray(bars) || bars.length === 0) {
@@ -77,9 +80,9 @@ function ChartView({ artifact, onViewFullscreen }: ArtifactViewProps) {
           const h = `${Math.max((val / maxVal) * 100, 4)}%`
           return (
             <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
-              <span style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>{val}</span>
-              <div style={{ width: '100%', height: h, background: 'linear-gradient(to top, #2563eb, #60a5fa)', borderRadius: '4px 4px 0 0', minHeight: 4 }} />
-              <span style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
+              <span style={{ fontSize: 10, color: 'var(--wf-mut)', marginBottom: 2 }}>{val}</span>
+              <div style={{ width: '100%', height: h, background: 'linear-gradient(to top, var(--wf-accent), color-mix(in srgb, var(--wf-accent) 55%, transparent))', borderRadius: '4px 4px 0 0', minHeight: 4 }} />
+              <span style={{ fontSize: 10, color: 'var(--wf-faint)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
                 {b.label ?? b.name ?? ''}
               </span>
             </div>
@@ -88,7 +91,7 @@ function ChartView({ artifact, onViewFullscreen }: ArtifactViewProps) {
       </div>
       <div className="wf-artifact-actions">
         <button className="wf-artifact-btn" onClick={() => onViewFullscreen?.(artifact.artifactId)}>
-          全屏查看
+          {t('chat.artifactViews.fullscreen')}
         </button>
       </div>
     </div>
@@ -98,6 +101,7 @@ function ChartView({ artifact, onViewFullscreen }: ArtifactViewProps) {
 // ── Image ──────────────────────────────────────────────────
 
 function ImageView({ artifact, onViewFullscreen }: ArtifactViewProps) {
+  const { t } = useTranslation()
   const payload = artifact.payload as { src?: string; alt?: string }
   if (!payload?.src) return null
 
@@ -114,7 +118,7 @@ function ImageView({ artifact, onViewFullscreen }: ArtifactViewProps) {
       />
       <div className="wf-artifact-actions">
         <button className="wf-artifact-btn" onClick={() => onViewFullscreen?.(artifact.artifactId)}>
-          全屏查看
+          {t('chat.artifactViews.fullscreen')}
         </button>
       </div>
     </div>
@@ -126,6 +130,7 @@ function ImageView({ artifact, onViewFullscreen }: ArtifactViewProps) {
 interface FileEntry { name?: string; size?: number; downloadUrl?: string; path?: string }
 
 function FileView({ artifact }: ArtifactViewProps) {
+  const { t } = useTranslation()
   const payload = artifact.payload as { files?: FileEntry[] }
   const files: FileEntry[] = payload?.files ?? []
   if (files.length === 0) return null
@@ -140,13 +145,13 @@ function FileView({ artifact }: ArtifactViewProps) {
   return (
     <div className="wf-artifact-files">
       {files.map((f, i) => (
-        <div key={i} className="wf-file-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+        <div key={i} className="wf-file-row" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--wf-hair)' }}>
           <span style={{ fontSize: 14 }}>📄</span>
-          <span style={{ flex: 1, fontSize: 13, color: '#334155' }}>{f.name || f.path || '未知文件'}</span>
-          {f.size != null && <span style={{ fontSize: 11, color: '#94a3b8' }}>{fmtSize(f.size)}</span>}
+          <span style={{ flex: 1, fontSize: 13, color: 'var(--wf-sub)' }}>{f.name || f.path || t('chat.artifactViews.unknownFile')}</span>
+          {f.size != null && <span style={{ fontSize: 11, color: 'var(--wf-faint)' }}>{fmtSize(f.size)}</span>}
           {f.downloadUrl && (
             <a href={f.downloadUrl} download={f.name} className="wf-artifact-btn" style={{ fontSize: 12, padding: '2px 8px' }}>
-              下载
+              {t('chat.artifactViews.download')}
             </a>
           )}
         </div>
@@ -160,22 +165,23 @@ function FileView({ artifact }: ArtifactViewProps) {
 interface BrowserStep { index?: number; action?: string; url?: string; title?: string; screenshot?: string }
 
 function BrowserView({ artifact, onViewFullscreen }: ArtifactViewProps) {
+  const { t } = useTranslation()
   const payload = artifact.payload as { steps?: BrowserStep[]; finalUrl?: string; status?: string }
   const steps: BrowserStep[] = payload?.steps ?? []
   const lastScreenshot = [...steps].reverse().find((s) => s.screenshot)?.screenshot
 
   return (
     <div className="wf-artifact-browser">
-      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
-        浏览器操作 · {steps.length} 个步骤 · {payload?.status ?? 'completed'}
+      <div style={{ fontSize: 12, color: 'var(--wf-mut)', marginBottom: 6 }}>
+        {t('chat.artifactViews.browserSteps', { count: steps.length, status: payload?.status ?? 'completed' })}
       </div>
       {steps.length > 0 && (
         <div style={{ maxHeight: 160, overflow: 'auto', marginBottom: 8 }}>
           {steps.map((s, i) => (
-            <div key={i} style={{ fontSize: 12, padding: '3px 0', color: '#475569' }}>
-              <span style={{ color: '#94a3b8', marginRight: 6 }}>#{s.index ?? i + 1}</span>
+            <div key={i} style={{ fontSize: 12, padding: '3px 0', color: 'var(--wf-sub)' }}>
+              <span style={{ color: 'var(--wf-faint)', marginRight: 6 }}>#{s.index ?? i + 1}</span>
               <span>{s.action ?? ''}</span>
-              {s.title && <span style={{ color: '#64748b' }}> — {s.title}</span>}
+              {s.title && <span style={{ color: 'var(--wf-mut)' }}> — {s.title}</span>}
             </div>
           ))}
         </div>
@@ -183,17 +189,17 @@ function BrowserView({ artifact, onViewFullscreen }: ArtifactViewProps) {
       {lastScreenshot && (
         <img
           src={lastScreenshot}
-          alt="浏览器截图"
+          alt={t('chat.artifactViews.browserScreenshot')}
           style={{ maxWidth: '100%', maxHeight: 200, borderRadius: 6, cursor: 'pointer' }}
           onClick={() => onViewFullscreen?.(artifact.artifactId)}
         />
       )}
       {steps.length === 0 && payload?.finalUrl && (
-        <div style={{ fontSize: 12, color: '#2563eb' }}>最终页面: {payload.finalUrl}</div>
+        <div style={{ fontSize: 12, color: 'var(--wf-accent)' }}>{t('chat.artifactViews.finalPage', { url: payload.finalUrl })}</div>
       )}
       <div className="wf-artifact-actions">
         <button className="wf-artifact-btn" onClick={() => onViewFullscreen?.(artifact.artifactId)}>
-          全屏查看
+          {t('chat.artifactViews.fullscreen')}
         </button>
       </div>
     </div>
@@ -205,7 +211,7 @@ function BrowserView({ artifact, onViewFullscreen }: ArtifactViewProps) {
 function JsonFallback({ artifact }: ArtifactViewProps) {
   const text = JSON.stringify(artifact.payload, null, 2)
   return (
-    <div style={{ maxHeight: 200, overflow: 'auto', fontSize: 12, fontFamily: 'monospace', background: '#f8fafc', padding: 10, borderRadius: 8, color: '#475569' }}>
+    <div style={{ maxHeight: 200, overflow: 'auto', fontSize: 12, fontFamily: 'monospace', background: 'var(--wf-mono-bg)', padding: 10, borderRadius: 8, color: 'var(--wf-sub)' }}>
       <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{text.slice(0, 2000)}{text.length > 2000 ? '…' : ''}</pre>
     </div>
   )

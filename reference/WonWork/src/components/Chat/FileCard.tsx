@@ -10,7 +10,9 @@
  */
 
 import { memo, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { FileCardArtifact } from '@/types/artifactDock'
+import { WorkflowGraph } from '@/components/Chat/WorkflowGraph'
 import { useArtifactDockStore } from '@/stores/artifactDockStore'
 import { workspaceApi } from '@/api/client'
 import { downloadFile } from '@/utils/downloadFile'
@@ -62,6 +64,9 @@ function MiniDoc() {
 
 /** mini 预览分发 */
 function MiniPreview({ artifact }: { artifact: FileCardArtifact }) {
+  if (artifact.kind === 'workflow' && artifact.workflowData) {
+    return <WorkflowGraph doc={artifact.workflowData.doc} compact />
+  }
   if (artifact.kind === 'chart' && artifact.chartData?.bars) {
     return <MiniChart bars={artifact.chartData.bars} accent={artifact.accent} />
   }
@@ -88,6 +93,7 @@ export const FileCard = memo(function FileCard({
 }: {
   artifact: FileCardArtifact
 }) {
+  const { t } = useTranslation()
   const open = useArtifactDockStore((s) => s.open)
   const isPreviewing =
     useArtifactDockStore((s) => s.isOpen && s.currentArtifactId === artifact.id)
@@ -95,10 +101,11 @@ export const FileCard = memo(function FileCard({
   const registeredRef = useRef(false)
 
   // 使用 useLayoutEffect 确保在浏览器绘制前完成注册，避免竞态
+  // auto=true：挂载是被动注册（区别于 FilesPane 显式点击），尊重移除墓碑
   useLayoutEffect(() => {
     if (!registeredRef.current) {
       registeredRef.current = true
-      registerArtifact(artifact)
+      registerArtifact(artifact, { auto: true })
     }
   }, [artifact, registerArtifact])
 
@@ -176,7 +183,7 @@ export const FileCard = memo(function FileCard({
       {/* 中间信息 */}
       <div className="wf-fcard-main">
         <span className="wf-fcard-type" style={{ color: artifact.accent }}>
-          {artifact.typeLabel} · 文件卡片
+          {artifact.typeLabel} · {t('chat.fileCard.fileCardLabel')}
         </span>
         <span className="wf-fcard-caption">{artifact.caption}</span>
         <span className="wf-fcard-meta">
@@ -185,23 +192,25 @@ export const FileCard = memo(function FileCard({
         </span>
       </div>
 
-      {/* 右侧操作按钮 */}
+      {/* 右侧操作按钮（工作流无下载——不走 workspace 下载链） */}
       <div className="wf-fcard-actions">
-        <button
-          className="wf-fabtn"
-          onClick={handleDownload}
-          title="下载"
-          aria-label="下载文件"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" />
-          </svg>
-        </button>
+        {artifact.kind !== 'workflow' && (
+          <button
+            className="wf-fabtn"
+            onClick={handleDownload}
+            title={t('chat.fileActions.download')}
+            aria-label={t('chat.fileActions.download')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" />
+            </svg>
+          </button>
+        )}
         <button
           className="wf-fabtn"
           onClick={handleCopyPath}
-          title="复制路径"
-          aria-label="复制文件路径"
+          title={t('chat.fileActions.copyPath')}
+          aria-label={t('chat.fileActions.copyPath')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="9" width="11" height="11" rx="2" />
@@ -211,8 +220,8 @@ export const FileCard = memo(function FileCard({
         <button
           className="wf-fabtn"
           onClick={handleLocate}
-          title="在工作区中定位"
-          aria-label="在工作区中定位"
+          title={t('chat.fileActions.locateInWorkspace')}
+          aria-label={t('chat.fileActions.locateInWorkspace')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="7" />

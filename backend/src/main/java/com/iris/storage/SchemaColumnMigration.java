@@ -37,7 +37,15 @@ public final class SchemaColumnMigration implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         ensureColumn("iris_conversation", "archived_at", "TEXT");
+        ensureColumn("iris_conversation", "task_state", "TEXT");
+        ensureColumn("iris_conversation", "project_path", "TEXT");
+        ensureColumn("message", "extras_json", "TEXT");
         ensureColumn("cron_task", "once", "INTEGER NOT NULL DEFAULT 0");
+        // WonWork cron 契约读面补列（旧库；新库 schema.sql 已含 output/error/execution_time_ms 语义由 cron_schedule_config 承载，
+        // 这里 cron_execution 三列对齐 WonWork CronJobExecution：前端 executions 历史需要 output/errorMessage/executionTimeMs）
+        ensureColumn("cron_execution", "output", "TEXT");
+        ensureColumn("cron_execution", "error_message", "TEXT");
+        ensureColumn("cron_execution", "execution_time_ms", "INTEGER");
     }
 
     private void ensureColumn(String table, String column, String ddlType) {

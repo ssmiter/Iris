@@ -34,8 +34,11 @@ export function classifySql(sql: string): SqlClassification {
     return { kind: 'read', operation: 'schema_inspection', tables: extractTables(normalized), isReadOnly: true }
   }
 
-  // 写操作关键字
-  const writeMatch = upper.match(/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|MERGE|REPLACE|RENAME|EXEC|EXECUTE|GRANT|REVOKE)\b/)
+  // 写操作关键字（2026-07-24 补齐 EXEC/EXECUTE/GRANT/REVOKE：
+  // 存储过程与权限变更同样可写库，按只读放行会击穿"bypass 也拦 SQL 写"的底线；
+  // 2026-08-01 补 BACKUP/RESTORE/DBCC/SHUTDOWN/KILL：SQL Server 管理类语句可写库/杀会话，
+  // 漏判会按只读放行——盲猜实验实证缺口）
+  const writeMatch = upper.match(/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|MERGE|REPLACE|RENAME|EXEC|EXECUTE|GRANT|REVOKE|BACKUP|RESTORE|DBCC|SHUTDOWN|KILL)\b/)
   if (writeMatch) {
     return {
       kind: 'write',

@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ArtifactNode } from '@/types/chat'
 import { renderArtifactPreview } from './artifactViews'
 import { extractTableRows } from './InlineTable'
@@ -16,7 +17,7 @@ function toast(msg: string) {
   el.textContent = msg
   el.style.cssText = `
     position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%);
-    background: #1c1c1e; color: #fff; font-size: 12.5px;
+    background: var(--wf-capsule-bg); color: var(--wf-capsule-ink); font-size: 12.5px;
     padding: 8px 16px; border-radius: 999px; z-index: 200;
     opacity: 0; transition: opacity .25s; pointer-events: none;
   `
@@ -51,33 +52,34 @@ function ArtifactCard({
   artifact: ArtifactNode
   onViewFullscreen?: (artifactId: string) => void
 }) {
+  const { t } = useTranslation()
   const handleExportCSV = useCallback(() => {
     const csvText = buildCSV(artifact.payload)
-    if (!csvText) { toast('无可导出的表格数据'); return }
+    if (!csvText) { toast(t('chat.artifactZone.noExportableData')); return }
     const blob = new Blob(['﻿' + csvText], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = (artifact.title || 'data') + '.csv'
     a.click()
     URL.revokeObjectURL(a.href)
-    toast('已导出 CSV')
-  }, [artifact.title, artifact.payload])
+    toast(t('chat.artifactZone.exportedCsv'))
+  }, [artifact.title, artifact.payload, t])
 
   const handleCopyData = useCallback(() => {
     const text = buildCopyText(artifact.payload)
     navigator.clipboard?.writeText(text).then(
-      () => toast('数据已复制'),
-      () => toast('复制失败')
+      () => toast(t('chat.artifactZone.dataCopied')),
+      () => toast(t('chat.artifactZone.copyFailed'))
     )
-  }, [artifact.payload])
+  }, [artifact.payload, t])
 
   const handleFullscreen = useCallback(() => {
     if (onViewFullscreen) {
       onViewFullscreen(artifact.artifactId)
     } else {
-      toast('全屏功能即将开放')
+      toast(t('chat.artifactZone.fullscreenComing'))
     }
-  }, [artifact.artifactId, onViewFullscreen])
+  }, [artifact.artifactId, onViewFullscreen, t])
 
   return (
     <div className="wf-artifact-card">
@@ -87,9 +89,9 @@ function ArtifactCard({
           <span className="wf-artifact-ver">v{artifact.version}</span>
         )}
         <div className="wf-artifact-actions">
-          <button className="wf-a-btn" onClick={handleExportCSV} title="导出 CSV">⤓ 导出 CSV</button>
-          <button className="wf-a-btn" onClick={handleCopyData} title="复制数据">⧉ 复制数据</button>
-          <button className="wf-a-btn" onClick={handleFullscreen} title="全屏查看">⛶ 全屏</button>
+          <button className="wf-a-btn" onClick={handleExportCSV} title={t('chat.artifactZone.exportCsv')}>⤓ 导出 CSV</button>
+          <button className="wf-a-btn" onClick={handleCopyData} title={t('chat.artifactZone.copyData')}>⧉ 复制数据</button>
+          <button className="wf-a-btn" onClick={handleFullscreen} title={t('chat.artifactZone.fullscreen')}>⛶ 全屏</button>
         </div>
       </div>
       <div className="wf-artifact-body">
@@ -199,7 +201,7 @@ function ChartBars({ bars }: { bars: BarItem[] }) {
             className="wf-chart-bar"
             style={{
               height: `${(b.val / max) * 110}px`,
-              background: b.color || '#2563eb',
+              background: b.color || 'var(--wf-accent)',
             }}
           />
           <span className="wf-chart-x">{b.label}</span>

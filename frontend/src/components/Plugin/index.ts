@@ -1,0 +1,1 @@
+export { PluginManagerView } from './PluginManagerView'

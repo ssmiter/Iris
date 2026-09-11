@@ -12,7 +12,7 @@
 
 export { type RenderEvent, type RawRenderEvent, type NodeEnvelope, type NodeDoneMeta, type ErrorInfo, type ArtifactPayload, type AttentionPayload, eventFactory } from './renderEvent'
 export { EventLog } from './eventLog'
-export { project, type TurnState, isSettled, computeSegFlowed } from './turnProjector'
+export { project, type TurnState, isSettled } from './turnProjector'
 export { createProjectedBuilder, type ProjectedBuilder } from './projectedBuilder'
 export { plan, applyOps, type RenderOp } from './batchPlanner'
 export { RenderScheduler, type SchedulerCallbacks, type SchedulerEventKind } from './renderScheduler'

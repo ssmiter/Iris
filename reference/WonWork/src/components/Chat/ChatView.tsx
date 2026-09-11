@@ -1,39 +1,55 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { cn } from '@/utils'
 import { useChatStore } from '@/stores/chatStore'
 import { useConversationStore } from '@/stores/conversationStore'
-import { useConversationTitleStore } from '@/stores/conversationTitleStore'
+import { markManuallyEdited } from '@/stores/conversationTitleStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useContextPanelStore } from '@/stores/contextPanelStore'
 import { useArtifactDockStore } from '@/stores/artifactDockStore'
+import { useRuntimeConfigStore } from '@/stores/runtimeConfigStore'
 import { useFileStore } from '@/stores/fileStore'
-import { useSkillStore } from '@/stores/skillStore'
+import { useChartAskStore } from '@/stores/chartAskStore'
 import { useLocalModelStore } from '@/stores/localModelStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useSelectionQuote } from '@/hooks/useSelectionQuote'
-import { supportsLocalModel } from '@/config/product'
-import { configApi, IS_STANDALONE, normalizeBackendProviderConfig, workspaceItemsApi } from '@/api/client'
+import { supportsLocalModel, supportsByok } from '@/config/product'
+import { configApi, IS_STANDALONE, normalizeBackendProviderConfig, userConfigApi, workspaceItemsApi } from '@/api/client'
 import { workspaceItemToArtifact } from '@/types/artifactDock'
 import { getStandaloneConfig, setStandaloneConfig, PROVIDERS } from '@/api/standaloneApi'
-import { useApiKeyStore } from '@/stores/apiKeyStore'
+import { useApiKeyStore, findByokApiKey } from '@/stores/apiKeyStore'
+import { useTokenHubStore } from '@/stores/tokenHubStore'
+import { getProviderKeyEntry } from '@/services/providerKeyVault'
+import { useProviderProfileStore } from '@/stores/providerProfileStore'
+import { deriveProfileRuntime, isProfileProviderId, profileIdFromProviderId } from '@/types/providerProfile'
 import { MessageList } from './MessageList'
+import { TurnRail } from './TurnRail'
 import { InputArea } from './InputArea'
+import { FloatingActionBar } from './FloatingActionBar'
+import { SubAgentView } from './SubAgentView'
 import { RightPanel } from './RightPanel'
-import { ContextCapacityBar } from './ContextCapacityBar'
 import { Portal } from '@/components/common/Portal'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
+import { parseKnowledgeInvocation } from '@/components/Knowledge/knowledgeInvocation'
 import { toast } from 'sonner'
+import { showMemoryToast, dismissMemoryToast } from '@/components/Memory/MemoryToast'
+import { MemoryMote } from '@/components/Memory/MemoryMote'
 import { exportConversation } from '@/utils/exportConversation'
+import { mergeProviderCatalog } from '@/utils/providerCatalog'
+import { credentialAutofillGuard, plainTextAutofillGuard } from '@/utils/autofillGuard'
 import {
   ChevronDown,
+  ChevronLeft,
   Bot,
-  PanelRight,
-  Wrench,
-  X,
+  ShieldCheck,
+  Check,
+  ListTree,
 } from 'lucide-react'
+import { openTaskConversation } from './TaskSessionCard'
 
 interface ChatViewProps {
   onNavigate?: (view: string) => void
+  knowledgeEnabled?: boolean
 }
 
 function getDefaultProviderFromStandaloneConfig(
@@ -52,10 +68,72 @@ function getDefaultProviderFromStandaloneConfig(
   return exists ? candidate : null
 }
 
-export function ChatView({ onNavigate }: ChatViewProps) {
+function providerDisplayName(t: TFunction, providerId: string): string {
+  // 供应商预设库（2026-09-07）：profile:<id> 显示 profile 名
+  if (isProfileProviderId(providerId)) {
+    const profileId = profileIdFromProviderId(providerId)
+    const profile = useProviderProfileStore.getState().profiles.find((p) => p.id === profileId)
+    if (profile) return profile.name
+  }
+  const i18nKey = providerId.replace(/-([a-z])/g, (_, char) => char.toUpperCase())
+  const chatVal = t(`chat.providers.${i18nKey}`)
+  if (chatVal !== `chat.providers.${i18nKey}`) return chatVal
+  const settingsVal = t(`settings.provider.${i18nKey}`)
+  if (settingsVal !== `settings.provider.${i18nKey}`) return settingsVal
+  return providerId
+}
+
+// 2026-08-05 收窄内置补齐目录：与设置页同白名单（DeepSeek + 私有化 custom），
+// tokenhub 保留（客户版付费主路径）。只影响"内置补齐"——后端已配置项（含企业模型）、
+// 本地模型照常进入下拉，不受此白名单影响。
+const CHAT_BUILTIN_VISIBLE = new Set(['deepseek', 'custom', 'tokenhub'])
+const BUILT_IN_PROVIDER_CONFIGS = Object.entries(PROVIDERS)
+  .filter(([providerId, provider]) => CHAT_BUILTIN_VISIBLE.has(providerId) && !!provider.defaultModel)
+  .map(([providerId, provider]) => ({
+    provider: providerId,
+    model: provider.defaultModel,
+    baseUrl: provider.baseUrl,
+  }))
+
+// 未保存过选择时的兜底：优先 DeepSeek（2026-08-05 用户拍板主力默认），没有再取首项
+function pickFallbackProvider<T extends { provider: string }>(list: T[]): T | undefined {
+  return list.find((p) => p.provider === 'deepseek') ?? list[0]
+}
+
+const LOCAL_MODEL_PROVIDERS = new Set(['ollama', 'lmstudio', 'webllm'])
+
+// 下拉项 Key 状态探测（2026-08-05 修正语义）：只认真实存在的 Key——
+// 本地模型 / BYOK 默认 / 本机保险柜 / TokenHub 缓存 / 设置页存到后端的 Key。
+// "后端有 provider 配置行"≠有 Key（AiProviderConfig 表不含 Key），不能据此亮绿灯。
+async function probeProviderKey(provider: string): Promise<boolean> {
+  if (LOCAL_MODEL_PROVIDERS.has(provider)) return true
+  // 供应商预设库：凭证即 profile env 派生值
+  if (isProfileProviderId(provider)) {
+    const profileId = profileIdFromProviderId(provider)
+    const profile = useProviderProfileStore.getState().profiles.find((p) => p.id === profileId)
+    const derived = profile ? deriveProfileRuntime(profile) : null
+    return !!derived?.apiKey
+  }
+  if (findByokApiKey(provider)) return true
+  if (getProviderKeyEntry(provider)?.apiKey) return true
+  if (provider === 'tokenhub') return !!useTokenHubStore.getState().cachedKey
+  try {
+    const r = await userConfigApi.getApiKey(provider)
+    return !!r.apiKey
+  } catch {
+    return false
+  }
+}
+
+export function ChatView({ onNavigate, knowledgeEnabled }: ChatViewProps) {
   const { t } = useTranslation()
   // R4: 按字段选择器订阅，避免整 store 变化触发 ChatView 重渲染
   const messages = useChatStore((s) => s.messages)
+  // 轮迹目录入口门槛：与 TurnRail 的 MIN_TURNS 一致（安静：短对话不出入口按钮）
+  const turnCount = useMemo(
+    () => messages.filter((m) => m.role === 'user' && !m.isSupplement).length,
+    [messages]
+  )
   const isLoading = useChatStore((s) => s.isLoading)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const providers = useChatStore((s) => s.providers)
@@ -74,11 +152,19 @@ export function ChatView({ onNavigate }: ChatViewProps) {
   } = useConversationStore()
 
   const { isLoggedIn } = useAuthStore()
-  const { isOpen: rightPanelOpen, togglePanel: toggleRightPanel, setContextFiles, setOpen: setRightPanelOpen } = useContextPanelStore()
+  const { isOpen: rightPanelOpen, setOpen: setRightPanelOpen } = useContextPanelStore()
   const dockOpen = useArtifactDockStore((s) => s.isOpen)
   const dockToggle = useArtifactDockStore((s) => s.toggle)
-  const dockUnseen = useArtifactDockStore((s) => s.unseenIds.size > 0)
-  const { skills, activeSkillIds, loadSkill, unloadSkill } = useSkillStore()
+  const dockUnseen = useArtifactDockStore((s) => s.unseenIds.size)
+  // 管理员模式：部署级开关（runtime-config.adminEnabled）开启即显示小圆点入口，
+  // 与个人提权无关——只读管理工具的数据安全由后端工具自身脱敏保证；会话级开关不持久化
+  // 2026-08-07 拍板：管理员对话用处小、干扰体验，前端入口暂时隐藏下线（不删代码，
+  // 恢复=把下面常量的 false 改回 true；后端部署级开关 runtime-config.adminEnabled 保持不变）
+  const ADMIN_ENTRY_HIDDEN = true
+  const adminEnabled =
+    useRuntimeConfigStore((s) => s.config.adminEnabled) === true && !ADMIN_ENTRY_HIDDEN
+  const adminMode = useChatStore((s) => s.adminMode)
+  const setAdminMode = useChatStore((s) => s.setAdminMode)
   const { loadConversationAttachments, clearPendingFiles, attachments } = useFileStore()
 
   // 当 Dock 打开时自动关闭 RightPanel（避免布局冲突）
@@ -89,8 +175,75 @@ export function ChatView({ onNavigate }: ChatViewProps) {
   }, [dockOpen, rightPanelOpen, setRightPanelOpen])
 
   const [showProviders, setShowProviders] = useState(false)
-  const [showSkillDropdown, setShowSkillDropdown] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
+
+  // 触顶状态条 v13：平时全隐，触顶热区 / 滚回顶上拉唤出；开关来自设置 topbarAutoHide（默认 true）
+  const topbarAutoHide = useSettingsStore((s) => s.topbarAutoHide)
+  const [topbarOn, setTopbarOn] = useState(false)
+  const [turnNavOpen, setTurnNavOpen] = useState(false)
+  const stripHideTimer = useRef<number | null>(null)
+  const showProvidersRef = useRef(false)
+
+  useEffect(() => {
+    showProvidersRef.current = showProviders
+  }, [showProviders])
+
+  const showTopbar = useCallback(() => {
+    if (stripHideTimer.current) {
+      clearTimeout(stripHideTimer.current)
+      stripHideTimer.current = null
+    }
+    setTopbarOn(true)
+  }, [])
+
+  const hideTopbarSoon = useCallback((ms: number) => {
+    if (stripHideTimer.current) {
+      clearTimeout(stripHideTimer.current)
+      stripHideTimer.current = null
+    }
+    stripHideTimer.current = window.setTimeout(() => {
+      // 下拉开着时保持条展示，避免固定下拉悬空
+      if (showProvidersRef.current) return
+      setTopbarOn(false)
+      setShowProviders(false)
+    }, ms)
+  }, [])
+
+  // 滚到顶后继续上拉 → 唤出状态条（只读 .wf-chat-scroll scroller，不动 MessageList）
+  useEffect(() => {
+    if (!topbarAutoHide) return
+    const onWheel = (e: WheelEvent) => {
+      const el = e.currentTarget as HTMLElement
+      if (el.scrollTop <= 0 && e.deltaY < 0) {
+        showTopbar()
+        // 兜底：鼠标没落到条上也会自动收回，避免卡在顶上
+        hideTopbarSoon(1600)
+      }
+    }
+    const scroller = document.querySelector<HTMLElement>('.wf-chat-scroll')
+    if (!scroller) return
+    scroller.addEventListener('wheel', onWheel, { passive: true })
+    return () => scroller.removeEventListener('wheel', onWheel)
+  }, [topbarAutoHide, showTopbar, hideTopbarSoon, messages.length])
+
+  // 关闭自动隐藏 → 回退常驻粘性：清空收起态，避免残留
+  useEffect(() => {
+    if (!topbarAutoHide) {
+      if (stripHideTimer.current) {
+        clearTimeout(stripHideTimer.current)
+        stripHideTimer.current = null
+      }
+      setTopbarOn(false)
+      setShowProviders(false)
+    }
+  }, [topbarAutoHide])
+
+  // 卸载清理定时器
+  useEffect(() => {
+    return () => {
+      if (stripHideTimer.current) clearTimeout(stripHideTimer.current)
+    }
+  }, [])
 
   // v9：对话列宽档位 → --wf-col-max（turn 容器与输入框共用同一变量，保证对齐）
   const chatWidth = useSettingsStore((s) => s.chatWidth)
@@ -99,11 +252,56 @@ export function ChatView({ onNavigate }: ChatViewProps) {
   }, [chatWidth])
 
   // v9：选中正文 → 引用到输入框（quote chip）
+  // 记忆之野：同一浮条第二动作 ✦ 收入记忆——显式点击才触发 LLM 誊写 pipeline
   const [quote, setQuote] = useState<string | null>(null)
-  const quotePopover = useSelectionQuote((text) => setQuote(text))
+  const rememberText = useChatStore((s) => s.rememberText)
+  const quotePopover = useSelectionQuote(
+    (text) => setQuote(text),
+    (text) => {
+      // 收入记忆（可回旋）：模型可婉拒（declined + 理由），用户点"仍要收入"则 force 重试
+      const run = (force: boolean): void => {
+        const workingId = showMemoryToast({ kind: 'working', title: t('memory.toast.working') })
+        void rememberText(text, force ? { force: true } : undefined).then((r) => {
+          dismissMemoryToast(workingId)
+          const bucketLabel = r.bucket ? t(`memory.fileTypes.${r.bucket}`) : undefined
+          if (r.ok && r.declined) {
+            showMemoryToast({
+              kind: 'declined',
+              title: t('memory.toast.declined'),
+              sub: r.reason,
+              action: { label: t('memory.toast.rememberAnyway'), onAction: () => run(true) },
+            })
+          } else if (r.ok && r.skipped) {
+            showMemoryToast({ kind: 'duplicate', title: t('memory.toast.duplicate') })
+          } else if (r.ok && r.merged) {
+            showMemoryToast({ kind: 'merged', title: t('memory.toast.merged'), bucketLabel, summary: r.summary })
+          } else if (r.ok) {
+            showMemoryToast({ kind: 'saved', title: t('memory.toast.saved'), sub: t('memory.toast.savedSub'), bucketLabel, summary: r.summary })
+          } else {
+            showMemoryToast({ kind: 'failed', title: t('memory.selbar.failed') })
+          }
+        }).catch(() => {
+          // 链上任何 reject（动态 import chunk 失败等）都必须有终态反馈——
+          // 否则 working toast 30s 自然消失、零反馈（2026-08-04 安装包实测）
+          dismissMemoryToast(workingId)
+          showMemoryToast({ kind: 'failed', title: t('memory.selbar.failed') })
+        })
+      }
+      run(false)
+    }
+  )
+
+  // 图表框选追问（蓝图 v13 askchip）：ChartRenderer 框选后 set 一条 pending，
+  // 非空时灌进 quote chip（复用 v9 选中引用管线）；suggestion 字段本期不用
+  const chartPending = useChartAskStore((s) => s.pending)
+  useEffect(() => {
+    if (chartPending) {
+      setQuote(chartPending.quote)
+      useChartAskStore.getState().clear()
+    }
+  }, [chartPending])
 
   // 下拉菜单按钮 ref（用于 Portal 定位）
-  const skillButtonRef = useRef<HTMLButtonElement>(null)
   const providerButtonRef = useRef<HTMLButtonElement>(null)
 
   // Standalone 模式下检测是否需要显示 Provider/API Key Onboarding
@@ -118,68 +316,116 @@ export function ChatView({ onNavigate }: ChatViewProps) {
     setShowOnboarding(!hasKey)
   }, [messages.length])
 
+  // 下拉项 Key 状态（provider → 是否有可用 Key），加载后+每次展开下拉时异步探测
+  const [providerKeyStatus, setProviderKeyStatus] = useState<Record<string, boolean>>({})
+
+  const refreshKeyStatus = useCallback(async (list: { provider: string }[]) => {
+    const entries = await Promise.all(
+      list.map(async (p) => [p.provider, await probeProviderKey(p.provider)] as const)
+    )
+    setProviderKeyStatus(Object.fromEntries(entries))
+  }, [])
+
+  // 初始化/Onboarding 完成共用：加载 provider 列表并选定当前激活项（2026-08-05 去重，原为两份重复逻辑）
+  const reloadProviders = useCallback(async () => {
+    try {
+      const backendProviders = await configApi.getProviders()
+      let list = mergeProviderCatalog(backendProviders, BUILT_IN_PROVIDER_CONFIGS)
+
+      // BYOK 自建入口（2026-08-25）：设置页添加的 BYOK Key 若 provider 不在目录里
+      // （典型=custom 私有化端点——内置条目无默认模型被 CHAT_BUILTIN_VISIBLE 过滤掉），
+      // 按 Key 补一条下拉项。模型取 Key 上记录的 model（保险柜兜底），两者皆空则跳过：
+      // 空模型发请求必失败，宁可不显示。可见性与设置页同一闸门（showByok）。
+      if (supportsByok || useRuntimeConfigStore.getState().config.byokEnabled === true) {
+        const merged = [...list]
+        for (const key of useApiKeyStore.getState().apiKeys) {
+          if (key.isPlatformManaged || !key.key) continue
+          if (merged.some((p) => p.provider === key.provider)) continue
+          const model = key.model || getProviderKeyEntry(key.provider)?.model || ''
+          if (!model) continue
+          merged.push({ provider: key.provider, model, baseUrl: key.baseUrl || '' })
+        }
+        list = merged
+      }
+
+      // 供应商预设库（2026-09-07）：有可派生运行视图的 profile 进下拉，
+      // provider id 用 profile:<id> 命名空间，与内置/BYOK 项不冲突
+      await useProviderProfileStore.getState().ensureLoaded()
+      const profileEntries = useProviderProfileStore.getState().profiles
+        .map((profile) => {
+          const derived = deriveProfileRuntime(profile)
+          return derived
+            ? { provider: derived.providerId, model: derived.model, baseUrl: derived.baseUrl }
+            : null
+        })
+        .filter((e): e is { provider: string; model: string; baseUrl: string } => e !== null)
+      if (profileEntries.length > 0) list = [...profileEntries, ...list]
+
+      // Standalone 模式下追加本地模型（Ollama / LM Studio）选项
+      if (supportsLocalModel) {
+        const localProviders = useLocalModelStore.getState().getProviderConfigs()
+        const merged = [...list]
+        for (const lp of localProviders) {
+          const exists = merged.some(
+            (p) => p.provider === lp.provider && p.model === lp.model
+          )
+          if (!exists) merged.push(lp)
+        }
+        list = merged
+      }
+
+      setProviders(list)
+      void refreshKeyStatus(list)
+
+      // 选定激活项：localStorage 保存的优先（须仍在目录中）→ standalone 配置 → DeepSeek 兜底
+      const saved = localStorage.getItem('wonclaw_active_provider')
+      if (saved) {
+        try {
+          const parsed = normalizeBackendProviderConfig(JSON.parse(saved))
+          if (list.some((p) => p.provider === parsed.provider && p.model === parsed.model)) {
+            setActiveProvider(parsed)
+            return
+          }
+        } catch {
+          // 存档损坏则继续走兜底
+        }
+      }
+      if (IS_STANDALONE) {
+        const fallback = getDefaultProviderFromStandaloneConfig(list)
+        if (fallback) {
+          setActiveProvider(fallback)
+          return
+        }
+      }
+      const dflt = pickFallbackProvider(list)
+      if (dflt) setActiveProvider(dflt)
+    } catch {
+      // 如果后端不可用，保持空列表，由用户手动选择
+    }
+  }, [setProviders, setActiveProvider, refreshKeyStatus])
+
   // 初始化加载 provider 列表
   useEffect(() => {
     if (providers.length === 0) {
-      configApi
-        .getProviders()
-        .then((backendProviders) => {
-          let list = backendProviders.length > 0 ? backendProviders : []
-
-          // Standalone 模式下追加本地模型（Ollama / LM Studio）选项
-          if (supportsLocalModel) {
-            const localProviders = useLocalModelStore.getState().getProviderConfigs()
-            const merged = [...list]
-            for (const lp of localProviders) {
-              const exists = merged.some(
-                (p) => p.provider === lp.provider && p.model === lp.model
-              )
-              if (!exists) merged.push(lp)
-            }
-            list = merged
-          }
-
-          setProviders(list)
-
-          const saved = localStorage.getItem('wonclaw_active_provider')
-          if (saved) {
-            try {
-              const parsed = normalizeBackendProviderConfig(JSON.parse(saved))
-              const exists = list.some(
-                (p) => p.provider === parsed.provider && p.model === parsed.model
-              )
-              if (exists) {
-                setActiveProvider(parsed)
-              } else if (IS_STANDALONE) {
-                // Standalone 模式下没有显式保存的 provider 时，以 standalone_config 为准
-                const fallback = getDefaultProviderFromStandaloneConfig(list)
-                if (fallback) setActiveProvider(fallback)
-                else if (list.length > 0) setActiveProvider(list[0])
-              } else if (list.length > 0) {
-                setActiveProvider(list[0])
-              }
-            } catch {
-              if (IS_STANDALONE) {
-                const fallback = getDefaultProviderFromStandaloneConfig(list)
-                if (fallback) setActiveProvider(fallback)
-                else if (list.length > 0) setActiveProvider(list[0])
-              } else if (list.length > 0) {
-                setActiveProvider(list[0])
-              }
-            }
-          } else if (IS_STANDALONE) {
-            const fallback = getDefaultProviderFromStandaloneConfig(list)
-            if (fallback) setActiveProvider(fallback)
-            else if (list.length > 0) setActiveProvider(list[0])
-          } else if (list.length > 0) {
-            setActiveProvider(list[0])
-          }
-        })
-        .catch(() => {
-          // 如果后端不可用，保持空列表，由用户手动选择
-        })
+      void reloadProviders()
     }
-  }, [setProviders, setActiveProvider, providers.length])
+  }, [providers.length, reloadProviders])
+
+  // BYOK Key 增删后刷新下拉——设置页加完 custom Key 回到主界面要即时可见，
+  // 不能等下次启动（reloadProviders 内部按 Key 补 BYOK 下拉项）
+  const byokApiKeys = useApiKeyStore((s) => s.apiKeys)
+  useEffect(() => {
+    if (providers.length > 0) void reloadProviders()
+    // 仅响应 Key 列表变化；reloadProviders/providers 变化由上方初始化效应覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byokApiKeys])
+
+  // 供应商预设库增删/改模型后同样即时刷新下拉（与 BYOK 同款理由）
+  const providerProfiles = useProviderProfileStore((s) => s.profiles)
+  useEffect(() => {
+    if (providers.length > 0) void reloadProviders()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerProfiles])
 
   // 切换对话时加载附件并清理待发送文件，同时清空预览坞产物状态并从后端索引水合还原
   useEffect(() => {
@@ -205,43 +451,29 @@ export function ChatView({ onNavigate }: ChatViewProps) {
     }
   }, [currentConversationId, loadConversationAttachments, clearPendingFiles])
 
-  // 同步附件和系统生成文件到右侧面板
-  useEffect(() => {
-    const userFiles = attachments.map((a) => ({
-      id: a.id,
-      name: a.name,
-      type: a.type,
-      size: a.size,
-    }))
-
-    const sysFiles = messages
-      .filter((m) => m.role === 'tool' && m.structuredData && typeof m.structuredData === 'object')
-      .map((m) => m.structuredData as Record<string, unknown>)
-      .filter((data) => 'downloadUrl' in data && typeof data.downloadUrl === 'string')
-      .map((data, idx) => ({
-        id: `sys-${idx}-${String(data.downloadUrl).slice(-8)}`,
-        name: String(data.fileName || t('chat.messageBubble.downloadFile')),
-        type: 'document',
-        size: 0,
-        downloadUrl: String(data.downloadUrl),
-      }))
-
-    setContextFiles([...userFiles, ...sysFiles])
-  }, [attachments, messages, currentConversationId, setContextFiles])
+  // 2026-07-31：上下文文件列表改为 ContextFilesPanel 内 useMemo 派生（原 effect 同步进 store 已删除）
 
   const handleSend = useCallback(
     (content: string, attachmentIds?: string[]) => {
-      sendMessage(content, attachmentIds)
+      const invocation = parseKnowledgeInvocation(content)
+      sendMessage(
+        invocation?.query ?? content,
+        attachmentIds,
+        // 知识检索范围只由显式 /knowledge 斜杠命令指定（2026-08-17：输入框镜头按钮已撤）
+        invocation?.scope ? { knowledgeScope: invocation.scope } : undefined,
+      )
     },
     [sendMessage]
   )
 
   const currentConv = conversations.find((c) => c.id === currentConversationId)
 
+  // 当前激活模型是否有可用 Key（调试展示：缺 Key 时按钮上琥珀点提醒；未探测到时按有处理避免误报）
+  const activeKeyReady = activeProvider ? (providerKeyStatus[activeProvider.provider] ?? true) : true
+
   // 顶部标题内联编辑
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editTitleValue, setEditTitleValue] = useState('')
-  const markManuallyEdited = useConversationTitleStore((s) => s.markManuallyEdited)
 
   const startEditingTitle = () => {
     if (!currentConv) return
@@ -266,12 +498,40 @@ export function ChatView({ onNavigate }: ChatViewProps) {
   return (
     <div className="relative flex-1 h-full overflow-hidden">
       {/* Main Chat Area */}
-      <div className="h-full flex flex-col bg-[#fafafa]">
-        {/* Top Bar */}
-        <div className="wf-topbar">
+      <div className="h-full flex flex-col wf-chat-bg">
+        {/* 触顶状态条 v13（macOS menu bar 式，平时全隐；topbarAutoHide=false 回退常驻粘性） */}
+        {topbarAutoHide && (
+          <div
+            className="wf-topbar-hotzone"
+            onMouseEnter={showTopbar}
+            onMouseLeave={() => hideTopbarSoon(900)}
+          />
+        )}
+        <div
+          className={cn(
+            'wf-topbar',
+            !topbarAutoHide && 'wf-topbar-sticky',
+            topbarAutoHide && topbarOn && 'on'
+          )}
+          onMouseEnter={topbarAutoHide ? showTopbar : undefined}
+          onMouseLeave={topbarAutoHide ? () => hideTopbarSoon(500) : undefined}
+        >
           <div className="wf-topbar-inner">
-          <div className="flex items-center gap-3">
-            <div>
+            <div className="wf-topbar-l">
+              <img src="./logo.ico" alt="WonWork" className="wf-topbar-logo" />
+              {/* 任务会话（parentConversationId 存在）顶栏给返回主对话入口——
+                  任务会话不进侧栏主列表，顶栏是唯一的明确回跳点 */}
+              {currentConv?.parentConversationId != null && (
+                <button
+                  type="button"
+                  className="wf-text-btn"
+                  onClick={() => openTaskConversation(currentConv.parentConversationId!)}
+                  title={t('chat.taskSession.backToParent')}
+                >
+                  <ChevronLeft size={14} />
+                  {t('chat.taskSession.backToParent')}
+                </button>
+              )}
               {isEditingTitle ? (
                 <input
                   type="text"
@@ -287,193 +547,196 @@ export function ChatView({ onNavigate }: ChatViewProps) {
                     }
                   }}
                   autoFocus
-                  className="text-sm font-semibold text-surface-800 bg-surface-50 border border-primary-300 rounded px-2 py-0.5 w-64 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                  className="text-sm font-semibold text-[var(--wf-ink)] bg-[var(--wf-bg)] border border-primary-300 rounded px-2 py-0.5 w-64 focus:outline-none focus:ring-2 focus:ring-primary-200"
                 />
               ) : (
-                <h2
+                <button
+                  type="button"
                   onClick={startEditingTitle}
-                  className="text-sm font-semibold text-surface-800 cursor-pointer hover:text-primary-600 select-text rounded px-1 -ml-1 hover:bg-surface-100 transition-colors"
+                  className="wf-topbar-title"
                   title={t('chat.chatView.clickToEditTitle')}
                 >
                   {currentConv?.title || t('chat.chatView.newConversation')}
-                </h2>
+                </button>
               )}
-              <p className="text-xs text-surface-400">
+              <span className="wf-topbar-meta">
                 {t('chat.chatView.messageCount', { count: messages.length })}
-              </p>
+              </span>
             </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <ContextCapacityBar />
+          <div className="wf-topbar-r">
 
-            {/* Skill Indicator */}
-            <div className="relative">
+            {/* 管理员模式入口（小圆点）：仅提权用户可见；激活时圆点常亮 */}
+            {adminEnabled && (
               <button
-                ref={skillButtonRef}
-                onClick={() => setShowSkillDropdown(!showSkillDropdown)}
+                onClick={() => void setAdminMode(!adminMode)}
                 className={cn(
                   'relative p-1.5 rounded-lg transition-colors',
-                  activeSkillIds.length > 0
-                    ? 'bg-primary-100 text-primary-600'
-                    : 'hover:bg-surface-100 text-surface-500'
+                  adminMode
+                    ? 'bg-[var(--wf-warn-bg)] text-[var(--wf-warn-ink)]'
+                    : 'hover:bg-[var(--wf-hover)] text-[var(--wf-faint)]'
                 )}
-                title={t('chat.chatView.loadedSkills')}
+                title={adminMode ? t('chat.chatView.exitAdminMode') : t('chat.chatView.enterAdminMode')}
               >
-                <Wrench size={18} />
-                {activeSkillIds.length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-primary-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                    {activeSkillIds.length}
-                  </span>
+                <ShieldCheck size={18} />
+                {adminMode && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--wf-warn-ink)] border-2 border-white" />
                 )}
               </button>
+            )}
 
-              {showSkillDropdown && (
-                <Portal>
-                  <div
-                    className="fixed w-56 bg-white border border-surface-200 rounded-lg shadow-lg z-[100] py-1"
-                    style={{
-                      top: skillButtonRef.current ? skillButtonRef.current.getBoundingClientRect().bottom + 4 : 0,
-                      right: skillButtonRef.current ? window.innerWidth - skillButtonRef.current.getBoundingClientRect().right : 0,
-                    }}
-                  >
-                    {activeSkillIds.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-surface-400">
-                        {t('chat.chatView.noSkillLoaded')}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="px-3 py-1 text-[10px] font-semibold text-surface-400 uppercase">
-                          {t('chat.chatView.loaded')}
-                        </div>
-                        {activeSkillIds.map((id) => {
-                          const skill = skills.find((s) => s.id === id)
-                          if (!skill) return null
-                          return (
-                            <div
-                              key={id}
-                              className="flex items-center justify-between px-3 py-1.5 hover:bg-surface-50"
-                            >
-                              <span className="text-xs text-surface-700 truncate flex-1">
-                                {skill.name}
-                              </span>
-                              <button
-                                onClick={() => unloadSkill(id)}
-                                className="p-0.5 rounded hover:bg-red-100 text-surface-400 hover:text-red-500 transition-colors"
-                              >
-                                <X size={10} />
-                              </button>
-                            </div>
-                          )
-                        })}
-                      </>
-                    )}
-                    <div className="border-t border-surface-100 mt-1 pt-1">
-                      <div className="px-3 py-1 text-[10px] font-semibold text-surface-400 uppercase">
-                        {t('chat.chatView.manualLoad')}
-                      </div>
-                      {skills
-                        .filter((s) => s.enabled && s.trigger.mode === 'manual' && !activeSkillIds.includes(s.id))
-                        .map((skill) => (
-                          <button
-                            key={skill.id}
-                            onClick={() => loadSkill(skill.id)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-surface-600 hover:bg-surface-50 transition-colors"
-                          >
-                            {skill.name}
-                          </button>
-                        ))}
-                      {skills.filter((s) => s.enabled && s.trigger.mode === 'manual' && !activeSkillIds.includes(s.id)).length === 0 && (
-                        <div className="px-3 py-1 text-xs text-surface-400">
-                          {t('chat.chatView.noManualSkill')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </Portal>
-              )}
-            </div>
+            {/* 轮迹目录入口（≥8 轮才出现；点开矩形提问目录卡，页面上零常驻元素） */}
+            {turnCount >= 8 && (
+              <button
+                onClick={() => setTurnNavOpen((v) => !v)}
+                className={cn('wf-sicon wf-turnnav-btn', turnNavOpen && 'on')}
+                title={t('chat.turnRail.railLabel')}
+                aria-label={t('chat.turnRail.railLabel')}
+              >
+                <ListTree size={18} />
+              </button>
+            )}
 
-            <button
-              onClick={toggleRightPanel}
-              className={cn(
-                'p-1.5 rounded-lg transition-colors',
-                rightPanelOpen
-                  ? 'bg-primary-100 text-primary-600'
-                  : 'hover:bg-surface-100 text-surface-500'
-              )}
-              title={rightPanelOpen ? t('chat.chatView.hidePanel') : t('chat.chatView.showPanel')}
-            >
-              <PanelRight size={18} />
-            </button>
-
-            {/* 预览坞开关（v7 prototype: § 预览面板 + unseen dot） */}
+            {/* 预览坞开关（.sicon 方钮 + 蓝图式角标 = unseen 数；dock 关闭且有 unseen 才显示） */}
             <button
               onClick={dockToggle}
-              className={cn(
-                'relative p-1.5 rounded-lg transition-colors',
-                dockOpen
-                  ? 'bg-primary-100 text-primary-600'
-                  : 'hover:bg-surface-100 text-surface-500'
-              )}
-              title={dockOpen ? '关闭预览坞' : '打开预览坞'}
+              className={cn('wf-sicon', dockOpen && 'on')}
+              title={dockOpen ? t('chat.chatView.closeDock') : t('chat.chatView.openDock')}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M3 9h18" />
                 <path d="M9 21V9" />
               </svg>
-              {dockUnseen && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 border-2 border-white" />
+              {!dockOpen && dockUnseen > 0 && (
+                <span className="wf-sicon-bdg">{dockUnseen}</span>
               )}
             </button>
+
+            {/* 记忆微尘（记忆之野 v11 顶栏入口） */}
+            <MemoryMote />
 
             {/* Provider Selector */}
             <div className="relative">
               <button
                 ref={providerButtonRef}
-                onClick={() => setShowProviders(!showProviders)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-surface-200 bg-surface-50 hover:bg-surface-100 transition-colors text-sm"
-                title={activeKeySource ? `${activeProvider?.provider} · ${activeProvider?.model}\nKey 来源：${activeKeySource}` : undefined}
+                onClick={() => {
+                  const next = !showProviders
+                  setShowProviders(next)
+                  // 展开时重探 Key 状态（设置页刚存完 Key 回来能立刻变绿）
+                  if (next) void refreshKeyStatus(providers)
+                }}
+                className="wf-modelchip"
+                title={[
+                  activeProvider ? `${activeProvider.provider} · ${activeProvider.model}` : '',
+                  activeKeySource ? t('chat.chatView.keySource', { source: activeKeySource }) : '',
+                  !activeKeyReady ? t('chat.chatView.keyMissing') : '',
+                ].filter(Boolean).join('\n') || undefined}
               >
+                {!activeKeyReady && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--wf-warn-ink)] flex-shrink-0" />
+                )}
                 <Bot size={14} className="text-primary-500" />
-                <span className="text-surface-700">
-                  {activeProvider?.provider || t('chat.chatView.selectModel')}
+                <span>
+                  {activeProvider
+                    ? providerDisplayName(t, activeProvider.provider)
+                    : t('chat.chatView.selectModel')}
                 </span>
                 {activeKeySource && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-200/70 text-surface-500 max-w-[120px] truncate">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--wf-mono-bg)]/70 text-[var(--wf-mut)] max-w-[120px] truncate">
                     {activeKeySource}
                   </span>
                 )}
-                <ChevronDown size={14} className="text-surface-400" />
+                <ChevronDown size={14} className="text-[var(--wf-faint)]" />
               </button>
 
               {showProviders && (
                 <Portal>
                   <div
-                    className="fixed w-56 bg-white border border-surface-200 rounded-lg shadow-lg z-[100] py-1"
+                    className="fixed w-56 bg-[var(--wf-card-bg)] border border-[var(--wf-line)] rounded-lg shadow-lg z-[100] py-1 max-h-80 overflow-y-auto"
                     style={{
                       top: providerButtonRef.current ? providerButtonRef.current.getBoundingClientRect().bottom + 4 : 0,
                       right: providerButtonRef.current ? window.innerWidth - providerButtonRef.current.getBoundingClientRect().right : 0,
                     }}
                   >
-                    {providers.map((p) => (
-                      <button
-                        key={`${p.provider}-${p.model}`}
-                        onClick={() => {
-                          setActiveProvider(p)
-                          localStorage.setItem('wonclaw_active_provider', JSON.stringify(p))
-                          setShowProviders(false)
-                        }}
-                        className={cn(
-                          'w-full text-left px-3 py-2 text-sm hover:bg-surface-50 transition-colors',
-                          activeProvider?.provider === p.provider && activeProvider?.model === p.model && 'bg-primary-50 text-primary-700'
-                        )}
-                      >
-                        <div className="font-medium">{p.provider}</div>
-                        <div className="text-xs text-surface-400">{p.model}</div>
-                      </button>
-                    ))}
+                    {/* 思考强度入口已迁到输入坞右缘芽轨（2026-09-07 拍板：下行=可配置项，
+                        点击弹选项窗；此处下拉只留渠道切换） */}
+                    {providers.map((p, idx) => {
+                      const keyReady = providerKeyStatus[p.provider] === true
+                      const isActive = activeProvider?.provider === p.provider && activeProvider?.model === p.model
+                      // 2026-09-07 排版修复：预设与内置渠道混排时同名供应商（如两个 DeepSeek 预设
+                      // + 内置 DeepSeek）三行无法区分来源。分组标题标明归属；预设行附协议徽标
+                      // （deepseek/deepseek1 这类同名不同协议的卡靠它区分）。
+                      const isProfile = isProfileProviderId(p.provider)
+                      const prevIsProfile = idx > 0 && isProfileProviderId(providers[idx - 1].provider)
+                      const showGroupLabel = idx === 0 || isProfile !== prevIsProfile
+                      const profileFormat = isProfile
+                        ? useProviderProfileStore.getState().profiles.find(
+                            (pr) => pr.id === profileIdFromProviderId(p.provider)
+                          )?.meta.apiFormat
+                        : undefined
+                      return (
+                        <div key={`${p.provider}-${p.model}`}>
+                          {showGroupLabel && (
+                            <div className="px-3 pt-1.5 pb-0.5 text-[10px] text-[var(--wf-faint)] select-none">
+                              {isProfile
+                                ? t('chat.chatView.groupProfiles')
+                                : t('chat.chatView.groupBuiltin')}
+                            </div>
+                          )}
+                        <button
+                          onClick={() => {
+                            setActiveProvider(p)
+                            localStorage.setItem('wonclaw_active_provider', JSON.stringify(p))
+                            // 供应商预设库：下拉直选 profile 时同步 store.activeId，
+                            // 设置页"在用"徽标与这里是同一事实
+                            const pid = isProfileProviderId(p.provider) ? profileIdFromProviderId(p.provider) : null
+                            if (pid) void useProviderProfileStore.getState().setActive(pid)
+                            setShowProviders(false)
+                          }}
+                          className={cn(
+                            'w-full text-left px-3 py-2 text-sm hover:bg-[var(--wf-hover)] transition-colors flex items-center gap-2',
+                            isActive && 'bg-primary-50 text-primary-700'
+                          )}
+                          title={keyReady
+                            ? t('chat.chatView.keyReady')
+                            : t('chat.chatView.keyMissing')}
+                        >
+                          <span
+                            className={cn(
+                              'w-1.5 h-1.5 rounded-full flex-shrink-0',
+                              keyReady ? 'bg-[var(--wf-ok-ink)]' : 'bg-[var(--wf-mut)]'
+                            )}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate flex items-center gap-1.5">
+                              <span className="truncate">{providerDisplayName(t, p.provider)}</span>
+                              {profileFormat && (
+                                <span className="flex-shrink-0 text-[9px] px-1 py-px rounded border border-[var(--wf-hair)] text-[var(--wf-faint)]">
+                                  {profileFormat === 'anthropic' ? 'Anthropic' : 'OpenAI'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-[var(--wf-faint)] truncate">{p.model}</div>
+                          </div>
+                          {isActive && <Check size={14} className="flex-shrink-0 text-primary-500" />}
+                        </button>
+                        </div>
+                      )
+                    })}
+                    {onNavigate && (
+                      <div className="border-t border-[var(--wf-hair)] mt-1 pt-1">
+                        <button
+                          onClick={() => {
+                            setShowProviders(false)
+                            onNavigate('settings')
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-[var(--wf-mut)] hover:bg-[var(--wf-hover)] hover:text-primary-600 transition-colors"
+                        >
+                          {t('chat.chatView.manageApiConfig')}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </Portal>
               )}
@@ -488,47 +751,20 @@ export function ChatView({ onNavigate }: ChatViewProps) {
             onComplete={() => {
               setShowOnboarding(false)
               // 重新加载 provider 列表
-              configApi.getProviders().then((backendProviders) => {
-                let list = backendProviders.length > 0 ? backendProviders : []
-                if (supportsLocalModel) {
-                  const localProviders = useLocalModelStore.getState().getProviderConfigs()
-                  const merged = [...list]
-                  for (const lp of localProviders) {
-                    const exists = merged.some(
-                      (p) => p.provider === lp.provider && p.model === lp.model
-                    )
-                    if (!exists) merged.push(lp)
-                  }
-                  list = merged
-                }
-                setProviders(list)
-                const saved = localStorage.getItem('wonclaw_active_provider')
-                if (saved) {
-                  try {
-                    const parsed = normalizeBackendProviderConfig(JSON.parse(saved))
-                    const exists = list.some(
-                      (p) => p.provider === parsed.provider && p.model === parsed.model
-                    )
-                    if (exists) {
-                      setActiveProvider(parsed)
-                    } else if (list.length > 0) {
-                      setActiveProvider(list[0])
-                    }
-                  } catch {
-                    if (list.length > 0) setActiveProvider(list[0])
-                  }
-                } else if (list.length > 0) {
-                  setActiveProvider(list[0])
-                }
-              })
+              void reloadProviders()
             }}
           />
         ) : (
-          <MessageList messages={messages} />
+          /* key=会话 id：切换会话时重建 Virtuoso，借 initialTopMostItemIndex 归位底部，
+             避免沿用旧会话的 scrollTop 落在新会话任意位置 */
+          <MessageList key={currentConversationId ?? 'new'} messages={messages} />
         )}
 
-        {/* 底部渐隐遮罩：防止对话文本与浮动输入框重叠 */}
-        <div className="wf-message-fade" />
+        {/* 轮迹目录（v3）：零常驻元素，顶栏图标唤出矩形目录 + 回到最新；只读滚动器，不碰消息流 */}
+        <TurnRail open={turnNavOpen && turnCount >= 8} onClose={() => setTurnNavOpen(false)} />
+
+        {/* 坞下硬边界蒙版：正文滚到坞中线被一刀切（"吸入"体感，实现=不透明板） */}
+        <div className="wf-dock-mask" />
 
         {/* Input */}
         <InputArea
@@ -537,14 +773,20 @@ export function ChatView({ onNavigate }: ChatViewProps) {
           isLoading={isLoading}
           isStreaming={isStreaming}
           disabled={!isLoggedIn}
-          onNavigate={onNavigate}
           onSendSupplement={sendSupplement}
           quote={quote}
           onClearQuote={() => setQuote(null)}
         />
 
+        {/* 浮动操作栏（审批 + ask_user 反问）：与 .wf-input-bar 同一包含块，
+            absolute 定位天然同中线——不做任何视口补偿 */}
+        <FloatingActionBar messages={messages} />
+
         {/* 选中引用浮条（position:fixed） */}
         {quotePopover}
+
+        {/* 子 Agent 对话页（胶囊点开，整屏覆层） */}
+        <SubAgentView />
       </div>
 
       {/* Right Panel */}
@@ -569,18 +811,19 @@ function StandaloneOnboarding({ onComplete }: StandaloneOnboardingProps) {
   const [isSaving, setIsSaving] = useState(false)
 
   const providerOptions: { value: StandaloneProvider; label: string }[] = [
-    { value: 'kimi', label: 'Kimi (Moonshot)' },
-    { value: 'openai', label: 'OpenAI' },
-    { value: 'claude', label: 'Claude (Anthropic)' },
-    { value: 'deepseek', label: 'DeepSeek' },
-    { value: 'qwen', label: '通义千问' },
-    { value: 'zhipu', label: '智谱 AI' },
-    { value: 'baichuan', label: '百川' },
-    { value: 'spark', label: '讯飞星火' },
-    { value: 'hunyuan', label: '腾讯混元' },
-    { value: 'doubao', label: '火山豆包' },
-    { value: 'ernie', label: '百度文心' },
-    { value: 'custom', label: '自定义 OpenAI 兼容接口' },
+    { value: 'kimi', label: providerDisplayName(t, 'kimi') },
+    { value: 'openai', label: providerDisplayName(t, 'openai') },
+    { value: 'claude', label: providerDisplayName(t, 'claude') },
+    { value: 'deepseek', label: providerDisplayName(t, 'deepseek') },
+    { value: 'qwen', label: t('chat.providers.qwen') },
+    { value: 'zhipu', label: t('chat.providers.zhipu') },
+    { value: 'baichuan', label: t('chat.providers.baichuan') },
+    { value: 'spark', label: t('chat.providers.spark') },
+    { value: 'hunyuan', label: t('chat.providers.hunyuan') },
+    { value: 'doubao', label: t('chat.providers.doubao') },
+    { value: 'ernie', label: t('chat.providers.ernie') },
+    { value: 'ark-code-latest', label: t('chat.providers.arkCodeLatest') },
+    { value: 'custom', label: t('chat.providers.custom') },
   ]
 
   const selectedProvider = PROVIDERS[provider]
@@ -635,23 +878,23 @@ function StandaloneOnboarding({ onComplete }: StandaloneOnboardingProps) {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center bg-surface-50 px-4">
-      <div className="w-full max-w-md bg-white border border-surface-200 rounded-2xl shadow-sm p-6 space-y-5">
+    <div className="flex-1 flex items-center justify-center bg-[var(--wf-bg)] px-4">
+      <div className="w-full max-w-md bg-[var(--wf-card-bg)] border border-[var(--wf-line)] rounded-2xl shadow-sm p-6 space-y-5">
         <div className="text-center space-y-2">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-primary-100 flex items-center justify-center">
             <Bot size={28} className="text-primary-600" />
           </div>
-          <h2 className="text-lg font-semibold text-surface-800">{t('chat.onboarding.title')}</h2>
-          <p className="text-sm text-surface-500">{t('chat.onboarding.description')}</p>
+          <h2 className="text-lg font-semibold text-[var(--wf-ink)]">{t('chat.onboarding.title')}</h2>
+          <p className="text-sm text-[var(--wf-mut)]">{t('chat.onboarding.description')}</p>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-surface-600 mb-1.5">{t('chat.onboarding.provider')}</label>
+            <label className="block text-xs font-medium text-[var(--wf-sub)] mb-1.5">{t('chat.onboarding.provider')}</label>
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value as StandaloneProvider)}
-              className="w-full px-3 py-2 text-sm bg-surface-50 border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+              className="w-full px-3 py-2 text-sm bg-[var(--wf-bg)] border border-[var(--wf-line)] rounded-lg focus:outline-none focus:border-primary-400"
             >
               {providerOptions.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
@@ -661,27 +904,29 @@ function StandaloneOnboarding({ onComplete }: StandaloneOnboardingProps) {
 
           {showBaseUrl && (
             <div>
-              <label className="block text-xs font-medium text-surface-600 mb-1.5">{t('chat.onboarding.baseUrl')}</label>
+              <label className="block text-xs font-medium text-[var(--wf-sub)] mb-1.5">{t('chat.onboarding.baseUrl')}</label>
               <input
                 type="text"
+                {...plainTextAutofillGuard}
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.example.com/v1"
-                className="w-full px-3 py-2 text-sm bg-surface-50 border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                className="w-full px-3 py-2 text-sm bg-[var(--wf-bg)] border border-[var(--wf-line)] rounded-lg focus:outline-none focus:border-primary-400"
               />
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-surface-600 mb-1.5">{t('chat.onboarding.apiKey')}</label>
+            <label className="block text-xs font-medium text-[var(--wf-sub)] mb-1.5">{t('chat.onboarding.apiKey')}</label>
             <input
               type="password"
+              {...credentialAutofillGuard}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={t('chat.onboarding.apiKeyPlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-surface-50 border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+              className="w-full px-3 py-2 text-sm bg-[var(--wf-bg)] border border-[var(--wf-line)] rounded-lg focus:outline-none focus:border-primary-400"
             />
-            <p className="text-[11px] text-surface-400 mt-1.5">{t('chat.onboarding.apiKeyHint')}</p>
+            <p className="text-[11px] text-[var(--wf-faint)] mt-1.5">{t('chat.onboarding.apiKeyHint')}</p>
           </div>
         </div>
 
@@ -692,7 +937,7 @@ function StandaloneOnboarding({ onComplete }: StandaloneOnboardingProps) {
             'w-full py-2.5 rounded-lg text-sm font-medium transition-colors',
             apiKey.trim() && !isSaving
               ? 'bg-primary-500 text-white hover:bg-primary-600'
-              : 'bg-surface-200 text-surface-400 cursor-not-allowed'
+              : 'bg-[var(--wf-mono-bg)] text-[var(--wf-faint)] cursor-not-allowed'
           )}
         >
           {isSaving ? t('chat.onboarding.saving') : t('chat.onboarding.startChat')}

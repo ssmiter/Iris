@@ -5,7 +5,7 @@ import {
   statWorkspaceFile,
   getWorkspaceState,
 } from '@/utils/workspaceStorage'
-import { isProjectPath, normalizeVirtualPath } from '@/config/workspaceDirs'
+import { normalizeVirtualPath } from '@/config/workspaceDirs'
 import type { FileEntry, WorkspaceAdapter } from './index'
 
 const STORE_NAME = 'files'
@@ -22,13 +22,9 @@ let lastWorkspaceScan = 0
 const WORKSPACE_SCAN_INTERVAL_MS = 5000
 
 function normalizePath(input: string): string {
-  const p = normalizeVirtualPath(input)
-  // S4：/project 用户轨需要 MESCLI Local（后端在本机解析真实目录）；
-  // Standalone 的项目模式走 File System Access 句柄，是 S5 的范围。
-  if (isProjectPath(p)) {
-    throw new Error('项目模式（/project）需要 MESCLI Local，Standalone 将在后续版本支持（S5）')
-  }
-  return p
+  // P0-7（2026-09-01）：normalizeVirtualPath 已内含 /project 退役报错与物理路径透传；
+  // Standalone 无本机目录概念，物理路径在此层没有意义，但保留透传语义由调用方兜错
+  return normalizeVirtualPath(input)
 }
 
 function getParentPath(path: string): string {

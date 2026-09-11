@@ -1,3 +1,4 @@
+import { normalizeToolCalls } from '@/utils/normalizeToolCalls'
 import type { LocalModelConfig, LocalModelInfo, LocalModelProvider, Message, ToolDefinition, ToolCall } from '@/types/mescli'
 import type { StreamChunk } from './client'
 
@@ -99,20 +100,6 @@ function mapLocalMessage(m: Message): Record<string, unknown> {
     mapped.tool_call_id = m.toolCallId
   }
   return mapped
-}
-
-function normalizeToolCalls(raw: unknown[]): ToolCall[] {
-  return raw.map((tc: any) => ({
-    id: tc.id || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: 'function' as const,
-    function: {
-      name: tc.function?.name || '',
-      arguments:
-        typeof tc.function?.arguments === 'string'
-          ? tc.function.arguments
-          : JSON.stringify(tc.function?.arguments || {}),
-    },
-  }))
 }
 
 function streamChat(

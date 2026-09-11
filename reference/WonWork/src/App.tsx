@@ -1,25 +1,28 @@
 import { useEffect, useState } from 'react'
 import { MainLayout } from '@/components/Layout'
 import { UpdateAvailableModal } from '@/components/Update/UpdateAvailableModal'
+import { UpdateNotificationBanner } from '@/components/Update/UpdateNotificationBanner'
 import { LoginModal } from '@/components/Layout/LoginModal'
 import { Toast } from '@/components/common/Toast'
 import { useAuthStore, isMesToken } from '@/stores/authStore'
 import { useRuntimeConfigStore } from '@/stores/runtimeConfigStore'
-import { useCronSchedulerStore } from '@/stores/cronSchedulerStore'
+import { useCronSchedulerStore, scheduleNextWake } from '@/stores/cronSchedulerStore'
 import { useSkillStore } from '@/stores/skillStore'
+import { useWorkflowStore } from '@/stores/workflowStore'
 import { useQuotaStore } from '@/stores/quotaStore'
 import { useLicenseStore } from '@/stores/licenseStore'
 import { useUpdateStore } from '@/stores/updateStore'
 import { usePermissionStore } from '@/stores/permissionStore'
 import { useWebBridgeStore } from '@/stores/webbridgeStore'
-import { useDagWorkflowStore } from '@/stores/dagWorkflowStore'
 import { isOnline, supportsLicenseActivation, supportsTokenPlan } from '@/config/product'
-import { ensureDagExampleWorkflows } from '@/utils/dagWorkflowExamples'
+import { shouldValidateMesSessionOnStartup } from '@/utils/authSessionRecovery'
+import { useMescliPackageStore } from '@/stores/mescliPackageStore'
+import { initTheme } from '@/utils/theme'
 
 const IS_STANDALONE = import.meta.env.VITE_STANDALONE_MODE === 'true'
 
 function App() {
-  const { isLoggedIn, isWebsiteLoggedIn, fetchUser, restoreLocalUser, restoreWebsiteSession } = useAuthStore()
+  const { isLoggedIn, isMesLoggedIn, isWebsiteLoggedIn, fetchUser, restoreLocalUser, restoreWebsiteSession } = useAuthStore()
   const { config: runtimeConfig, load: loadRuntimeConfig, loaded: runtimeConfigLoaded } = useRuntimeConfigStore()
   const { loadPermissions } = usePermissionStore()
   const { checkVersion } = useUpdateStore()
@@ -30,21 +33,23 @@ function App() {
     loadRuntimeConfig()
   }, [loadRuntimeConfig])
 
+  // 应用启动时初始化主题（读取持久化主题并监听系统切换）
+  useEffect(() => {
+    initTheme()
+  }, [])
+
   // 应用启动时即加载 Skill 列表，确保对话能使用关键词触发和模板选择
   useEffect(() => {
     useSkillStore.getState().init()
+    useWorkflowStore.getState().init()
   }, [])
 
-  // 应用启动时播种 WebBridge / DAG 示例工作流，确保安装后首次打开即可见
+  // Launcher 已启动内部浏览器运行服务；前端通过 AIGateway 获取短期会话后静默连接。
   useEffect(() => {
-    useWebBridgeStore.getState().ensureExampleWorkflows()
-    ensureDagExampleWorkflows()
-  }, [])
-
-  // 安装包启动后，Launcher 已在后台拉起 WebBridge Daemon；前端启动时静默探测并自动连接
-  useEffect(() => {
+    if (!runtimeConfigLoaded) return
+    if ((isOnline || runtimeConfig.requireLogin) && !isLoggedIn) return
     useWebBridgeStore.getState().tryAutoConnect(true).catch(() => undefined)
-  }, [])
+  }, [isLoggedIn, runtimeConfig.requireLogin, runtimeConfigLoaded])
 
   // 应用启动时加载当前用户权限
   useEffect(() => {
@@ -78,12 +83,21 @@ function App() {
     if (IS_STANDALONE && !isLoggedIn) {
       restoreLocalUser()
     }
-    // MESCLI 模式下尝试恢复登录状态：本地模式会直接返回本地用户，在线模式无会话则进入登录
-    else if (!isLoggedIn) {
+    // MESCLI 模式下只校验已持久化的 MES 身份，或在完全未登录时恢复会话。
+    // 本地用户没有远端 MES 会话，不能因一次 401 被误替换；过期的 MES JWT
+    // 必须重新校验，否则页面会继续显示缓存身份但所有受保护请求都返回 401。
+    else if (
+      shouldValidateMesSessionOnStartup({
+        isOnline,
+        websiteMode: runtimeConfig.requireLogin && runtimeConfig.provider === 'website',
+        isLoggedIn,
+        isMesLoggedIn,
+      })
+    ) {
       fetchUser()
     }
     setAuthReady(true)
-  }, [fetchUser, isLoggedIn, restoreLocalUser, restoreWebsiteSession, runtimeConfigLoaded, runtimeConfig.provider, runtimeConfig.requireLogin])
+  }, [fetchUser, isLoggedIn, isMesLoggedIn, restoreLocalUser, restoreWebsiteSession, runtimeConfigLoaded, runtimeConfig.provider, runtimeConfig.requireLogin])
 
   // License / Quota —— 仅登录后初始化，避免未登录时 401 报错
   useEffect(() => {
@@ -94,19 +108,39 @@ function App() {
     }
   }, [isLoggedIn])
 
-  // 全局定时任务检查 —— 每 30 秒检查一次到期任务
+  // 定时任务唤醒（2026-08-05 事件驱动，替代固定轮询）：
+  // 主机制=scheduleNextWake 精确到点定时器（store 内，任务变更自动重排）；
+  // 这里只做三件事：启动时从后端同步权威清单（loadTasks 内部 arm 首次唤醒）；
+  // 后台标签节流/系统睡眠的补查事件（focus/visibilitychange）；
+  // 5 分钟低频保险丝（不空转，纯兜底漏网）。
   useEffect(() => {
-    const interval = setInterval(() => {
-      useCronSchedulerStore.getState().checkAndRunDueTasks()
-    }, 30000)
-    return () => clearInterval(interval)
+    void useCronSchedulerStore.getState().loadTasks()
+    const recheck = () => {
+      void useCronSchedulerStore
+        .getState()
+        .checkAndRunDueTasks()
+        .finally(() => scheduleNextWake())
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') recheck()
+    }
+    window.addEventListener('focus', recheck)
+    document.addEventListener('visibilitychange', onVisibility)
+    const backstop = setInterval(recheck, 5 * 60 * 1000)
+    return () => {
+      window.removeEventListener('focus', recheck)
+      document.removeEventListener('visibilitychange', onVisibility)
+      clearInterval(backstop)
+    }
   }, [])
 
   // 版本更新检查 —— 启动时及每 30 分钟检查一次
   useEffect(() => {
     checkVersion()
+    void useMescliPackageStore.getState().checkUpdates()
     const interval = setInterval(() => {
       checkVersion()
+      void useMescliPackageStore.getState().checkUpdates()
     }, 30 * 60 * 1000)
     return () => clearInterval(interval)
   }, [checkVersion])
@@ -120,6 +154,7 @@ function App() {
     <>
       <MainLayout />
       <UpdateAvailableModal />
+      <UpdateNotificationBanner />
       <LoginModal isOpen={requireLoginModal} onClose={() => {}} />
       <Toast />
     </>

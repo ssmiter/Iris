@@ -16,11 +16,11 @@ interface ArtifactSkeletonProps {
 export const ArtifactSkeleton = memo(function ArtifactSkeleton({
   variant = 'image',
 }: ArtifactSkeletonProps) {
-  const baseBlock = 'bg-surface-200 rounded motion-safe:animate-pulse'
+  const baseBlock = 'bg-[var(--wf-mono-bg)] rounded motion-safe:animate-pulse'
 
   if (variant === 'image') {
     return (
-      <div className="mt-2 rounded-xl border border-surface-200 bg-white p-4 space-y-3">
+      <div className="mt-2 rounded-xl border border-[var(--wf-line)] bg-[var(--wf-card-bg)] p-4 space-y-3">
         <div className={cn(baseBlock, 'h-40 w-full')} />
         <div className={cn(baseBlock, 'h-5 w-2/3')} />
         <div className={cn(baseBlock, 'h-3 w-1/2')} />
@@ -33,7 +33,7 @@ export const ArtifactSkeleton = memo(function ArtifactSkeleton({
   }
 
   return (
-    <div className="mt-2 rounded-xl border border-surface-200 bg-white p-4 space-y-3">
+    <div className="mt-2 rounded-xl border border-[var(--wf-line)] bg-[var(--wf-card-bg)] p-4 space-y-3">
       <div className={cn(baseBlock, 'h-5 w-2/3')} />
       <div className="space-y-2">
         <div className={cn(baseBlock, 'h-6 w-full')} />

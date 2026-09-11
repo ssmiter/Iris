@@ -7,13 +7,67 @@
  * - 当前预览的产物 ID
  * - unseen dot 标记
  *
- * 不持久化——产物是会话级别的，刷新后清零。
+ * 产物本身是会话级别的（刷新后内存清零，靠后端索引水合还原）；
+ * 唯一持久化的是「移除墓碑」——被移除的产物 id 按会话记入 localStorage，
+ * 水合时命中墓碑即不再复活（刷新/重进不复活）。
  */
 
 import { create } from 'zustand'
 import type { FileCardArtifact } from '@/types/artifactDock'
+import { useConversationStore } from '@/stores/conversationStore'
 
 export type DockTab = 'preview' | 'files'
+
+// ── 移除墓碑（localStorage）────────────────────────────────
+// 移除产物是「坞层」语义：本地列表移除 + 按会话记墓碑，水合时命中墓碑即跳过。
+// 墓碑跨水合存活、不随 clearConversation 清除（这正是它存在的意义）。
+const TOMBSTONE_KEY = 'wonclaw-dock-tombstones'
+const TOMBSTONE_MAX = 200
+
+/** 读取全量墓碑表（Record<convId, artifactId[]>）；localStorage 异常时回退空表 */
+function readTombstones(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(TOMBSTONE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string[]>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+function writeTombstones(map: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(map))
+  } catch (e) {
+    console.warn('[artifactDock] 墓碑写入失败（不影响列表移除）:', e)
+  }
+}
+
+/** 记录一条墓碑：会话内去重、追加到末尾；超上限丢最旧 */
+function addTombstone(convId: string, artifactId: string): void {
+  const map = readTombstones()
+  const list = (Array.isArray(map[convId]) ? map[convId] : []).filter((x) => x !== artifactId)
+  list.push(artifactId)
+  if (list.length > TOMBSTONE_MAX) list.splice(0, list.length - TOMBSTONE_MAX)
+  map[convId] = list
+  writeTombstones(map)
+}
+
+/** 某会话的墓碑 id 集合 */
+function tombstoneIds(convId: string): Set<string> {
+  const list = readTombstones()[convId]
+  return new Set(Array.isArray(list) ? list : [])
+}
+
+/** 当前会话墓碑键；无会话时用匿名兜底（仍跨水合生效） */
+function currentConvKey(): string {
+  const id = useConversationStore.getState().currentConversationId
+  return id == null ? '__anon__' : String(id)
+}
 
 interface ArtifactDockState {
   // ── 面板状态 ──
@@ -40,19 +94,24 @@ interface ArtifactDockState {
   setTab: (tab: DockTab) => void
   /** 切换当前预览的产物 */
   setCurrent: (artifactId: string) => void
-  /** 注册一个新产物（FileCard 挂载时调用） */
-  registerArtifact: (artifact: FileCardArtifact) => void
+  /**
+   * 注册一个新产物（FileCard 挂载时调用）。
+   * opts.auto=true 表示被动注册（FileCard 挂载触发）——尊重墓碑，用户已移除的不复活；
+   * 不带 auto 的是显式意图（FilesPane 点击工作区文件）——放行复活。
+   */
+  registerArtifact: (artifact: FileCardArtifact, opts?: { auto?: boolean }) => void
   /**
    * 会话切换时从后端索引水合注册表（历史产物还原）。
    * 与 registerArtifact 的区别：不标 unseen（这些产物用户此前已见过）、
    * 按数组顺序整体设置（顺序即后端 CreatedAt 升序）。
    */
   hydrateArtifacts: (artifacts: FileCardArtifact[]) => void
-  /** 标记产物为已查看 */
-  markSeen: (artifactId: string) => void
-  /** 标记所有 unseen 为已查看 */
-  markAllSeen: () => void
-  /** 切换对话时清空所有产物 */
+  /**
+   * 从坞中移除单个产物（前端坞层语义：本地列表移除 + 会话墓碑防水合复活）。
+   * 若移除的正是当前预览产物，同时按 close 逻辑关闭预览。
+   */
+  removeArtifact: (id: string) => void
+  /** 切换对话时清空所有产物（墓碑不清——墓碑的意义就是跨水合存活） */
   clearConversation: () => void
 }
 
@@ -99,7 +158,9 @@ export const useArtifactDockStore = create<ArtifactDockState>()((set, get) => ({
     })
   },
 
-  registerArtifact: (artifact) => {
+  registerArtifact: (artifact, opts) => {
+    // 被动注册（FileCard 重挂载）命中墓碑直接拒——否则墓碑只挡水合挡不住重进会话复活
+    if (opts?.auto && tombstoneIds(currentConvKey()).has(artifact.id)) return
     set((s) => {
       const existing = s.artifacts[artifact.id]
 
@@ -141,10 +202,14 @@ export const useArtifactDockStore = create<ArtifactDockState>()((set, get) => ({
 
   hydrateArtifacts: (artifacts) => {
     if (artifacts.length === 0) return
+    // 墓碑过滤：被移除的产物不再水合复活（刷新/重进不复活）
+    const tomb = tombstoneIds(currentConvKey())
+    const survivors = artifacts.filter((a) => !tomb.has(a.id))
+    if (survivors.length === 0) return
     set((s) => {
       const newArtifacts = { ...s.artifacts }
       const newOrder = [...s.artifactOrder]
-      for (const a of artifacts) {
+      for (const a of survivors) {
         // 已存在（如 live 注册含富数据）不覆盖——索引水合只补缺
         if (!(a.id in newArtifacts)) {
           newOrder.push(a.id)
@@ -159,15 +224,28 @@ export const useArtifactDockStore = create<ArtifactDockState>()((set, get) => ({
     })
   },
 
-  markSeen: (artifactId) => {    set((s) => {
-      const newUnseen = new Set(s.unseenIds)
-      newUnseen.delete(artifactId)
-      return { unseenIds: newUnseen }
-    })
-  },
+  removeArtifact: (id) => {
+    // 先记墓碑：即使当前不在列表，也阻止后续水合/重进复活
+    addTombstone(currentConvKey(), id)
 
-  markAllSeen: () => {
-    set({ unseenIds: new Set<string>() })
+    set((s) => {
+      if (!(id in s.artifacts) && s.currentArtifactId !== id) return {}
+
+      const nextArtifacts = { ...s.artifacts }
+      delete nextArtifacts[id]
+      const nextOrder = s.artifactOrder.filter((oid) => oid !== id)
+
+      const patch: Partial<ArtifactDockState> = {
+        artifacts: nextArtifacts,
+        artifactOrder: nextOrder,
+      }
+      // 移除的正是当前预览 → 按 close 语义关掉预览
+      if (s.currentArtifactId === id) {
+        patch.isOpen = false
+        patch.currentArtifactId = null
+      }
+      return patch
+    })
   },
 
   clearConversation: () => {

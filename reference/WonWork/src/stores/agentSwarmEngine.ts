@@ -14,7 +14,40 @@ import type {
 } from '@/types/agentSwarm'
 import { estimateCriticalSteps } from '@/types/agentSwarm'
 import type { Agent, AgentMessage, SwarmTask } from '@/stores/agentSwarmStore'
-import { buildTopologicalWaves } from '@/utils/dagTopology'
+
+/** 拓扑波次划分（swarm dag 并行模式专用，原 dagTopology 工具随 DagWorkflow 家族删除后内联于此） */
+function buildTopologicalWaves<T>(
+  items: T[],
+  getId: (item: T) => string,
+  getDependencies: (item: T) => string[]
+): T[][] {
+  const waves: T[][] = []
+  const remaining = new Map(items.map((item) => [getId(item), item]))
+
+  while (remaining.size > 0) {
+    const ready: T[] = []
+    for (const item of remaining.values()) {
+      const deps = getDependencies(item)
+      if (deps.every((dep) => !remaining.has(dep))) {
+        ready.push(item)
+      }
+    }
+
+    if (ready.length === 0) {
+      // 存在循环依赖，将剩余任务全部放入下一波次并终止
+      ready.push(...remaining.values())
+      waves.push(ready)
+      break
+    }
+
+    waves.push(ready)
+    for (const item of ready) {
+      remaining.delete(getId(item))
+    }
+  }
+
+  return waves
+}
 
 export interface SwarmCallbacks {
   addMessage: (msg: Omit<AgentMessage, 'id' | 'timestamp'>) => void

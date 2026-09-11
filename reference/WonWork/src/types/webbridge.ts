@@ -138,6 +138,8 @@ export interface ActionResult {
   page_state_after?: PageState
   /** 实况缩略帧（base64 JPEG），动作成功后由 daemon 附加，供浏览器舞台实时观赏 */
   screenshot_thumb?: string
+  /** 自动化指针在浏览器 viewport 中的位置 */
+  pointer?: { x: number; y: number; kind: 'move' | 'click' | 'type' | 'scroll' }
 }
 
 export interface SecurityPolicy {
@@ -230,13 +232,15 @@ export interface WorkspaceFileInfo {
 
 export interface WebBridgeRequest {
   id: string
-  type: 'action' | 'workflow' | 'ping' | 'config' | 'start_recording' | 'stop_recording' | 'resolve_selector' | 'list_workspace_files' | 'delete_workspace_file' | 'read_workspace_file' | 'write_workspace_file' | 'start_screencast' | 'stop_screencast' | 'input_event'
+  type: 'action' | 'workflow' | 'ping' | 'config' | 'start_recording' | 'stop_recording' | 'resolve_selector' | 'list_workspace_files' | 'delete_workspace_file' | 'read_workspace_file' | 'write_workspace_file' | 'start_screencast' | 'stop_screencast' | 'input_event' | 'close_browser' | 'browser_window'
   payload?: unknown
 }
 
+export type BrowserWindowCommand = 'show' | 'arrange' | 'activate' | 'hide'
+
 export interface WebBridgeResponse {
   id: string
-  type: 'action_result' | 'workflow_result' | 'page_state' | 'pong' | 'error' | 'recorded_action' | 'selector_resolved' | 'workspace_files' | 'workspace_file_content' | 'workspace_file_saved' | 'screencast_frame'
+  type: 'action_result' | 'workflow_result' | 'page_state' | 'pong' | 'error' | 'recorded_action' | 'selector_resolved' | 'workspace_files' | 'workspace_file_content' | 'workspace_file_saved' | 'screencast_frame' | 'browser_user_interaction' | 'browser_closed'
   success: boolean
   payload?: unknown
   error?: string
@@ -247,9 +251,19 @@ export interface WebBridgeResponse {
 /** 舞台输入事件（接管模式：用户在舞台画面上的操作转发给真实浏览器） */
 export type StageInputEvent =
   | { kind: 'click'; x: number; y: number }
+  | {
+      kind: 'mouse'
+      event: 'move' | 'down' | 'up'
+      x: number
+      y: number
+      button?: 'left' | 'middle' | 'right'
+      buttons?: number
+      clickCount?: number
+    }
   | { kind: 'scroll'; x: number; y: number; deltaY: number }
   | { kind: 'text'; text: string }
   | { kind: 'key'; key: string }
+  | { kind: 'resize'; width: number; height: number }
 
 // ==================== 日志与状态 ====================
 

@@ -48,10 +48,10 @@ export function SlashMenu({ query, onExecute, onComplete, onClose, onTopCandidat
     const skill = ranked.filter((c) => c.group === 'skill')
     const out: FlatItem[] = []
     builtin.forEach((cmd, i) =>
-      out.push({ cmd, groupLabel: i === 0 ? t('chat.slashMenu.groupBuiltin', { defaultValue: '命令' }) : undefined })
+      out.push({ cmd, groupLabel: i === 0 ? t('chat.slashMenu.groupBuiltin') : undefined })
     )
     skill.forEach((cmd, i) =>
-      out.push({ cmd, groupLabel: i === 0 ? t('chat.slashMenu.groupSkill', { defaultValue: '技能' }) : undefined })
+      out.push({ cmd, groupLabel: i === 0 ? t('chat.slashMenu.groupSkill') : undefined })
     )
     return out
   }, [ranked, query, t])
@@ -117,7 +117,7 @@ export function SlashMenu({ query, onExecute, onComplete, onClose, onTopCandidat
     <div className="wf-slash">
       <div className="wf-slash-list" ref={listRef}>
         {items.length === 0 && (
-          <div className="wf-slash-empty">{t('chat.slashMenu.empty', { defaultValue: '没有匹配的命令' })}</div>
+          <div className="wf-slash-empty">{t('chat.slashMenu.empty')}</div>
         )}
         {items.map((item, idx) => (
           <div key={item.cmd.name}>
@@ -139,10 +139,10 @@ export function SlashMenu({ query, onExecute, onComplete, onClose, onTopCandidat
         ))}
       </div>
       <div className="wf-slash-foot">
-        <span><b>↑↓</b> {t('chat.slashMenu.footSelect', { defaultValue: '选择' })}</span>
-        <span><b>Tab</b> {t('chat.slashMenu.footComplete', { defaultValue: '补全' })}</span>
-        <span><b>Enter</b> {t('chat.slashMenu.footRun', { defaultValue: '执行' })}</span>
-        <span><b>Esc</b> {t('chat.slashMenu.footClose', { defaultValue: '关闭' })}</span>
+        <span><b>↑↓</b> {t('chat.slashMenu.footSelect')}</span>
+        <span><b>Tab</b> {t('chat.slashMenu.footComplete')}</span>
+        <span><b>Enter</b> {t('chat.slashMenu.footRun')}</span>
+        <span><b>Esc</b> {t('chat.slashMenu.footClose')}</span>
       </div>
     </div>
   )

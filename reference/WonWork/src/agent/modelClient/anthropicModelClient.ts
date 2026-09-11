@@ -1,12 +1,3 @@
-/**
- * Anthropic 兼容 ModelClient
- *
- * 适用于：
- * - Claude 官方 API
- * - Kimi Code（https://api.kimi.com/coding）
- * - 其他 Anthropic Messages API 兼容端点
- */
-
 import type { Message, ToolDefinition, StreamChunk } from '@/types/mescli'
 import type {
   ModelClient,
@@ -24,10 +15,18 @@ import {
 } from '@/api/standalone/anthropicStreamParser'
 import { createSSEParserState, parseSSEBuffer, flushSSEBuffer, parseSSEData } from '@/utils/sseParser'
 import type { SSEEvent } from '@/utils/sseParser'
-import { useUsageStore, buildTodayUsageRecord } from '@/stores/usageStore'
-import { estimateTextTokens } from '@/utils/tokenEstimator'
+import { createUsageTrackingCallbacks } from './usageTracking'
 import { buildAnthropicMessages } from './messageNormalizer'
 import { createRetryableStream, type StreamAttempt } from './retryingStream'
+
+/**
+ * Anthropic 兼容 ModelClient
+ *
+ * 适用于：
+ * - Claude 官方 API
+ * - Kimi Code（https://api.kimi.com/coding）
+ * - 其他 Anthropic Messages API 兼容端点
+ */
 
 export interface AnthropicModelClientOptions {
   providerId: string
@@ -68,8 +67,12 @@ export function createAnthropicModelClient(
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'x-api-key': effectiveApiKey,
         'anthropic-version': apiVersion,
+        'x-api-key': effectiveApiKey,
+      }
+      // effort 是 beta 能力（claude-code EFFORT_BETA_HEADER 同款），仅在发送档位时声明
+      if (request.effort) {
+        headers['anthropic-beta'] = 'effort-2025-11-24'
       }
 
       const retryable = createRetryableStream({
@@ -114,6 +117,11 @@ function buildAnthropicRequestBody(
     system,
     max_tokens: request.maxTokens ?? 2048,
     stream: true,
+  }
+
+  // 思考强度（照抄 claude-code configureEffortParams）：output_config.effort + beta 头
+  if (request.effort) {
+    body.output_config = { effort: request.effort }
   }
 
   if (request.tools && request.tools.length > 0) {
@@ -365,52 +373,6 @@ function executeFallback(options: ExecuteOptions): StreamAttempt {
     abort: () => abortController.abort(),
     finished,
   }
-}
-
-export function createUsageTrackingCallbacks(
-  request: ModelClientRequest,
-  userCallbacks: ModelClientStreamCallbacks
-): {
-  callbacks: ModelClientStreamCallbacks
-  reportUsage: () => void
-} {
-  let outputText = ''
-  let realTokensIn: number | undefined
-  let realTokensOut: number | undefined
-
-  const reportUsage = () => {
-    const inputText = request.messages.map((m) => m.content).join('\n')
-    const tokensIn = realTokensIn ?? estimateTextTokens(inputText)
-    const tokensOut = realTokensOut ?? estimateTextTokens(outputText)
-    if (tokensIn > 0 || tokensOut > 0) {
-      useUsageStore.getState().report(
-        buildTodayUsageRecord({
-          tokensIn,
-          tokensOut,
-          apiCalls: 1,
-        })
-      )
-    }
-  }
-
-  const callbacks: ModelClientStreamCallbacks = {
-    onChunk: (chunk) => {
-      if (chunk.type === 'content') {
-        outputText += chunk.content || ''
-      } else if (chunk.type === 'usage' && chunk.usage) {
-        if (typeof chunk.usage.tokensIn === 'number') realTokensIn = chunk.usage.tokensIn
-        if (typeof chunk.usage.tokensOut === 'number') realTokensOut = chunk.usage.tokensOut
-      }
-      userCallbacks.onChunk(chunk)
-    },
-    onError: (error) => userCallbacks.onError(error),
-    onDone: () => {
-      reportUsage()
-      userCallbacks.onDone()
-    },
-  }
-
-  return { callbacks, reportUsage }
 }
 
 // 避免循环依赖

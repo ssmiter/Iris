@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.iris.agent.run.ChildRunNodeProjectionService;
 import com.iris.conversation.domain.ApiProblemException;
 import com.iris.conversation.domain.ConversationViews.BranchSummary;
 import com.iris.conversation.domain.ConversationViews.ConversationPage;
@@ -39,19 +38,13 @@ import java.util.Optional;
 public class ConversationQueryRepository {
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
-    private final SupplementRepository supplements;
-    private final TurnStopRepository stops;
 
     public ConversationQueryRepository(
             JdbcClient jdbc,
-            ObjectMapper objectMapper,
-            SupplementRepository supplements,
-            TurnStopRepository stops
+            ObjectMapper objectMapper
     ) {
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
-        this.supplements = supplements;
-        this.stops = stops;
     }
 
     public ConversationSummary summary(String conversationId) {
@@ -519,11 +512,9 @@ public class ConversationQueryRepository {
                         .map(node -> node.path("nodeId").asText())
                         .toList(),
                 attentionIds,
-                stops.findByTurn(row.turnId()).orElse(null),
+                null,
                 failure,
-                supplements.viewsForTurn(row.turnId()).stream()
-                        .map(view -> (Object) view)
-                        .toList(),
+                java.util.List.of(),
                 new TurnStats(
                         roundsForTurn(turnRuns, roundsById),
                         toolCallsForTurn(turnNodes),
@@ -722,13 +713,9 @@ public class ConversationQueryRepository {
         if (parentRunId == null) {
             return null;
         }
-        return ChildRunNodeProjectionService.progressSummary(
-                rs.getString("phase"),
-                ChildRunNodeProjectionService.taskTextFromPipelineInput(
-                        objectMapper,
-                        rs.getString("pipeline_input_json")
-                )
-        );
+        // 客观能力层：不再依赖后端 Pipeline 运行时的文案投影，
+        // 返回相位原文，由前端 Runtime 自行决定展示。
+        return rs.getString("phase");
     }
 
     private RunClosureView mapRunClosure(java.sql.ResultSet rs)

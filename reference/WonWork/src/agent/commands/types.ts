@@ -25,7 +25,7 @@ export interface CommandContext {
   clearQueueAndSupplements: () => void
   /** 主动压缩上下文（/compact） */
   compactConversation: (userInstructions?: string) => Promise<void>
-  /** WebBridge 命令（/web save|run|list|policy|<自然语言>），逻辑在 chatStore 内（依赖其工作流状态） */
+  /** WebBridge 浏览器任务（/web，2026-07-31 接线：实现在 chatStore.runWebCommand） */
   runWebCommand: (body: string) => Promise<void>
   /** 当前是否正在流式输出 */
   isStreaming: boolean

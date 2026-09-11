@@ -1,31 +1,46 @@
 import { memo, useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import type { ChatMessage, RenderNode, ArtifactNode, ToolNode, RoundSnapshot, RoundStats, RoundState } from '@/types/chat'
 import { FlowNode, type TurnPhase } from './FlowNode'
+import { openTaskConversation } from './TaskSessionCard'
 import { FlowGroup } from './FlowGroup'
 import { ArtifactZone } from './ArtifactZone'
 import { ArtifactModal } from './ArtifactModal'
 import { FileCard } from './FileCard'
 import { WebBridgeStage } from './WebBridgeStage'
 import { useChatStore } from '@/stores/chatStore'
+import { useMemoryDockStore } from '@/stores/memoryDockStore'
 import { normalizeMarkdown, formatStreamingMarkdown } from '@/utils/markdownNormalizer'
 import { legacyToRenderNodes } from '@/agent/renderNodeBuilder'
-import { useTextReveal } from './useTextReveal'
+import { useReveal } from './useTextReveal'
 import type { FileCardArtifact } from '@/types/artifactDock'
 import { toFileCardArtifact } from '@/types/artifactDock'
 import { extractArtifact } from '@/types/artifact'
-import { getToolRenderer } from '@/agent/tools/toolRenderRegistry'
+import { getToolRenderer, isResultPromoted } from '@/agent/tools/toolRenderRegistry'
 
 const remarkPlugins = [remarkGfm, remarkBreaks]
 
-/** BUG-18: memo 化 Markdown 渲染——非流式时 content 不变则跳过 ReactMarkdown 重解析 */
-const MemoMarkdown = memo(function MemoMarkdown({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+/**
+ * 流式答案（丝滑交互改造 2026-07-26）：
+ * 流式期间直接对"已揭示前缀"排版（formatStreamingMarkdown 容错未闭合块），
+ * 完成且视觉尾巴追平后，同一容器提升为最终 Markdown——
+ * 流式与终态共用 wf-prose 排版约束，提升零位移、不换脸。
+ * 视觉节奏由 useReveal 视觉时钟驱动（数据脉冲 → 连续生长），重渲染锁在本组件内。
+ */
+const StreamingAnswer = memo(function StreamingAnswer({ text, streaming }: { text: string; streaming: boolean }) {
+  const visible = useReveal(text, streaming)
+  // 完成事件不截断视觉尾巴：visible 追平 target 前仍走流式渲染
+  const settling = streaming || visible !== text
+  // 无光标设计（2026-08-14 拍板删除块光标）：文字生长本身就是出字信号，
+  // 过程节点活跃点承担工作中信号；闪烁块三轮修补仍有边界 bug（空行独闪/换行/跳段首），
+  // 且是页面唯一周期动效、天然抢注意力——冗余信号，删。
   return (
-    <div className="wf-prose">
+    <div className="wf-prose wf-md">
       <ReactMarkdown remarkPlugins={remarkPlugins}>
-        {isStreaming ? formatStreamingMarkdown(content) : normalizeMarkdown(content)}
+        {settling ? formatStreamingMarkdown(visible) : normalizeMarkdown(text)}
       </ReactMarkdown>
     </div>
   )
@@ -45,6 +60,7 @@ function formatTime(ts?: number): string {
  * 风格克制：无强边界，与瀑布正文一体
  */
 const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage }) {
+  const { t } = useTranslation()
   const branches = useChatStore((s) => s.branches)
   const resendEditedMessage = useChatStore((s) => s.resendEditedMessage)
   const switchBranch = useChatStore((s) => s.switchBranch)
@@ -85,9 +101,9 @@ const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage 
           }}
         />
         <div className="wf-user-edit-acts">
-          <span className="wf-user-edit-hint">Ctrl+Enter 重发 · Esc 取消</span>
-          <button type="button" onClick={() => { setEditing(false); setDraft(message.content) }}>取消</button>
-          <button type="button" className="primary" disabled={!draft.trim()} onClick={commit}>重发</button>
+          <span className="wf-user-edit-hint">{t('chat.waterfallTurn.editHint')}</span>
+          <button type="button" onClick={() => { setEditing(false); setDraft(message.content) }}>{t('common.cancel')}</button>
+          <button type="button" className="primary" disabled={!draft.trim()} onClick={commit}>{t('chat.waterfallTurn.resend')}</button>
         </div>
       </div>
     )
@@ -100,22 +116,108 @@ const UserBubble = memo(function UserBubble({ message }: { message: ChatMessage 
         <button
           type="button"
           className="wf-user-edit-btn"
-          title="编辑并重发（产生新分支）"
+          title={t('chat.waterfallTurn.editTitle')}
           onClick={() => { setDraft(message.content); setEditing(true) }}
         >
-          编辑
+          {t('chat.waterfallTurn.edit')}
         </button>
       </div>
       {anchor && anchor.variants.length > 1 && anchorKey && (
         <div className="wf-branch-pills">
-          <button type="button" onClick={() => switchBranch(anchorKey, -1)} title="上一个分支">‹</button>
+          <button type="button" onClick={() => switchBranch(anchorKey, -1)} title={t('chat.waterfallTurn.prevBranch')}>‹</button>
           <span>{anchor.active + 1}/{anchor.variants.length}</span>
-          <button type="button" onClick={() => switchBranch(anchorKey, 1)} title="下一个分支">›</button>
+          <button type="button" onClick={() => switchBranch(anchorKey, 1)} title={t('chat.waterfallTurn.nextBranch')}>›</button>
         </div>
       )}
     </div>
   )
 })
+
+/**
+ * 系统事件气泡（2026-08-01 异步子 Agent 通知等伪装 user 消息）：
+ * 不是用户说的话——淡墨卡片、不右对齐、不白底，与普通用户气泡一眼区分。
+ *
+ * 2026-09-02 通知瘦身：长报告全文不再糊在主对话里——默认只显示首行事实
+ * （"后台任务完成/计划已就绪/命令执行完成"），全文折叠可展开；文本指向任务会话时
+ * 给出"打开任务会话"入口（报告/过程都在那边，气泡只是路标）。
+ * 注意：message.content（模型上下文里的通知全文）不动——主 Agent 综合汇报要靠它。
+ */
+const SystemEventBubble = memo(function SystemEventBubble({ message }: { message: ChatMessage }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const text = message.content
+  const firstLine = text.split('\n').find((l) => l.trim().length > 0) ?? ''
+  const rest = text.slice(text.indexOf(firstLine) + firstLine.length).trim()
+  // 任务会话入口：通知文本含"任务会话: #N"（formatSubAgentCompletion 的稳定格式）
+  const taskConvId = /任务会话: #(\d+)/.exec(text)?.[1]
+  return (
+    <div className="wf-sysevent">
+      <span className="wf-sysevent-ic">✦</span>
+      <span className="wf-sysevent-text">
+        {firstLine}
+        {rest && !expanded && (
+          <button type="button" className="wf-text-btn" onClick={() => setExpanded(true)}>
+            {t('chat.systemEvent.more')}
+          </button>
+        )}
+        {rest && expanded && (
+          <>
+            {'\n'}
+            {rest}
+            <button type="button" className="wf-text-btn" onClick={() => setExpanded(false)}>
+              {t('chat.systemEvent.less')}
+            </button>
+          </>
+        )}
+        {taskConvId && (
+          <button
+            type="button"
+            className="wf-text-btn primary"
+            onClick={() => openTaskConversation(Number(taskConvId))}
+          >
+            {t('chat.systemEvent.openTask')}
+          </button>
+        )}
+      </span>
+    </div>
+  )
+})
+
+/** 记忆便签（2026-08-05 补上欠下的渲染器，types/chat.ts 注释承诺的"淡墨行"）：
+ * 自动提取落盘后留在事发地的一行——"记下了什么"当下可见，点开记忆抽屉。 */
+const MemoryNoteLine = memo(function MemoryNoteLine({
+  note,
+}: {
+  note: NonNullable<ChatMessage['memoryNote']>
+}) {
+  const { t } = useTranslation()
+  const open = useMemoryDockStore((s) => s.open)
+  const summaries = note.items.map((i) => i.summary).filter(Boolean)
+  return (
+    <button
+      className="wf-memory-note"
+      onClick={() => open({ focusId: note.items[0]?.id ?? undefined })}
+    >
+      <span className="wf-memory-note-ic">✒</span>
+      <span>
+        {t('chat.waterfallTurn.memoryNote', {
+          count: note.items.length,
+          summaries: summaries.length > 0 ? `：${summaries.join('、')}` : '',
+        })}
+      </span>
+    </button>
+  )
+})
+
+/** 用户消息外观分派：系统事件（子 Agent 通知）走淡墨卡，其余走用户气泡 */
+function UserMessageView({ message }: { message: ChatMessage }) {
+  if (message.isSystemEvent) return <SystemEventBubble message={message} />
+  return (
+    <div className="flex justify-end mb-3">
+      <UserBubble message={message} />
+    </div>
+  )
+}
 
 /** 判断节点是否为终态（不再运行中） */
 function isNodeSettled(node: RenderNode): boolean {
@@ -134,15 +236,15 @@ function formatDuration(ms: number): string {
 }
 
 /** 格式化轮次摘要文本 */
-function formatRoundSummary(stats: RoundStats): string {
+function formatRoundSummary(stats: RoundStats, t: (key: string, options?: Record<string, unknown>) => string): string {
   const parts: string[] = []
-  if (stats.thinkingMs > 0) parts.push(`思考 ${formatDuration(stats.thinkingMs)}`)
+  if (stats.thinkingMs > 0) parts.push(t('chat.waterfallTurn.thinking', { duration: formatDuration(stats.thinkingMs) }))
   if (stats.toolCount > 0) {
     const done = stats.toolDoneCount
-    if (done === stats.toolCount) parts.push(`调用 ${stats.toolCount} 个工具`)
-    else parts.push(`调用 ${done}/${stats.toolCount} 个工具`)
+    if (done === stats.toolCount) parts.push(t('chat.waterfallTurn.toolCallsAll', { count: stats.toolCount }))
+    else parts.push(t('chat.waterfallTurn.toolCallsPartial', { done, total: stats.toolCount }))
   }
-  if (stats.totalMs > 0) parts.push(`共 ${formatDuration(stats.totalMs)}`)
+  if (stats.totalMs > 0) parts.push(t('chat.waterfallTurn.total', { duration: formatDuration(stats.totalMs) }))
   return parts.join(' · ')
 }
 
@@ -172,10 +274,10 @@ function mergeRoundStats(all: RoundStats[]): RoundStats {
 }
 
 /** 格式化 segment 摘要行标签 */
-function formatSegmentLabel(indices: number[]): string {
+function formatSegmentLabel(indices: number[], t: (key: string, options?: Record<string, unknown>) => string): string {
   if (indices.length === 0) return ''
-  if (indices.length === 1) return `第 ${indices[0]} 轮`
-  return `第 ${indices[0]}–${indices[indices.length - 1]} 轮`
+  if (indices.length === 1) return t('chat.waterfallTurn.roundSingle', { n: indices[0] })
+  return t('chat.waterfallTurn.roundRange', { from: indices[0], to: indices[indices.length - 1] })
 }
 
 /** 从 process 节点中提取 present_artifact 产物，去重 */
@@ -259,7 +361,11 @@ function groupRoundsIntoSegments(roundNodeLists: RoundNodeData[]): RoundSegment[
     else if (allPhases.includes('stopped')) phase = 'stopped'
 
     return {
-      key: indices.length === 1 ? String(indices[0]) : `${indices[0]}-${indices[indices.length - 1]}`,
+      // key 用首轮次索引（2026-07-28 修复"渲染中点开自动关闭"）：
+      // 原区间键 "1-k" 在新轮次开始/k 增长时变化 → expandedSegKeys 索引失效、
+      // segment 子树卸载重挂（展开状态丢失 + 闪烁）。首索引在合并延伸与
+      // answer 分裂两种情况下都稳定，且一轮内各 segment 首索引互不相同。
+      key: String(indices[0]),
       roundIndices: indices,
       nodes: allNodes,
       answerText: answerRound.answerText,
@@ -296,12 +402,10 @@ interface RoundViewProps {
   turnPhase: TurnPhase
   turnEnded: boolean
   isAnswerStreaming: boolean
-  streamChars: React.ReactNode | null
   /** 由父组件管理的折叠状态 */
   showProcess: boolean
   onToggleProcess: () => void
   onNodeToggle: (nodeId: string) => void
-  onClarifyPick: (nodeId: string, value: string) => void
   onTakeover: (nodeId: string) => void
   onSkipAttention: (nodeId: string) => void
   onApprove: (toolCallId: string) => void
@@ -314,9 +418,8 @@ interface RoundViewProps {
 
 const RoundView = memo(function RoundView({
   segmentLabel,
-  answerRoundIndex,
+  // answerRoundIndex / isStageConclusion 仍由调用方传入（阶段结论标记下线，见下方注释），此处不解构
   isFinal,
-  isStageConclusion,
   nodes,
   answerNode,
   answerText,
@@ -325,11 +428,9 @@ const RoundView = memo(function RoundView({
   turnPhase,
   turnEnded,
   isAnswerStreaming,
-  streamChars,
   showProcess,
   onToggleProcess,
   onNodeToggle,
-  onClarifyPick,
   onTakeover,
   onSkipAttention,
   onApprove,
@@ -338,9 +439,10 @@ const RoundView = memo(function RoundView({
   overridesRef,
   fileCards,
 }: RoundViewProps) {
+  const { t } = useTranslation()
   const hasProcess = nodes.length > 0
   const isSettledRound = phase === 'settled' || phase === 'stopped' || phase === 'failed'
-  const summaryText = formatRoundSummary(stats)
+  const summaryText = formatRoundSummary(stats, t)
 
   // 本轮含 webbridge 工具 → 挂载浏览器舞台（过程即内容）
   const hasWebBridge = useMemo(
@@ -387,7 +489,7 @@ const RoundView = memo(function RoundView({
   }, [nodes])
 
   return (
-    <div className={`wf-round ${isSettledRound ? 'wf-round-settled' : ''} ${phase === 'stopped' ? 'wf-round-stopped' : ''} ${phase === 'failed' ? 'wf-round-failed' : ''}`}>
+    <div className="wf-round">
       {/* 过程区（在摘要行上方：展开时内容向下撑开，摘要行跟随下滑，视线保持在点击位） */}
       {hasProcess && (
         <div className={`wf-round-flow-wrap ${showProcess ? '' : 'wf-collapsed'}`}>
@@ -406,7 +508,6 @@ const RoundView = memo(function RoundView({
                     isLastInFlow={isLastInFlow}
                     isOverridden={(id: string) => overridesRef.current.has(id)}
                     onToggle={onNodeToggle}
-                    onClarifyPick={onClarifyPick}
                     onTakeover={onTakeover}
                     onSkipAttention={onSkipAttention}
                     onApprove={onApprove}
@@ -422,7 +523,6 @@ const RoundView = memo(function RoundView({
                     isOverridden={overridesRef.current.has(item.node.id)}
                     isLastInFlow={isLastInFlow}
                     onToggle={onNodeToggle}
-                    onClarifyPick={onClarifyPick}
                     onTakeover={onTakeover}
                     onSkipAttention={onSkipAttention}
                     onApprove={onApprove}
@@ -442,8 +542,8 @@ const RoundView = memo(function RoundView({
           <span className="wf-round-summary-chev">▶</span>
           <span className="wf-round-summary-label">{segmentLabel}</span>
           {summaryText && <span className="wf-round-summary-stats">· {summaryText}</span>}
-          {phase === 'stopped' && <span className="wf-round-summary-flag warn">已停止</span>}
-          {phase === 'failed' && <span className="wf-round-summary-flag err">失败</span>}
+          {phase === 'stopped' && <span className="wf-round-summary-flag warn">{t('chat.waterfallTurn.stopped')}</span>}
+          {phase === 'failed' && <span className="wf-round-summary-flag err">{t('chat.waterfallTurn.failed')}</span>}
         </button>
       )}
 
@@ -455,20 +555,11 @@ const RoundView = memo(function RoundView({
       {/* 阶段结论 / 最终答案 */}
       {answerText && (
         <div className={`wf-round-answer ${isFinal && turnEnded ? 'wf-round-answer-final' : ''}`}>
-          {isStageConclusion && (
-            <div className="wf-stage-header">
-              <span className="wf-stage-chip">阶段结论</span>
-              <span className="wf-stage-round">第 {answerRoundIndex} 轮</span>
-            </div>
-          )}
-          {isAnswerStreaming ? (
-            <div className="wf-answer-stream">
-              {streamChars}
-              <span className="wf-answer-caret" />
-            </div>
-          ) : (
-            <MemoMarkdown content={answerText} isStreaming={false} />
-          )}
+          {/* 阶段结论眉题已下线（2026-08-04 用户决定）：多一轮任务里它只是
+              一行无动画无设计的纯文本，无论字号/颜色怎么调都看着累；
+              信息本身有价值，待想出配得上瀑布流的形式后再回来。
+              判定逻辑 isStageConclusion 保留（计算零成本），仅不渲染。 */}
+          <StreamingAnswer text={answerText} streaming={isAnswerStreaming} />
         </div>
       )}
 
@@ -493,7 +584,7 @@ function isPromotedToolResult(node: RenderNode): node is ToolNode {
   return node.type === 'tool'
     && node.status === 'done'
     && node.result != null
-    && getToolRenderer(node.toolName)?.promoteResult === true
+    && isResultPromoted(node.toolName, node.result)
 }
 
 function PromotedToolResult({ node }: { node: ToolNode }) {
@@ -532,18 +623,26 @@ export const WaterfallTurn = memo(function WaterfallTurn({
   allMessages,
   isStreaming,
 }: WaterfallTurnProps) {
-  const { approveToolCall, rejectToolCall, resolveAttention } = useChatStore(
-    (state) => ({
-      approveToolCall: state.approveToolCall,
-      rejectToolCall: state.rejectToolCall,
-      resolveAttention: state.resolveAttention,
-    })
-  )
+  const { t } = useTranslation()
+  // 2026-07-31 订阅风暴修复：对象字面量选择器无 shallow 会在每次 chatStore set
+  // （流式期间每 200ms flush）让所有 turn 重渲染；三个都是稳定 action 引用，拆开订阅。
+  const approveToolCall = useChatStore((s) => s.approveToolCall)
+  const rejectToolCall = useChatStore((s) => s.rejectToolCall)
+  const resolveAttention = useChatStore((s) => s.resolveAttention)
 
-  // 收集所有 renderNodes
+  // 收集所有 renderNodes（memoryNote 便签不是对话内容——空 content 会污染
+  // lastAssistant/rounds 判定，单独剥离渲染为淡墨行，2026-08-05）
+  const contentMessages = useMemo(
+    () => assistantMessages.filter((m) => !m.memoryNote),
+    [assistantMessages]
+  )
+  const memoryNotes = useMemo(
+    () => assistantMessages.filter((m) => m.memoryNote),
+    [assistantMessages]
+  )
   const allNodes = useMemo(() => {
     const nodes: RenderNode[] = []
-    for (const msg of assistantMessages) {
+    for (const msg of contentMessages) {
       if (msg.renderNodes && msg.renderNodes.length > 0) {
         nodes.push(...msg.renderNodes)
       } else if (msg.role === 'assistant') {
@@ -552,10 +651,10 @@ export const WaterfallTurn = memo(function WaterfallTurn({
       }
     }
     return nodes
-  }, [assistantMessages])
+  }, [contentMessages])
 
   // v4.0: 从最后一个 assistant 消息读取轮次数据
-  const lastAssistant = assistantMessages[assistantMessages.length - 1]
+  const lastAssistant = contentMessages[contentMessages.length - 1]
   const roundsData: RoundSnapshot[] | undefined = lastAssistant?.rounds
   const answersData: string[] | undefined = lastAssistant?.answers
   const turnStats = lastAssistant?.turnStats
@@ -679,22 +778,17 @@ export const WaterfallTurn = memo(function WaterfallTurn({
     })
   }, [])
 
-  // 澄清选项回调
-  const handleClarifyPick = useCallback((nodeId: string, value: string) => {
-    resolveAttention(nodeId, value)
-    overridesRef.current.add(nodeId)
-    setOverridesVersion((v) => v + 1)
-  }, [resolveAttention])
-
+  // 澄清回答走 FloatingActionBar（浮动操作栏是唯一入口，2026-08-04 收敛），
+  // 瀑布内不再透传 onClarifyPick。
   const handleTakeover = useCallback((nodeId: string) => {
     resolveAttention(nodeId, undefined, false)
     overridesRef.current.add(nodeId)
     setOverridesVersion((v) => v + 1)
     const el = document.createElement('div')
-    el.textContent = '浏览器接管功能将在后续版本开放'
+    el.textContent = t('chat.waterfallTurn.takeoverToast')
     el.style.cssText = `
       position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%);
-      background: #1c1c1e; color: #fff; font-size: 12.5px;
+      background: var(--wf-capsule-bg); color: var(--wf-capsule-ink); font-size: 12.5px;
       padding: 8px 16px; border-radius: 999px; z-index: 200;
       opacity: 0; transition: opacity .25s; pointer-events: none;
     `
@@ -714,12 +808,12 @@ export const WaterfallTurn = memo(function WaterfallTurn({
 
   // 汇总答案内容（兼容旧布局）
   const answerContent = useMemo(() => {
-    for (let i = assistantMessages.length - 1; i >= 0; i--) {
-      const msg = assistantMessages[i]
+    for (let i = contentMessages.length - 1; i >= 0; i--) {
+      const msg = contentMessages[i]
       if (msg.content) return msg.content
     }
     return ''
-  }, [assistantMessages])
+  }, [contentMessages])
 
   // 当前正在流式输出的 answer（最后一个 answer node 为 streaming）
   const activeStreamingAnswer = useMemo(() => {
@@ -732,44 +826,19 @@ export const WaterfallTurn = memo(function WaterfallTurn({
 
   const isAnswerStreaming = activeStreamingAnswer !== null
 
-  // 答案流式揭示
-  const activeAnswerText = activeStreamingAnswer?.content ?? answerContent
-  const { revealed: revealedAnswer } = useTextReveal(activeAnswerText, {
-    mode: 'chars',
-    enabled: isStreaming || isAnswerStreaming,
-  })
-  const isRevealing = (isStreaming || isAnswerStreaming) && revealedAnswer.length < activeAnswerText.length
-
-  const activeStreamChars = useMemo(() => {
-    if (!activeAnswerText) return null
-    const allChars = [...activeAnswerText].slice(0, 1000)
-    const frontier = isRevealing ? revealedAnswer.length : allChars.length
-    return allChars.map((ch, i) => {
-      if (ch === '\n') return <br key={i} />
-      if (i < frontier) {
-        return <span key={i} className="wf-reveal-done">{ch}</span>
-      }
-      return (
-        <span key={i} className="wf-reveal-ch"
-              style={{ animationDelay: `${Math.min((i - frontier) * 12, 3200)}ms` }}>
-          {ch}
-        </span>
-      )
-    })
-  }, [activeAnswerText, isRevealing, revealedAnswer.length])
-
   // ── 过程中补充（v9.3）：不在瀑布流渲染气泡——composer chip 动画即是反馈，
   // 补充消息仍持久化在历史/上下文（导出可见），但不占视觉层级，
   // 避免"气泡沉在 turn 末尾像下一轮"的错位感。
 
-  // turn meta 文本
+  // turn meta 文本（2026-09-02 状态文案去重）：只在终态出现——运行中的状态由
+  // 输入区 rowhint「任务执行中…」一处承担，turn 底部不再挂「进行中」（两处同框即噪音）
   const turnMetaText = useMemo(() => {
     const time = userMessage ? formatTime(userMessage.timestamp) : ''
-    if (endState === 'failed') return time ? `${time} · 失败` : '失败'
-    if (endState === 'stopped') return time ? `${time} · 已停止` : '已停止'
-    if (settled) return time ? `${time} · 已完成` : '已完成'
-    return time ? `${time} · 进行中` : '进行中'
-  }, [userMessage, endState, settled])
+    if (endState === 'failed') return time ? `${time} · ${t('chat.waterfallTurn.failed')}` : t('chat.waterfallTurn.failed')
+    if (endState === 'stopped') return time ? `${time} · ${t('chat.waterfallTurn.stopped')}` : t('chat.waterfallTurn.stopped')
+    if (settled) return time ? `${time} · ${t('chat.waterfallTurn.completed')}` : t('chat.waterfallTurn.completed')
+    return ''
+  }, [userMessage, endState, settled, t])
 
   const turnMetaClass = useMemo(() => {
     if (endState === 'failed') return 'wf-turn-meta failed'
@@ -903,11 +972,7 @@ export const WaterfallTurn = memo(function WaterfallTurn({
     return (
       <div className={turnClass}>
         {/* 用户问题（回执段无用户消息时省略；v9.1 支持编辑重发与分支切换） */}
-        {userMessage && (
-          <div className="flex justify-end mb-3">
-            <UserBubble message={userMessage} />
-          </div>
-        )}
+        {userMessage && <UserMessageView message={userMessage} />}
 
         {/* 各轮次段 */}
         {roundSegments!.map((seg, idx) => {
@@ -918,7 +983,7 @@ export const WaterfallTurn = memo(function WaterfallTurn({
           return (
             <div key={seg.key}>
             <RoundView
-              segmentLabel={formatSegmentLabel(seg.roundIndices)}
+              segmentLabel={formatSegmentLabel(seg.roundIndices, t)}
               answerRoundIndex={seg.answerRoundIndex}
               isFinal={isFinal}
               isStageConclusion={seg.isStageConclusion}
@@ -930,11 +995,9 @@ export const WaterfallTurn = memo(function WaterfallTurn({
               turnPhase={turnPhase}
               turnEnded={ended || false}
               isAnswerStreaming={isStreamingSeg && isAnswerStreaming}
-              streamChars={isStreamingSeg ? activeStreamChars : null}
               showProcess={segShowProcess}
               onToggleProcess={() => handleToggleSegment(seg.key)}
               onNodeToggle={handleNodeToggle}
-              onClarifyPick={handleClarifyPick}
               onTakeover={handleTakeover}
               onSkipAttention={handleSkipAttention}
               onApprove={approveToolCall}
@@ -962,19 +1025,18 @@ export const WaterfallTurn = memo(function WaterfallTurn({
           return (
           <button className={`wf-turn-summary ${allExpanded ? 'wf-turn-summary-open' : ''}`} onClick={handleToggleAllRounds}>
             <span className="wf-turn-summary-chev">▶</span>
-            <span>共 {roundsData!.length} 轮</span>
-            {turnStats && turnStats.toolCount > 0 && (
-              <span>· 调用 {turnStats.toolCount} 个工具</span>
-            )}
-            {turnStats && turnStats.totalMs > 0 && (
-              <span>· 总耗时 {formatDuration(turnStats.totalMs)}</span>
-            )}
+            <span>{t('chat.waterfallTurn.totalRounds', { count: roundsData!.length })}</span>
           </button>
           )
         })()}
 
-        {/* Turn Meta 行 */}
-        <div className={turnMetaClass}>{turnMetaText}</div>
+        {/* 记忆便签（淡墨行）：自动提取的新记忆在事发地可见 */}
+        {memoryNotes.map((m) => (
+          <MemoryNoteLine key={m.id} note={m.memoryNote!} />
+        ))}
+
+        {/* Turn Meta 行（运行中为空串=不渲染，见 turnMetaText 注释） */}
+        {turnMetaText && <div className={turnMetaClass}>{turnMetaText}</div>}
 
         {/* 产物全屏浮层 */}
         <ArtifactModal
@@ -990,28 +1052,24 @@ export const WaterfallTurn = memo(function WaterfallTurn({
   return (
     <div className={oldTurnClass}>
       {/* 用户问题（回执段无用户消息时省略；v9.1 支持编辑重发与分支切换） */}
-      {userMessage && (
-        <div className="flex justify-end mb-3">
-          <UserBubble message={userMessage} />
-        </div>
-      )}
+      {userMessage && <UserMessageView message={userMessage} />}
 
       {/* 摘要行（所有阶段常驻；有过程内容即提供展开入口，折叠状态纯手动） */}
       {(turnStats || processNodes.length > 0) && (
         <button className="wf-settle-line" onClick={handleToggleProcess}>
           <span className="wf-settle-chev">▶</span>
           {turnStats && turnStats.toolCount > 0 && (
-            <span>调用 {turnStats.toolDoneCount}/{turnStats.toolCount} 个工具</span>
+            <span>{t('chat.waterfallTurn.toolCallsPartial', { done: turnStats.toolDoneCount, total: turnStats.toolCount })}</span>
           )}
           {turnStats && turnStats.thinkingMs > 0 && (
-            <span>· 思考 {formatDuration(turnStats.thinkingMs)}</span>
+            <span>· {t('chat.waterfallTurn.thinking', { duration: formatDuration(turnStats.thinkingMs) })}</span>
           )}
           {turnStats && turnStats.totalMs > 0 && (
-            <span>· 共 {formatDuration(turnStats.totalMs)}</span>
+            <span>· {t('chat.waterfallTurn.total', { duration: formatDuration(turnStats.totalMs) })}</span>
           )}
-          {!turnStats && <span>过程详情</span>}
-          {endState === 'stopped' && <span className="wf-settle-flag warn"><span className="wf-settle-fd" />已停止</span>}
-          {endState === 'failed' && <span className="wf-settle-flag err"><span className="wf-settle-fd" />失败</span>}
+          {!turnStats && <span>{t('chat.waterfallTurn.processDetails')}</span>}
+          {endState === 'stopped' && <span className="wf-settle-flag warn"><span className="wf-settle-fd" />{t('chat.waterfallTurn.stopped')}</span>}
+          {endState === 'failed' && <span className="wf-settle-flag err"><span className="wf-settle-fd" />{t('chat.waterfallTurn.failed')}</span>}
         </button>
       )}
 
@@ -1031,7 +1089,6 @@ export const WaterfallTurn = memo(function WaterfallTurn({
                 isLastInFlow={isLastInFlow}
                 isOverridden={(id: string) => overridesRef.current.has(id)}
                 onToggle={handleNodeToggle}
-                onClarifyPick={handleClarifyPick}
                 onTakeover={handleTakeover}
                 onSkipAttention={handleSkipAttention}
                 onApprove={approveToolCall}
@@ -1047,7 +1104,6 @@ export const WaterfallTurn = memo(function WaterfallTurn({
                 isOverridden={overridesRef.current.has(item.node.id)}
                 isLastInFlow={isLastInFlow}
                 onToggle={handleNodeToggle}
-                onClarifyPick={handleClarifyPick}
                 onTakeover={handleTakeover}
                 onSkipAttention={handleSkipAttention}
                 onApprove={approveToolCall}
@@ -1071,19 +1127,16 @@ export const WaterfallTurn = memo(function WaterfallTurn({
       {/* 答案 */}
       {answerContent && (
         <div className="wf-answer">
-          {(isStreaming || isAnswerStreaming) && activeStreamChars ? (
-            <div className="wf-answer-stream">
-              {activeStreamChars}
-              <span className="wf-answer-caret" />
-            </div>
-          ) : (
-            <MemoMarkdown content={answerContent} isStreaming={false} />
-          )}
-          {endState === 'stopped' && <span className="wf-stop-mark">■ 已手动停止，部分内容保留</span>}
+          <StreamingAnswer text={answerContent} streaming={isStreaming || isAnswerStreaming} />
+          {endState === 'stopped' && <span className="wf-stop-mark">{t('chat.waterfallTurn.partialStopMark')}</span>}
         </div>
       )}
-      {/* Turn Meta 行 */}
-      <div className={turnMetaClass}>{turnMetaText}</div>
+      {/* 记忆便签（淡墨行） */}
+      {memoryNotes.map((m) => (
+        <MemoryNoteLine key={m.id} note={m.memoryNote!} />
+      ))}
+      {/* Turn Meta 行（运行中为空串=不渲染） */}
+      {turnMetaText && <div className={turnMetaClass}>{turnMetaText}</div>}
 
       {/* 产物全屏浮层 */}
       <ArtifactModal

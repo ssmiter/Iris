@@ -1,7 +1,9 @@
 # 06 · 对话内核（Agent Loop）
 
 > 对话循环是体验的心脏：轮次怎么切、补充怎么进、上下文怎么压缩、分支怎么长。
-> 核心 Loop 只在 Java 后端；前端提交命令并渲染持久化事件投影。总体决策见 docs/02，正式 REST/SSE 契约见 docs/08。
+> 2026-09 起核心 Loop 位于独立的 Frontend Runtime；React 组件仍只渲染投影，Java 后端
+> 保存事实并执行客观工具。新边界见 docs/44；本文保留 Turn/Run/Round、补充、分支与压缩的
+> 领域语义，涉及 Java Coordinator 的旧实现说明不再有效。
 
 ## 1. 轮次模型（Turn → Run → Round / Pipeline Step）
 

@@ -18,6 +18,12 @@ target/
 .idea/
 .vscode/
 *.iml
+.claude/settings.local.json
+
+# 本地迁移与上下文草稿
+frontend/.iris_tmp/
+frontend/tmp_ctx/
+reference/WonWork/*.rar
 
 # 密钥与本地配置
 .env

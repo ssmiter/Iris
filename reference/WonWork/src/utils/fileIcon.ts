@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import i18n from '@/i18n'
 import {
   File,
   FileText,
@@ -16,7 +17,7 @@ export interface FileIconInfo {
   label: string
 }
 
-const DEFAULT_ICON: FileIconInfo = { icon: File, colorClass: 'text-surface-400', label: '文件' }
+const DEFAULT_ICON: FileIconInfo = { icon: File, colorClass: 'text-[var(--wf-faint)]', label: '文件' }
 
 function normalizeExt(pathOrExt: string): string {
   const ext = pathOrExt.includes('.')
@@ -67,8 +68,18 @@ const ICON_MAP: Record<string, FileIconInfo> = {
   css: { icon: FileCode, colorClass: 'text-sky-500', label: 'CSS' },
 }
 
+/** 中文 label → i18n 键（图标表保持模块级常量，翻译在取用处进行） */
+const LABEL_KEYS: Record<string, string> = {
+  文件: 'chat.fileIcon.file',
+  图片: 'chat.fileIcon.image',
+  文本: 'chat.fileIcon.text',
+  日志: 'chat.fileIcon.log',
+}
+
 export function getFileIconInfo(pathOrExt: string): FileIconInfo {
-  return ICON_MAP[normalizeExt(pathOrExt)] ?? DEFAULT_ICON
+  const info = ICON_MAP[normalizeExt(pathOrExt)] ?? DEFAULT_ICON
+  const key = LABEL_KEYS[info.label]
+  return key ? { ...info, label: i18n.t(key) } : info
 }
 
 export interface SourceBadgeInfo {
@@ -79,17 +90,17 @@ export interface SourceBadgeInfo {
 export function getSourceBadge(source?: string): SourceBadgeInfo {
   const s = (source ?? 'unknown').toLowerCase()
   if (s === 'user' || s === 'upload') {
-    return { label: '用户', colorClass: 'bg-slate-100 text-slate-600' }
+    return { label: i18n.t('chat.fileIcon.srcUser'), colorClass: 'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)]' }
   }
   if (s === 'backend' || s === 'system') {
-    return { label: '后端', colorClass: 'bg-primary-100 text-primary-700' }
+    return { label: i18n.t('chat.fileIcon.srcBackend'), colorClass: 'wf-badge-info' }
   }
   if (s.startsWith('create_') || s.includes('document') || s.includes('export')) {
-    return { label: '生成', colorClass: 'bg-green-100 text-green-700' }
+    return { label: i18n.t('chat.fileIcon.srcGenerated'), colorClass: 'wf-badge-ok' }
   }
   if (s.startsWith('execute_python')) {
-    return { label: 'Python', colorClass: 'bg-sky-100 text-sky-700' }
+    return { label: 'Python', colorClass: 'wf-badge-info' }
   }
   // 默认把具体工具名作为来源
-  return { label: source ?? '未知', colorClass: 'bg-surface-100 text-surface-600' }
+  return { label: source ?? i18n.t('chat.fileIcon.srcUnknown'), colorClass: 'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)]' }
 }

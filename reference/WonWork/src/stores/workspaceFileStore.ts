@@ -8,7 +8,9 @@ import {
   scanWorkspaceFiles,
 } from '@/services/fileSystem'
 import { getWorkspaceAdapter } from '@/services/workspaceAdapters'
+import { toast } from 'sonner'
 import { workspaceApi } from '@/api/client'
+import { setBackendRegisteredRoots } from '@/agent/permissionRules'
 import {
   getWorkspaceState,
   initWorkspace,
@@ -135,6 +137,15 @@ function setBackendConnectionState(set: (fn: (state: WorkspaceFileState) => Part
     })
     .catch(() => {
       // 保持回退标签
+    })
+  // P0-3 挂载点登记表：启动时拉取后端已登记目录根（持久层+会话层），灌入前端权限表的可读集
+  workspaceApi
+    .listRoots()
+    .then((res) => {
+      if (res?.roots) setBackendRegisteredRoots([...res.roots, ...(res.sessionRoots ?? [])])
+    })
+    .catch(() => {
+      // 旧后端无此端点：静默忽略，目录闸退化为仅前端规则
     })
 }
 
@@ -294,6 +305,7 @@ export const useWorkspaceFileStore = create<WorkspaceFileState>((set, get) => ({
       const msg = err instanceof Error ? err.message : '删除文件失败'
       console.error('[workspaceFileStore] deleteFile error:', err)
       set({ error: msg })
+      toast.error(msg) // 删除失败必须可见——此前只进 store.error 而 FilesPane 不渲染它
     }
   },
 

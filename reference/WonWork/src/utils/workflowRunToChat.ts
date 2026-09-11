@@ -1,4 +1,4 @@
-import { useChatStore } from '@/stores/chatStore'
+import { useChatStore, enqueuePersist } from '@/stores/chatStore'
 import { useConversationStore } from '@/stores/conversationStore'
 import type { ChatMessage, ThinkingProcessData } from '@/types/chat'
 import { historyApi } from '@/api/client'
@@ -8,7 +8,7 @@ function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export type WorkflowRunType = 'dag' | 'webbridge'
+export type WorkflowRunType = 'webbridge'
 
 interface StartWorkflowRunChatResult {
   conversationId: number
@@ -41,7 +41,7 @@ export async function startWorkflowRunChatThread(
     if (!conversationId) return null
   }
 
-  const runTypeLabel = type === 'dag' ? 'DAG 工作流' : 'WebBridge 工作流'
+  const runTypeLabel = 'WebBridge 工作流'
   const userMessage: ChatMessage = {
     id: makeId(),
     role: 'user',
@@ -67,7 +67,8 @@ export async function startWorkflowRunChatThread(
   }))
 
   try {
-    await historyApi.saveMessage(conversationId, userMessage)
+    // 入串行链（2026-08-04）：与主 loop 的 persistLoop 保持落库顺序
+    await enqueuePersist(() => historyApi.saveMessage(conversationId, userMessage))
   } catch (err) {
     console.error('保存工作流运行用户消息失败:', err)
   }
@@ -134,7 +135,7 @@ export async function startWorkflowRunChatThread(
       const finalMessage = useChatStore.getState().messages.find((m) => m.id === assistantMessageId)
       if (finalMessage) {
         try {
-          await historyApi.saveMessage(conversationId, finalMessage)
+          await enqueuePersist(() => historyApi.saveMessage(conversationId, finalMessage))
         } catch (err) {
           console.error('保存工作流运行助手消息失败:', err)
         }

@@ -7,7 +7,6 @@ interface PermissionState {
   isLoading: boolean
   error: string | null
   loadPermissions: () => Promise<void>
-  clearPermissions: () => void
 }
 
 export const usePermissionStore = create<PermissionState>((set) => ({
@@ -27,6 +26,4 @@ export const usePermissionStore = create<PermissionState>((set) => ({
       })
     }
   },
-
-  clearPermissions: () => set({ permissions: null, error: null }),
 }))

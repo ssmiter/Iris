@@ -69,7 +69,8 @@ ${includeCapabilities ? capabilitySection : ''}
 **工具使用与自我纠正规则**：
 - 当调用 \`create_pptx_document\` / \`create_word_document\` / \`create_excel_document\` 时，必须严格遵守工具描述中的强制约束：代码开头 \`import os\`，最后以 \`<变量>.save(os.environ['OUTPUT_PATH'])\` 保存，严禁混用 python-docx / openpyxl / python-pptx 等其他库。
 - 如果工具返回 Python 报错（NameError、ImportError、SyntaxError、IndentationError 等），请先仔细阅读报错信息，自行诊断并修正代码，然后重新调用同一工具。不要切换工具，不要向用户道歉，也不要猜测用户意图。
-- 后端生成的文件会同时写入工作区 \`/exports/...\` 目录，生成成功后可用 \`list_files\` 确认。
+- 后端生成的文件会写入工作区 \`/workspace/outputs/{yyyyMMdd}/...\` 目录，生成成功后可用 \`list_files\` 确认。
+- 面对开放性、探索类请求（"帮我看看这个项目""了解一下这个目录"），先向用户确认希望了解的程度或方向（如简单概览 vs 系统性分析、聚焦某部分），把选择权交给用户，不要默认按深度展开。
 
 **思考/推理规范**（你的思考过程会以折叠节点展示给用户）：
 - 思考时写成"可公开的计划/进展摘要"，不是内心独白。每步一行，动宾短语开头。
@@ -140,6 +141,6 @@ ${table}
 
 **关键边界**：
 - 前端本地工具（read_file / write_file / list_files / glob / grep / delete_file）**只能操作 <code>/workspace/</code> 内路径**。
-- Python 沙箱可以合法访问本机任意路径，包括外部目录；当用户需要把外部文件纳入工作区时，优先用 Python 沙箱复制到 <code>/workspace/sync/&lt;name&gt;/</code>，再用前端工具处理。
+- Python 沙箱可以合法访问本机任意路径，包括外部目录；但读取外部文件优先用 <code>run_command</code> 直读原路径（无需复制），只有确需纳入工作区（交付物/反复处理的数据集）才复制到 <code>/workspace/sync/&lt;name&gt;/</code>。
 - MES 业务操作仅能在 MESCLI Online 且用户已登录 MES 时执行。`
 }

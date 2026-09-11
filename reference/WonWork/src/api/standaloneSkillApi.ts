@@ -12,6 +12,9 @@ import {
 export const standaloneSkillApi = {
   listSkills: fsListSkills,
 
+  /** Standalone 走浏览器 File System Access，没有可暴露给模型的绝对路径——返回 null 降级 */
+  getDir: async (): Promise<string | null> => null,
+
   readSkill: fsReadSkill,
 
   writeSkill: fsWriteSkill,

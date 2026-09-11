@@ -38,12 +38,31 @@ export interface ApsScheduleResult {
   resources: ScheduleResourceOption[]
   products: ScheduleProductOption[]
   publishConflicts: SchedulePublishConflict[]
+  timelinePrecision: 'exact' | 'shift'
+  timelineWindow: ScheduleTimelineWindow | null
+  resourceGroups: ScheduleResourceGroup[]
+  timelineSegments: ScheduleTimelineSegment[]
+  timelineDiagnostics: string[]
 }
 
 export interface ScheduleShiftOption { code: string; name: string; startTime: string; stopTime: string }
 export interface ScheduleResourceOption { code: string; name: string; productCodes: string[] }
 export interface ScheduleProductOption { code: string; name: string; resourceCodes: string[] }
 export interface SchedulePublishConflict { productionDate: string; shiftCode: string; resourceCode: string; existingCount: number; startedCount: number }
+export interface ScheduleTimelineWindow { startTime: string; endTime: string; timezone: string }
+export interface ScheduleResourceGroup { resourceCode: string; resourceName: string; children: string[] }
+export type ScheduleTimelineSegmentType = 'PRODUCTION' | 'CHANGEOVER' | 'UNAVAILABLE'
+export interface ScheduleTimelineSegment {
+  segmentId: string
+  assignmentId: string
+  segmentType: ScheduleTimelineSegmentType
+  resourceCode: string
+  productCode: string
+  quantity: number | null
+  startTime: string
+  endTime: string
+  locked: boolean
+}
 export type ScheduleConflictPolicy = 'block' | 'append' | 'replace_unstarted'
 
 export interface ApsScheduleEdit {
@@ -54,6 +73,14 @@ export interface ApsScheduleEdit {
   resourceCode: string
   quantity: number
   delete: boolean
+}
+
+export interface ApsScheduleAdjustmentContext {
+  assignments?: Pick<ApsScheduleAssignment,
+    'assignmentId' | 'productionDate' | 'shiftCode' | 'resourceCode' | 'resourceName' | 'productCode' | 'productName' | 'quantity'>[]
+  shifts?: ScheduleShiftOption[]
+  resources?: ScheduleResourceOption[]
+  products?: ScheduleProductOption[]
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -114,6 +141,31 @@ export function parseApsScheduleResult(value: unknown): ApsScheduleResult | null
       })).filter((row) => row.assignmentId.length > 0)
     : []
 
+  const timelineWindowRow = isRecord(value.timeline_window) ? value.timeline_window : null
+  const timelineWindow = timelineWindowRow
+    ? {
+        startTime: text(timelineWindowRow.start_time),
+        endTime: text(timelineWindowRow.end_time),
+        timezone: text(timelineWindowRow.timezone, 'Asia/Shanghai'),
+      }
+    : null
+  const timelineSegments = Array.isArray(value.timeline_segments)
+    ? value.timeline_segments.filter(isRecord).map((row) => ({
+        segmentId: text(row.segment_id),
+        assignmentId: text(row.assignment_id),
+        segmentType: text(row.segment_type) as ScheduleTimelineSegmentType,
+        resourceCode: text(row.resource_code),
+        productCode: text(row.product_code),
+        quantity: row.quantity === null || row.quantity === undefined ? null : number(row.quantity),
+        startTime: text(row.start_time),
+        endTime: text(row.end_time),
+        locked: boolean(row.locked),
+      })).filter((row) => row.segmentId && row.assignmentId && row.resourceCode
+        && ['PRODUCTION', 'CHANGEOVER', 'UNAVAILABLE'].includes(row.segmentType)
+        && Number.isFinite(Date.parse(row.startTime)) && Number.isFinite(Date.parse(row.endTime))
+        && Date.parse(row.endTime) > Date.parse(row.startTime))
+    : []
+
   return {
     status: text(value.status),
     planId: text(value.plan_id),
@@ -145,33 +197,89 @@ export function parseApsScheduleResult(value: unknown): ApsScheduleResult | null
       productionDate: text(row.production_date), shiftCode: text(row.shift_code), resourceCode: text(row.resource_code),
       existingCount: number(row.existing_count), startedCount: number(row.started_count),
     })) : [],
+    timelinePrecision: value.timeline_precision === 'exact' ? 'exact' : 'shift',
+    timelineWindow,
+    resourceGroups: Array.isArray(value.resource_groups) ? value.resource_groups.filter(isRecord).map((row) => ({
+      resourceCode: text(row.resource_code), resourceName: text(row.resource_name, text(row.resource_code)),
+      children: stringArray(row.children),
+    })).filter((row) => row.resourceCode) : [],
+    timelineSegments,
+    timelineDiagnostics: stringArray(value.timeline_diagnostics),
   }
 }
 
 export function buildAdjustmentMessage(
   displayReference: string,
   reason: string,
-  edits: ApsScheduleEdit[]
+  edits: ApsScheduleEdit[],
+  context: ApsScheduleAdjustmentContext = {}
 ): string {
+  const assignments = context.assignments ?? []
+  const shiftLabel = (code: string, fallback = '相应班次') => {
+    const option = context.shifts?.find((shift) => shift.code === code)
+    const knownNames: Record<string, string> = { '01': '白班', '02': '中班', '03': '夜班' }
+    return knownNames[code] ?? (option?.name ? `${option.name}班` : fallback)
+  }
+  const humanLabel = (name: string | undefined, code: string, fallback: string) => {
+    const normalizedName = String(name ?? '').trim()
+    if (normalizedName) return normalizedName
+    const option = fallback === '机台'
+      ? context.resources?.find((resource) => resource.code === code)
+      : context.products?.find((product) => product.code === code)
+    return String(option?.name ?? code).trim() || fallback
+  }
+  const dateLabel = (value: string) => {
+    const [, month, day] = value.split('-')
+    return month && day ? `${Number(month)}月${Number(day)}日` : value
+  }
+
   const rows = edits.map((edit) => {
-    const changes = edit.delete
-      ? 'delete=true'
-      : `production_date=${edit.productionDate}, shift_code=${edit.shiftCode}, resource_code=${edit.resourceCode}, product_code=${edit.productCode}, quantity=${edit.quantity}`
-    return `assignment_id=${edit.assignmentId}, ${changes}`
+    const originalIndex = assignments.findIndex((assignment) => assignment.assignmentId === edit.assignmentId)
+    const original = originalIndex >= 0 ? assignments[originalIndex] : undefined
+    const ordinal = originalIndex >= 0 ? `第${originalIndex + 1}条任务` : '这条任务'
+    if (edit.delete) return `删除${ordinal}`
+
+    const changes: string[] = []
+    if (!original || edit.productionDate !== original.productionDate) {
+      changes.push(`日期改为${dateLabel(edit.productionDate)}`)
+    }
+    if (!original || edit.shiftCode !== original.shiftCode) {
+      changes.push(`班次改为${shiftLabel(edit.shiftCode)}`)
+    }
+    if (!original || edit.resourceCode !== original.resourceCode) {
+      changes.push(`改到${humanLabel(undefined, edit.resourceCode, '机台')}`)
+    }
+    if (!original || edit.productCode !== original.productCode) {
+      changes.push(`物料改为${humanLabel(undefined, edit.productCode, '物料')}`)
+    }
+    if (!original || edit.quantity !== original.quantity) {
+      changes.push(`数量改为${edit.quantity}条`)
+    }
+    return `${ordinal}${changes.length > 0 ? changes.join('，') : '保持原安排'}`
   }).join('；')
 
-  return `请调整${displayReference}。调整原因：${reason.trim()}。修改项：${rows}。请根据当前卡片对应的内部计划生成新版本并再次展示结果，不要自动发布。`
+  // displayReference 只用于卡片标题，可能包含内部版本或引擎信息；对用户沿用“刚才这份排产”即可。
+  void displayReference
+  return `把刚才这份排产中的${rows}。原因是“${reason.trim()}”。先生成一个新版本让我核对，暂时不要下发。`
 }
 
 export function buildApprovalMessage(displayReference: string, conflictPolicy: ScheduleConflictPolicy): string {
-  const policyLabel = conflictPolicy === 'append' ? '追加' : conflictPolicy === 'replace_unstarted' ? '替换未开工计划' : '遇到冲突则阻断'
-  return `我已复核${displayReference}，现明确审批通过并发布，已有班次计划按${policyLabel}策略处理（conflict_policy=${conflictPolicy}）。`
+  void displayReference
+  if (conflictPolicy === 'append') {
+    return '我已核对这份排产，审批通过并下发；已有班次计划按追加方式处理。'
+  }
+  if (conflictPolicy === 'replace_unstarted') {
+    return '我已核对这份排产，审批通过并下发；同一班次已有但尚未开工的计划可以替换。'
+  }
+  return '我已核对这份排产，审批通过并下发；如果同一班次已有计划，请先停下来让我确认。'
 }
 
 export function buildRefreshMessage(displayReference: string): string {
-  return `请查看${displayReference}，不要自动发布。`
+  void displayReference
+  return '把刚才的排产结果再给我看一遍，先不要下发。'
 }
 
 export function buildReplanMessage(displayReference: string): string {
-  return `我要重新排产${displayReference}。请先询问我要修改的产量、交期或约束，不要直接发布。`
+  void displayReference
+  return '这份排产我想重新安排一下，先问我产量、交期或限制条件；排好后给我核对，先不要下发。'
 }

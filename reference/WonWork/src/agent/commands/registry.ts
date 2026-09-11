@@ -8,6 +8,10 @@
  */
 import type { SlashCommand } from './types'
 import { useSkillStore } from '@/stores/skillStore'
+import { useProviderProfileStore } from '@/stores/providerProfileStore'
+import { isProfileProviderId, profileIdFromProviderId } from '@/types/providerProfile'
+import { toast } from 'sonner'
+import i18n from '@/i18n'
 
 const FREQ_KEY = 'ww-cmd-freq'
 
@@ -33,8 +37,19 @@ export function bumpCommandFreq(name: string): void {
 /** 内置命令表（Skill 命令动态生成，见 getAllCommands） */
 export const BUILTIN_COMMANDS: SlashCommand[] = [
   {
+    name: 'knowledge',
+    aliases: ['知识库', '知识'],
+    description: i18n.t('chat.commands.knowledge.description'),
+    argumentHint: '<问题>',
+    group: 'builtin',
+    type: 'prompt',
+    // InputArea/ChatView converts this command to a scoped normal user request
+    // before the generic slash dispatcher is reached.
+    run: async () => undefined,
+  },
+  {
     name: 'compact',
-    description: '压缩上下文，保留要点继续对话',
+    description: i18n.t('chat.commands.compact.description'),
     argumentHint: '[摘要指令]',
     group: 'builtin',
     type: 'local',
@@ -46,51 +61,53 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   },
   {
     name: 'export',
-    description: '导出当前会话为 Markdown',
+    description: i18n.t('chat.commands.export.description'),
+    argumentHint: '[json]',
     group: 'builtin',
     type: 'local',
-    run: async () => {
-      const { exportConversation } = await import('@/utils/exportConversation')
+    run: async (args) => {
+      const { exportConversation, exportConversationJson } = await import(
+        '@/utils/exportConversation'
+      )
       const { useConversationStore } = await import('@/stores/conversationStore')
       const { useChatStore } = await import('@/stores/chatStore')
       const convId = useConversationStore.getState().currentConversationId
       const currentConv = useConversationStore.getState().conversations.find((c) => c.id === convId)
-      exportConversation(useChatStore.getState().messages, currentConv?.title)
+      const messages = useChatStore.getState().messages
+      if (args.trim().toLowerCase() === 'json') {
+        exportConversationJson(messages, currentConv?.title, convId)
+      } else {
+        exportConversation(messages, currentConv?.title)
+      }
     },
   },
   {
     name: 'remember',
-    description: '把事实写入长期记忆',
+    description: i18n.t('chat.commands.remember.description'),
     argumentHint: '<内容>',
     group: 'builtin',
     type: 'local',
     run: async (args, ctx) => {
-      const { useMemoryStore } = await import('@/stores/memoryStore')
-      const { useConversationStore } = await import('@/stores/conversationStore')
-      const conversationId = useConversationStore.getState().currentConversationId
-      await useMemoryStore.getState().remember({
-        content: args,
-        type: 'note',
-        layer: 'semantic',
-        priority: 'high',
-        conversation_id: conversationId || undefined,
-      })
-      await ctx.appendAssistantMessage(`✅ 已记住: ${args}`)
+      // 记忆文件化（2026-09-03）：/remember = 快速记一笔，落成 ~/.wonwork/memory/ 下的
+      // 无类型速记文件 + 索引行；要 LLM 誊写归类请用划词"收入记忆"。
+      const { useFileMemoryStore } = await import('@/stores/fileMemoryStore')
+      const ok = await useFileMemoryStore.getState().addQuickNote(args)
+      await ctx.appendAssistantMessage(ok ? `✅ 已记住: ${args}` : `❌ 记忆写入失败: ${args}`)
     },
   },
   {
-    name: 'web',
-    description: '本轮使用浏览器自动化（save/run/list/policy/任务）',
-    argumentHint: '[任务]',
+    name: 'memory',
+    description: i18n.t('chat.commands.memory.description'),
     group: 'builtin',
     type: 'local',
-    run: async (args, ctx) => {
-      await ctx.runWebCommand(args)
+    run: async (_args, _ctx) => {
+      const { useMemoryDockStore } = await import('@/stores/memoryDockStore')
+      useMemoryDockStore.getState().open()
     },
   },
   {
     name: 'model',
-    description: '切换模型',
+    description: i18n.t('chat.commands.model.description'),
     argumentHint: '<名称>',
     group: 'builtin',
     type: 'local',
@@ -114,12 +131,16 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       }
       ctx.setActiveProvider(hit)
       localStorage.setItem('wonclaw_active_provider', JSON.stringify(hit))
+      // 供应商预设库：/model 直选 profile 时同步 activeId（与下拉点选同一事实，
+      // 2026-09-07 审计补齐——此前只写激活项不写 activeId，设置页"在用"徽标会指错）
+      const pid = isProfileProviderId(hit.provider) ? profileIdFromProviderId(hit.provider) : null
+      if (pid) void useProviderProfileStore.getState().setActive(pid)
       await ctx.appendAssistantMessage(`✅ 已切换模型：${hit.provider} / ${hit.model}`)
     },
   },
   {
     name: 'clear',
-    description: '新开对话，并清空排队与待注入',
+    description: i18n.t('chat.commands.clear.description'),
     group: 'builtin',
     type: 'local',
     run: async (_args, ctx) => {
@@ -128,8 +149,18 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: 'web',
+    description: i18n.t('chat.commands.web.description'),
+    argumentHint: '<任务 | save <名> | run <名> | list | policy <预设>>',
+    group: 'builtin',
+    type: 'local',
+    run: async (args, ctx) => {
+      await ctx.runWebCommand(args)
+    },
+  },
+  {
     name: 'help',
-    description: '查看全部可用命令',
+    description: i18n.t('chat.commands.help.description'),
     group: 'builtin',
     type: 'local',
     run: async (_args, ctx) => {
@@ -141,18 +172,25 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   },
 ]
 
-/** 把启用的 Skill 包装为 prompt 型命令（菜单与内置命令同等待遇） */
+/** 把启用且用户可调用的 Skill 包装为 prompt 型命令（菜单与内置命令同等待遇）。
+ *  命令名用 id 而非中文名（2026-08-09 审计修复）：中文名含空格/标点时 SLASH_RE 匹配不到，
+ *  id 恒为 kebab-case 可键入；中文名移到描述前缀保持可读。 */
 function skillCommands(): SlashCommand[] {
-  const { skills, activeSkillIds, loadSkill } = useSkillStore.getState()
+  const { skills, activeSkillIds, loadSkill, recordSkillUsage } = useSkillStore.getState()
   return skills
-    .filter((s) => s.enabled && !activeSkillIds.includes(s.id))
+    .filter((s) => s.enabled && s.userInvocable && !activeSkillIds.includes(s.id))
     .map((s) => ({
-      name: s.name,
-      description: s.description || '加载此 Skill',
+      name: s.id,
+      description: `${s.name}：${s.description || s.whenToUse || i18n.t('chat.commands.skill.loadThisSkill')}`,
       group: 'skill' as const,
       type: 'prompt' as const,
       run: () => {
         loadSkill(s.id)
+        // 用量统计（2026-08-09 第二波）：斜杠加载记入——
+        // 管理页"最近使用"排序与斜杠菜单 recency 的数据源
+        recordSkillUsage(s.id)
+        // 生效回音：/skill 加载后徽标变化不够显眼，补一条 toast 确认
+        toast.success(i18n.t('chat.toast.skillLoaded', { name: s.name }))
       },
     }))
 }
@@ -177,15 +215,25 @@ function fuzzyMatch(q: string, name: string): boolean {
 export function rankCommands(query: string, commands: SlashCommand[] = getAllCommands()): SlashCommand[] {
   const q = query.toLowerCase()
   const freq = loadFreq()
+  // 技能命令额外吃用量统计加分（2026-08-09 第二波）：被用过的技能
+  // 该浮到菜单前面（recency 加分）
+  const usageStats = useSkillStore.getState().usageStats
   const scored: Array<{ c: SlashCommand; s: number }> = []
   for (const c of commands) {
     let s = -1
     if (c.name.toLowerCase() === q) s = 100
     else if (c.aliases?.some((a) => a.toLowerCase() === q)) s = 95
     else if (c.name.toLowerCase().startsWith(q)) s = 80 - q.length * 0.1
+    else if (c.aliases?.some((a) => a.toLowerCase().startsWith(q))) s = 76 - q.length * 0.1
     else if (fuzzyMatch(q, c.name.toLowerCase())) s = 40
-    if (s >= 0) scored.push({ c, s: s + Math.min(20, (freq.get(c.name) || 0) * 2) })
+    else if (c.aliases?.some((a) => fuzzyMatch(q, a.toLowerCase()))) s = 38
+    if (s < 0) continue
+    let bonus = Math.min(20, (freq.get(c.name) || 0) * 2)
+    if (c.group === 'skill') {
+      bonus = Math.max(bonus, Math.min(20, (usageStats[c.name]?.count || 0) * 2))
+    }
+    scored.push({ c, s: s + bonus })
   }
-  scored.sort((a, b) => s - s)
+  scored.sort((a, b) => b.s - a.s)
   return scored.map((x) => x.c)
 }

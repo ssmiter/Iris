@@ -30,6 +30,8 @@ function generateSpanId(): string {
 export class TraceCollector {
   private logger: TrajectoryLogger
   private currentTrace?: Trace
+  /** 最近一次终态 trace（complete/fail 清 currentTrace 前留存，供事后落盘/检查） */
+  private lastCompletedTrace?: Trace
   private spanMap = new Map<string, Span>()
   private phaseMap = new Map<string, string>() // spanId -> phaseId
   private enableLegacyPersistence: boolean
@@ -170,6 +172,7 @@ export class TraceCollector {
     if (this.enableLegacyPersistence) {
       this.logger.complete(summary, metadata)
     }
+    this.lastCompletedTrace = trace
     this.currentTrace = undefined
     return trace
   }
@@ -195,12 +198,22 @@ export class TraceCollector {
     if (this.enableLegacyPersistence) {
       this.logger.fail(error, summary)
     }
+    this.lastCompletedTrace = trace
     this.currentTrace = undefined
     return trace
   }
 
   getCurrentTrace(): Trace | undefined {
     return this.currentTrace
+  }
+
+  /**
+   * 最近一次 complete/fail 的终态 trace。
+   * complete/fail 会清空 currentTrace（为下一条 trace 让位），事后读取必须走这里——
+   * explore_agent 轨迹落盘曾直接读 getCurrentTrace() 恒为 undefined，落盘成为死代码。
+   */
+  getLastCompletedTrace(): Trace | undefined {
+    return this.lastCompletedTrace
   }
 
   getSpan(spanId: string): Span | undefined {

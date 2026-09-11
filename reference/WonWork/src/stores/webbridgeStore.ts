@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { webBridgeClient } from '@/api/webbridgeClient'
+import { getBrowserRuntimeSession } from '@/api/browserRuntimeSession'
 import { getDaemonLauncher } from '@/api/daemonLauncher'
 import { useUsageStore, buildTodayUsageRecord } from '@/stores/usageStore'
 import { buildWebBridgeResultSummary } from '@/utils/webbridgePrompt'
 import { startWorkflowRunChatThread } from '@/utils/workflowRunToChat'
-import { buildExampleWorkflows, EXAMPLE_WORKFLOW_TAG } from '@/components/WebBridge/WorkflowTemplates'
 import {
   createDefaultWebBridgeConfig,
   loadWebBridgePreset,
@@ -23,8 +23,12 @@ import {
   type ElementSelector,
   type WebBridgeExecutionOptions,
   type WorkspaceFileInfo,
-  type StageInputEvent,
 } from '@/types/webbridge'
+
+// 旧工作台已下线且不迁移；一次性清除历史工作流、模板和复杂配置。
+if (typeof window !== 'undefined') {
+  window.localStorage.removeItem('wonclaw-webbridge')
+}
 
 let logIdCounter = 0
 
@@ -37,44 +41,15 @@ function generateId(prefix = 'id'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-// ── 接管暂停门（共驾）──
-// sendAction 在派发前等待此门：用户点「接管」→ pauseRequested=true，AI 在动作间隙停下；
-// 点「交还 AI」→ 释放所有等待者。等待只发生在动作边界，保证控制权交接是原子的。
+// AI 暂停门：人工操作浏览器或点击“暂停 AI”后，动作在边界处等待；
+// 点击“继续 AI”释放等待者，保证不会与用户同时操作页面。
 const pauseResolvers: Array<() => void> = []
-/** 接管开始时的页面快照（URL + 标题），交还时对比生成接管记录 */
-let takeoverStartPage: { url: string; title: string; at: number } | null = null
+/** 暂停开始时的页面快照（URL + 标题），继续时对比生成操作记录 */
+let pauseStartPage: { url: string; title: string; at: number } | null = null
 
 function releasePauseGate(): void {
   const rs = pauseResolvers.splice(0)
   for (const r of rs) r()
-}
-
-// screencast 帧节流（150ms）：最新帧始终保留，避免掉帧累积
-let lastScreencastWriteAt = 0
-let pendingScreencastFrame: string | null = null
-let screencastFlushTimer: ReturnType<typeof setTimeout> | null = null
-
-/** 统一的 screencast 帧入口（节流后写入 store），connect 选项与接管动态挂载共用 */
-function makeScreencastFrameHandler(set: (partial: Partial<WebBridgeState>) => void) {
-  return (frame: string) => {
-    const now = Date.now()
-    if (now - lastScreencastWriteAt < 150) {
-      pendingScreencastFrame = frame
-      if (!screencastFlushTimer) {
-        screencastFlushTimer = setTimeout(() => {
-          screencastFlushTimer = null
-          if (pendingScreencastFrame) {
-            set({ currentScreenshot: pendingScreencastFrame, currentScreenshotMime: 'jpeg' })
-            pendingScreencastFrame = null
-          }
-          lastScreencastWriteAt = Date.now()
-        }, 150)
-      }
-      return
-    }
-    lastScreencastWriteAt = now
-    set({ currentScreenshot: frame, currentScreenshotMime: 'jpeg' })
-  }
 }
 
 function ensureExplorationStep(steps: WorkflowStep[]): WorkflowStep[] {
@@ -169,15 +144,18 @@ interface WebBridgeState {
   currentWorkflowStepIndex: number
   abortExecution: boolean
   lastFailure: { action?: BrowserAction; error?: string; screenshot?: string; timestamp: number } | null
+  browserPanelMode: 'hidden' | 'compact' | 'expanded'
+  automationCursor: { x: number; y: number; kind: 'move' | 'click' | 'type' | 'scroll'; sequence: number }
+  openBrowserPanel: () => void
+  compactBrowserPanel: () => void
+  hideBrowserPanel: () => void
+  endBrowserSession: () => Promise<void>
 
-  // 接管（共驾）：用户暂停 AI 亲自操作浏览器，交还时把期间变化回喂模型
+  // 人工操作真实浏览器时暂停 AI；继续时把期间变化回喂模型
   pauseRequested: boolean
   takeoverNotes: string[]
-  requestTakeover: () => void
-  handbackToAI: () => void
-  /** 接管模式：把用户在舞台画面上的输入（点击/滚动/文本/按键）转发给真实浏览器 */
-  sendStageInput: (event: StageInputEvent) => void
-
+  pauseAI: () => void
+  resumeAI: () => void
   // Workflows
   workflows: WorkflowDefinition[]
 
@@ -225,7 +203,6 @@ interface WebBridgeState {
   renameWorkflow: (id: string, name: string) => void
   getWorkflowByName: (name: string) => WorkflowDefinition | undefined
   getWorkflows: () => WorkflowDefinition[]
-  ensureExampleWorkflows: () => void
   runWorkflow: (workflowId: string, options?: { onNavigateToChat?: () => void }) => Promise<void>
   stopWorkflow: () => void
 
@@ -239,10 +216,6 @@ interface WebBridgeState {
   ) => Promise<{ workflow: WorkflowDefinition; results: ActionResult[]; summary: string }>
   capturePageContext: () => Promise<{ url: string; title: string; text?: string; screenshot?: string }>
   captureScreenshot: () => Promise<string | undefined>
-}
-
-function buildWsUrl(host: string, port: number): string {
-  return `ws://${host}:${port}/ws`
 }
 
 function checkSecurityPolicy(action: BrowserAction, policy: SecurityPolicy): string | null {
@@ -304,7 +277,7 @@ function extractQuoted(text: string, index = 0): { value: string; rest: string }
 }
 
 function extractSelector(text: string): ElementSelector | undefined {
-  // Quoted selector: "name", 'name', “name”, etc.
+  // Quoted selector: "name", 'name', "name", etc.
   const quoted = extractQuoted(text)
   if (quoted) {
     const value = quoted.value
@@ -402,7 +375,7 @@ function inferActionFromText(text: string): BrowserAction | null {
   }
 
   // Wait / 等待
-  const waitMatch = trimmed.match(/(?:wait|等待)\s+(?:(\d+)\s*(?:ms|毫秒)|(\d+)\s*(?:s|sec|sec|秒|秒钟))/i)
+  const waitMatch = trimmed.match(/(?:wait|等待)\s+(?:(\d+)\s*(?:ms|毫秒)|(\d+)\s*(?:s|sec|秒|秒钟))/i)
   if (waitMatch || /\bwait\b/.test(lower) || /^等待/.test(trimmed)) {
     const ms = waitMatch?.[1] ? parseInt(waitMatch[1], 10) : waitMatch?.[2] ? parseInt(waitMatch[2], 10) * 1000 : 1000
     return { action_type: 'wait', delay_ms: ms }
@@ -488,6 +461,8 @@ export const useWebBridgeStore = create<WebBridgeState>()(
       currentWorkflowStepIndex: 0,
       abortExecution: false,
       lastFailure: null,
+      browserPanelMode: 'hidden',
+      automationCursor: { x: 800, y: 450, kind: 'move', sequence: 0 },
 
       pauseRequested: false,
       takeoverNotes: [],
@@ -502,26 +477,46 @@ export const useWebBridgeStore = create<WebBridgeState>()(
       workflows: [],
 
       connect: () => {
-        const { host, port, useMock } = get()
-        const url = useMock ? 'mock://localhost' : buildWsUrl(host, port)
+        const { useMock } = get()
         set({ status: 'connecting', error: null })
 
-        webBridgeClient.connect(url, {
-          onStatusChange: (status) => {
-            set({ status })
-          },
-          onMessage: (response) => {
-            if (response.type === 'page_state' && response.payload) {
-              set({ pageState: response.payload as PageState })
-            }
-          },
-          onRecordedAction: (action) => {
-            set((state) => ({
-              recordedActions: [...state.recordedActions, action],
-            }))
-          },
-          onScreencastFrame: makeScreencastFrameHandler(set),
-        })
+        void (async () => {
+          try {
+            const url = useMock
+              ? 'mock://localhost'
+              : (await getBrowserRuntimeSession()).webSocketUrl
+            webBridgeClient.connect(url, {
+              onStatusChange: (status) => {
+                set({ status })
+              },
+              onMessage: (response) => {
+                if (response.type === 'page_state' && response.payload) {
+                  set({ pageState: response.payload as PageState })
+                }
+                // daemon 侧浏览器已关闭（闲置回收/其他客户端结束会话）：
+                // 同步清空页面状态，否则面板会一直显示"浏览器正在运行"的陈旧信息
+                if (response.type === 'browser_closed') {
+                  set({ pageState: null, currentScreenshot: null })
+                }
+              },
+              onRecordedAction: (action) => {
+                set((state) => ({
+                  recordedActions: [...state.recordedActions, action],
+                }))
+              },
+              onUserInteraction: () => {
+                if (!get().pauseRequested) get().pauseAI()
+              },
+              refreshUrl: async () =>
+                (await getBrowserRuntimeSession(true)).webSocketUrl,
+            })
+          } catch (err) {
+            set({
+              status: 'error',
+              error: err instanceof Error ? err.message : '浏览器连接失败',
+            })
+          }
+        })()
       },
 
       disconnect: () => {
@@ -663,19 +658,30 @@ export const useWebBridgeStore = create<WebBridgeState>()(
        * 用于安装包启动场景——Launcher 已在后台拉起 daemon，前端只需连上即可使用 WebBridge。
        */
       tryAutoConnect: async (silent = false) => {
-        const { host, port, useMock } = get()
-        if (useMock || webBridgeClient.isConnected) {
+        const { useMock } = get()
+        if (webBridgeClient.isConnected || webBridgeClient.isMock) {
           return { success: true }
         }
 
         try {
-          const launcher = getDaemonLauncher()
-          const status = await launcher.checkStatus(host, port)
-          if (status.running) {
-            get().connect()
-            return { success: true }
+          // Runtime access is authenticated. A direct daemon status probe
+          // correctly returns 401 and cannot determine startup readiness.
+          if (!useMock) {
+            await getBrowserRuntimeSession()
           }
-          const error = status.error || 'WebBridge 守护进程未运行'
+          get().connect()
+
+          const deadline = Date.now() + 5_000
+          while (Date.now() < deadline) {
+            const status = get().status
+            if (status === 'connected') {
+              return { success: true }
+            }
+            if (status === 'error') break
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+
+          const error = get().error || 'WebBridge 连接超时'
           if (!silent) {
             set({ error, status: 'disconnected' })
           }
@@ -713,6 +719,10 @@ export const useWebBridgeStore = create<WebBridgeState>()(
         if (!webBridgeClient.isConnected && !webBridgeClient.isMock) {
           set({ error: 'WebBridge not connected' })
           return null
+        }
+
+        if (get().browserPanelMode === 'hidden') {
+          get().openBrowserPanel()
         }
 
         // 接管暂停门：用户接管期间，动作在边界处等待（不中断进行中的动作）
@@ -765,6 +775,14 @@ export const useWebBridgeStore = create<WebBridgeState>()(
             if (action.action_type === 'screenshot' && typeof result.data === 'string') {
               set({ currentScreenshot: result.data, currentScreenshotMime: 'png' })
             }
+          }
+          if (result.success && result.pointer) {
+            set((state) => ({
+              automationCursor: {
+                ...result.pointer!,
+                sequence: state.automationCursor.sequence + 1,
+              },
+            }))
           }
 
           // 实况缩略帧：daemon 在每个画面变更动作后附带 JPEG 快照，驱动浏览器舞台
@@ -837,43 +855,71 @@ export const useWebBridgeStore = create<WebBridgeState>()(
       setLastFailure: (failure) => set({ lastFailure: failure }),
       clearLastFailure: () => set({ lastFailure: null }),
 
-      requestTakeover: () => {
+      openBrowserPanel: () => {
+        set({ browserPanelMode: 'expanded' })
+        if (webBridgeClient.isConnected) {
+          webBridgeClient.browserWindow('show').catch(() => undefined)
+        }
+      },
+
+      compactBrowserPanel: () => {
+        set({ browserPanelMode: 'hidden' })
+        if (webBridgeClient.isConnected) {
+          webBridgeClient.browserWindow('hide').catch(() => undefined)
+        }
+      },
+
+      hideBrowserPanel: () => {
+        set({ browserPanelMode: 'hidden' })
+        if (get().pauseRequested) {
+          get().resumeAI()
+        }
+        if (webBridgeClient.isConnected) {
+          webBridgeClient.browserWindow('hide').catch(() => undefined)
+        }
+      },
+
+      endBrowserSession: async () => {
+        if (get().pauseRequested) {
+          set({ pauseRequested: false })
+          releasePauseGate()
+        }
+        if (webBridgeClient.isConnected) {
+          await webBridgeClient.closeBrowser().catch(() => undefined)
+        }
+        set({
+          browserPanelMode: 'hidden',
+          currentScreenshot: null,
+          pageState: null,
+          automationCursor: { x: 800, y: 450, kind: 'move', sequence: 0 },
+        })
+      },
+
+      pauseAI: () => {
         if (get().pauseRequested) return
-        takeoverStartPage = {
+        pauseStartPage = {
           url: get().pageState?.url || '',
           title: get().pageState?.title || '',
           at: Date.now(),
         }
         set({ pauseRequested: true })
-        get().addLog({ type: 'system', message: '用户接管浏览器 · AI 已暂停' })
-        // 启动实时画面推流：舞台上的点击/输入需要新鲜帧反馈。
-        // 同时动态挂载帧处理器——连接若早于本模块版本建立（HMR 场景），
-        // connect 时的旧 options 里没有 onScreencastFrame，必须在这里补挂。
+        get().addLog({ type: 'system', message: '检测到人工操作 · AI 已暂停' })
         if (webBridgeClient.isConnected) {
-          webBridgeClient.setScreencastHandler(makeScreencastFrameHandler(set))
-          webBridgeClient.startScreencast().catch(() => undefined)
+          webBridgeClient.browserWindow('activate').catch(() => undefined)
         }
       },
 
-      sendStageInput: (event) => {
-        if (!get().pauseRequested) return
-        if (!webBridgeClient.isConnected) return
-        webBridgeClient.sendInputEvent(event).catch(() => undefined)
-      },
-
-      handbackToAI: () => {
+      resumeAI: () => {
         if (!get().pauseRequested) return
         set({ pauseRequested: false })
         releasePauseGate()
-        get().addLog({ type: 'system', message: '用户交还控制权 · AI 继续执行' })
-        if (webBridgeClient.isConnected) {
-          webBridgeClient.setScreencastHandler(null)
-          webBridgeClient.stopScreencast().catch(() => undefined)
+        get().addLog({ type: 'system', message: 'AI 已继续执行' })
+        if (webBridgeClient.isConnected && get().browserPanelMode !== 'hidden') {
+          webBridgeClient.browserWindow('show').catch(() => undefined)
         }
-
-        // 异步采样交还时的真实页面状态，生成接管记录回喂模型
-        const start = takeoverStartPage
-        takeoverStartPage = null
+        // 异步采样继续时的真实页面状态，生成人工操作记录回喂模型
+        const start = pauseStartPage
+        pauseStartPage = null
         const startedAt = start?.at || Date.now()
         void (async () => {
           let endUrl = get().pageState?.url || ''
@@ -895,8 +941,8 @@ export const useWebBridgeStore = create<WebBridgeState>()(
           const endDesc = `${endTitle || '(无标题)'}（${endUrl || '未知地址'}）`
           const changed = start && (start.url !== endUrl)
           const note = changed
-            ? `用户接管浏览器 ${secs} 秒：接管前在 ${fromDesc}，交还时页面为 ${endDesc}。用户可能已手动完成部分操作，请基于当前页面状态继续。`
-            : `用户接管浏览器 ${secs} 秒后交还，页面未发生跳转，仍为 ${endDesc}。`
+            ? `AI 暂停 ${secs} 秒期间：暂停前在 ${fromDesc}，继续时页面为 ${endDesc}。用户可能已手动完成部分操作，请基于当前页面状态继续。`
+            : `AI 暂停 ${secs} 秒后继续，页面未发生跳转，仍为 ${endDesc}。`
           set((state) => ({ takeoverNotes: [...state.takeoverNotes, note] }))
         })()
       },
@@ -969,17 +1015,6 @@ export const useWebBridgeStore = create<WebBridgeState>()(
       },
 
       getWorkflows: () => get().workflows,
-
-      ensureExampleWorkflows: () => {
-        const { workflows } = get()
-        const hasExamples = workflows.some((w) => w.description?.includes(EXAMPLE_WORKFLOW_TAG) || w.id.includes(EXAMPLE_WORKFLOW_TAG))
-        if (workflows.length === 0 || !hasExamples) {
-          const examples = buildExampleWorkflows()
-          set((state) => ({
-            workflows: [...examples, ...state.workflows],
-          }))
-        }
-      },
 
       runWorkflow: async (workflowId, options) => {
         const workflow = get().workflows.find((w) => w.id === workflowId)
@@ -1306,11 +1341,11 @@ export const useWebBridgeStore = create<WebBridgeState>()(
 
           const summary = buildWebBridgeResultSummary(workflow.name, results)
 
-          // 接管记录回喂：以工具结果摘要的形式进入 agentic 上下文，
-          // 模型在下一轮决策时知道"用户接管期间做了什么/页面变成什么样"
+          // 人工操作记录回喂：以工具结果摘要的形式进入 agentic 上下文，
+          // 模型在下一轮决策时知道暂停期间页面发生了什么变化。
           const notes = get().takeoverNotes
           const finalSummary = notes.length > 0
-            ? `${summary}\n\n【用户接管记录】\n${notes.join('\n')}`
+            ? `${summary}\n\n【人工操作记录】\n${notes.join('\n')}`
             : summary
           return { workflow, results, summary: finalSummary }
         } finally {
@@ -1347,7 +1382,7 @@ export const useWebBridgeStore = create<WebBridgeState>()(
       },
     }),
     {
-      name: 'wonclaw-webbridge',
+      name: 'wonwork-browser-runtime',
       partialize: (state) => ({
         host: state.host,
         port: state.port,
@@ -1356,7 +1391,6 @@ export const useWebBridgeStore = create<WebBridgeState>()(
         daemonPath: state.daemonPath,
         config: state.config,
         securityPolicy: state.securityPolicy,
-        workflows: state.workflows,
       }),
     }
   )

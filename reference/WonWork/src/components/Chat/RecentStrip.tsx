@@ -6,6 +6,7 @@
  */
 
 import { memo, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useArtifactDockStore } from '@/stores/artifactDockStore'
 
 /** mini 柱状图缩略（tiny 尺寸，34px 高） */
@@ -36,10 +37,12 @@ function RecentThumb({ artifactId }: { artifactId: string }) {
 }
 
 export const RecentStrip = memo(function RecentStrip() {
+  const { t } = useTranslation()
   const artifactOrder = useArtifactDockStore((s) => s.artifactOrder)
   const currentId = useArtifactDockStore((s) => s.currentArtifactId)
   const setCurrent = useArtifactDockStore((s) => s.setCurrent)
   const setTab = useArtifactDockStore((s) => s.setTab)
+  const removeArtifact = useArtifactDockStore((s) => s.removeArtifact)
   const artifacts = useArtifactDockStore((s) => s.artifacts)
 
   const handleClick = useCallback(
@@ -50,11 +53,18 @@ export const RecentStrip = memo(function RecentStrip() {
     [setCurrent, setTab],
   )
 
+  const handleRemove = useCallback(
+    (id: string) => {
+      removeArtifact(id)
+    },
+    [removeArtifact],
+  )
+
   if (artifactOrder.length === 0) return null
 
   return (
     <div className="wf-dock-recent">
-      <div className="wf-recent-title">本次对话的产物</div>
+      <div className="wf-recent-title">{t('chat.recentStrip.title')}</div>
       <div className="wf-recent-strip">
         {artifactOrder.map((id) => {
           const a = artifacts[id]
@@ -62,7 +72,7 @@ export const RecentStrip = memo(function RecentStrip() {
           return (
             <div
               key={id}
-              className={`wf-recent-item${currentId === id ? ' active' : ''}`}
+              className={`wf-recent-item group relative${currentId === id ? ' active' : ''}`}
               onClick={() => handleClick(id)}
               role="button"
               tabIndex={0}
@@ -74,6 +84,20 @@ export const RecentStrip = memo(function RecentStrip() {
                 <RecentThumb artifactId={id} />
               </div>
               <div className="wf-recent-cap">{a.caption || a.fileName}</div>
+              {/* hover 浮现的移除按钮（从坞中移除，墓碑防水合复活） */}
+              <div className="absolute right-1 top-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <button
+                  className="wf-fabtn wf-press"
+                  title={t('chat.board.removeProd')}
+                  aria-label={t('chat.board.removeProd')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleRemove(id)
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           )
         })}

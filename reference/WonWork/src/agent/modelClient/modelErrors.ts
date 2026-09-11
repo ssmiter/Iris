@@ -6,6 +6,7 @@ import {
   isRateLimitError,
   isToolUseMismatchError,
 } from '@/utils/error'
+import i18n from '@/i18n'
 
 /**
  * 模型调用层错误码。
@@ -139,7 +140,7 @@ export function classifyModelError(error: unknown): ModelErrorInfo {
   if (isAbortError(error)) {
     return {
       code: 'UNKNOWN',
-      message: '请求已取消',
+      message: i18n.t('chat.toast.requestCancelled'),
       isRetryable: false,
       originalError: error,
     }

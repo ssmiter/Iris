@@ -60,16 +60,16 @@ export const ImageArtifactCard = memo(function ImageArtifactCard({
       <img
         src={resolveDownloadUrl(artifact.previewUrl)}
         alt={artifact.caption || fileName}
-        className="max-h-64 w-full rounded-lg border border-surface-200 object-contain bg-surface-50"
+        className="max-h-64 w-full rounded-lg border border-[var(--wf-line)] object-contain bg-[var(--wf-bg)]"
         loading="lazy"
       />
 
       {(artifact.caption || metaParts.length > 0) && (
         <div className="mt-3 space-y-1">
           {artifact.caption && (
-            <p className="text-base font-semibold text-surface-900 leading-snug">{artifact.caption}</p>
+            <p className="text-base font-semibold text-[var(--wf-ink)] leading-snug">{artifact.caption}</p>
           )}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-surface-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--wf-mut)]">
             <span className="truncate max-w-[240px]" title={fileName}>{fileName}</span>
             {metaParts.map((part, i) => (
               <span key={i}>{part}</span>
@@ -85,7 +85,7 @@ export const ImageArtifactCard = memo(function ImageArtifactCard({
           rel="noopener noreferrer"
           className={cn(
             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-            'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+            'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
           )}
           title={t('chat.artifactCard.download')}
         >
@@ -97,7 +97,7 @@ export const ImageArtifactCard = memo(function ImageArtifactCard({
           onClick={handleCopyPath}
           className={cn(
             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-            'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+            'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
           )}
         >
           <Copy size={14} />

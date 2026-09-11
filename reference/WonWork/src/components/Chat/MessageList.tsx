@@ -1,12 +1,12 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { Check, X } from 'lucide-react'
+import { Virtuoso } from 'react-virtuoso'
+import { ArrowDown, ChevronRight, Loader2 } from 'lucide-react'
 import type { ChatMessage } from '@/types/chat'
-import { MessageBubble } from './MessageBubble'
 import { WaterfallTurn } from './WaterfallTurn'
-import { Portal } from '@/components/common/Portal'
+import { TaskLiveRun } from './TaskLiveRun'
 import { useChatStore, type CompactBoundary } from '@/stores/chatStore'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface MessageListProps {
   messages: ChatMessage[]
@@ -59,119 +59,64 @@ function groupMessagesIntoTurns(messages: ChatMessage[]): Turn[] {
   return turns
 }
 
-/**
- * 判断一个 turn 是否应该使用瀑布流渲染。
- * 条件：任意 assistant 消息包含 renderNodes。
- */
-function turnHasRenderNodes(turn: Turn): boolean {
-  return turn.messages.some(
-    (m) => m.role === 'assistant' && m.renderNodes && m.renderNodes.length > 0
-  )
-}
-
 /** 底部判定容差（px）：流式增长/轻微回退不脱随；小于该值仍视为"在底部" */
 const AT_BOTTOM_THRESHOLD = 80
 
+/**
+ * 轻量轮折叠行（2026-09-02 §16.6 分层加载）：老轮以截断预览载入（重字段未拉取），
+ * 整轮渲染为一行占位——"这里有内容、是什么、点开看"。点击按轮补拉全量并原地替换。
+ */
+function LightTurnRow({ turn }: { turn: Turn }) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const loadTurn = useChatStore((s) => s.loadTurn)
+  const first = turn.messages[0]
+  const turnIndex = first?.turnIndex ?? 0
+  const previewSource = turn.userMessage ?? first
+  const preview = (previewSource?.content ?? '').replace(/\s+/g, ' ').trim()
+  return (
+    <button
+      type="button"
+      className="wf-light-turn"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          await loadTurn(turnIndex)
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      {busy ? <Loader2 size={13} className="wf-light-turn-spin" /> : <ChevronRight size={13} />}
+      <span className="wf-light-turn-label">
+        {t('chat.messageList.lightTurnLabel', { index: turnIndex + 1, count: turn.messages.length })}
+      </span>
+      <span className="wf-light-turn-preview">{preview}</span>
+    </button>
+  )
+}
+
 export function MessageList({ messages }: MessageListProps) {
   const { t } = useTranslation()
-  const virtuosoRef = useRef<VirtuosoHandle>(null)
-
-  // 浮动审批栏（v9.5）：store 里的 pending 列表 + 本地"已决定 ghost"层。
-  // 决定（批准/拒绝）立即生效，但该条不瞬消——原地淡化 500ms 后才收拢高度，
-  // 其余条目在此时平滑补位；淡化期间布局完全不动，视线不用追任何元素。
-  const pendingApprovals = useChatStore((s) => s.pendingApprovals)
-  const approveToolCall = useChatStore((s) => s.approveToolCall)
-  const rejectToolCall = useChatStore((s) => s.rejectToolCall)
-  const activeApprovals = pendingApprovals.filter((a) => a.status === 'pending')
-  const [approvalBusy, setApprovalBusy] = useState<Set<string>>(new Set())
-  interface ApprovalGhost {
-    approval: (typeof activeApprovals)[number]
-    decision: 'approved' | 'rejected'
-    collapsing: boolean
-  }
-  const [approvalGhosts, setApprovalGhosts] = useState<Map<string, ApprovalGhost>>(new Map())
-
-  const decideApproval = useCallback(
-    (approval: (typeof activeApprovals)[number], decision: 'approved' | 'rejected') => {
-      const id = approval.toolCallId
-      if (approvalBusy.has(id)) return
-      setApprovalBusy((prev) => new Set(prev).add(id))
-      setApprovalGhosts((prev) => {
-        const next = new Map(prev)
-        next.set(id, { approval, decision, collapsing: false })
-        return next
-      })
-      if (decision === 'approved') approveToolCall(id)
-      else rejectToolCall(id)
-      // 淡化结束后再收拢（两阶段，避免"先动后消失"的视觉追逐）
-      setTimeout(() => {
-        setApprovalGhosts((prev) => {
-          const g = prev.get(id)
-          if (!g) return prev
-          const next = new Map(prev)
-          next.set(id, { ...g, collapsing: true })
-          return next
-        })
-      }, 500)
-      setTimeout(() => {
-        setApprovalGhosts((prev) => {
-          if (!prev.has(id)) return prev
-          const next = new Map(prev)
-          next.delete(id)
-          return next
-        })
-        setApprovalBusy((prev) => {
-          if (!prev.has(id)) return prev
-          const next = new Set(prev)
-          next.delete(id)
-          return next
-        })
-      }, 850)
-    },
-    [approvalBusy, approveToolCall, rejectToolCall]
-  )
-
-  const handleApprove = useCallback(
-    (toolCallId: string) => {
-      const a = activeApprovals.find((x) => x.toolCallId === toolCallId)
-      if (a) decideApproval(a, 'approved')
-    },
-    [activeApprovals, decideApproval]
-  )
-
-  // v9.1：审批挂起期间 Tab = 快速批准第一项（模态语义，claude-code 式快捷键）。
-  // window capture 阶段拦截，避免与输入框/斜杠菜单的 Tab 语义冲突。
-  useEffect(() => {
-    if (activeApprovals.length === 0) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || e.shiftKey || e.isComposing) return
-      const first = activeApprovals[0]
-      if (!first) return
-      e.preventDefault()
-      e.stopPropagation()
-      handleApprove(first.toolCallId)
-    }
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [activeApprovals, handleApprove])
-
-  // 显示顺序稳定：live + ghost 按首次出现位置排列，新审批追加在底部（最靠近对话框）。
-  // ghost 保持原槽位，淡化→收拢全过程其余条目不被推挤。
-  const approvalOrderRef = useRef<string[]>([])
-  const liveIds = activeApprovals.map((a) => a.toolCallId)
-  const displayOrder = useMemo(() => {
-    const ghostIds = new Set(approvalGhosts.keys())
-    const alive = new Set([...liveIds, ...ghostIds])
-    const kept = approvalOrderRef.current.filter((id) => alive.has(id))
-    const appended = [...liveIds, ...ghostIds].filter((id) => !kept.includes(id))
-    const order = [...kept, ...appended]
-    approvalOrderRef.current = order
-    return order
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveIds.join(','), approvalGhosts])
 
   // 分组
   const turns = useMemo(() => groupMessagesIntoTurns(messages), [messages])
+
+  // 轮迹轨锚点（2026-08-12）：turn 下标 → 该轮用户消息在 messages 数组中的下标。
+  // 供 TurnRail minimap 按 messages 下标定位刻度（data-turn-idx）；无用户消息的
+  // 回执段不设锚点。只加数据属性，不动结构/样式/渲染逻辑。
+  const msgIdxById = useMemo(() => new Map(messages.map((m, i) => [m.id, i])), [messages])
+  const turnUserMsgIdx = useMemo(() => {
+    const map = new Map<number, number>()
+    turns.forEach((turn, ti) => {
+      if (turn.userMessage) {
+        const mi = msgIdxById.get(turn.userMessage.id)
+        if (mi != null) map.set(ti, mi)
+      }
+    })
+    return map
+  }, [turns, msgIdxById])
 
   // 压缩边界分隔标记（v9.4 位置语义）：历史不动，在切点位置画正文风格的分隔线。
   // 适用 = 切点早于活路径最早分叉点的所有线（分叉在切点后 → 该线对此分支有效；
@@ -202,95 +147,179 @@ export function MessageList({ messages }: MessageListProps) {
     return map
   }, [compactBoundaries, branches, turns, messages])
 
-  // ── 滚动跟随状态机（经典 chat scroll-follow）──
-  // shouldFollow=true  → 跟随模式：新内容把历史向上推，最新始终可见
-  // shouldFollow=false → 翻阅模式：用户上翻读历史，流式输出不打扰
-  // 恢复路径：用户滚回底部（atBottomStateChange）或点击"回到最新"
-  const [shouldFollow, setShouldFollow] = useState(true)
+  // ── 钉底引擎（2026-09-02 重写，废弃 followOutput + 裸方向判定）──
+  // pinnedRef = 唯一真相：用户意愿锚在最新。
+  //   pin   → 滚动回到底部（scroll 事件距离判定 + atBottomStateChange 跳变）/ 点「回到最新」/ 初始
+  //   unpin → 用户上翻：scrollTop 真实下降 ∧ 上行输入意图同时在场。
+  //           scrollTop 有三个写者——用户、本引擎、virtuoso/浏览器的滚动锚定补偿
+  //           （视口上方内容收缩，如工具调用/思考块完成折叠时，补偿会下调 scrollTop
+  //           保持视觉稳定）。只认「下降即上翻」会把补偿误判成用户意图——流式中途
+  //           偶发脱锚的根因。无意图的下降 = 补偿，pinned 语义下当场顶回底部。
+  //   意图  → 滚轮/键盘/触摸上行事件武装 150ms 窗口；指针按住期间全程算用户操作
+  //           （原生滚动条不派发 DOM 事件，按住判定是识别拖滚动条的唯一可靠途径）。
+  //   执行  → pinned 期间每次内容变化（含逐 chunk）+ ResizeObserver（图片/图表晚加载
+  //           撑高、视口尺寸变化）都直接钉到真底部，漂移不超过一帧。
+  // 手动模式（设置 scrollFollow=manual）：引擎整体停用，「回到最新」胶囊是唯一跳转入口。
+  const manualFollow = useSettingsStore((s) => s.scrollFollow === 'manual')
+  const [pinned, setPinned] = useState(true)
+  const pinnedRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
-  const atBottomRef = useRef(true)
+  const manualRef = useRef(manualFollow)
+  manualRef.current = manualFollow
   const [newTurnsWhileAway, setNewTurnsWhileAway] = useState(0)
   const scrollerRef = useRef<HTMLElement | null>(null)
-  const touchStartYRef = useRef<number | null>(null)
 
-  // 用户主动离开 → 暂停跟随；用户回到底部 → 恢复跟随
-  const handleAtBottomStateChange = useCallback((bottom: boolean) => {
-    atBottomRef.current = bottom
-    setAtBottom(bottom)
-    if (bottom) {
-      setShouldFollow(true)
-      setNewTurnsWhileAway(0)
-    }
+  const setPinnedBoth = useCallback((v: boolean) => {
+    pinnedRef.current = v
+    setPinned(v)
   }, [])
 
-  // 原生输入事件识别"用户上翻"意图（程序化滚动不触发这些事件）
+  const scrollToLatest = useCallback((behavior: 'auto' | 'smooth') => {
+    const el = scrollerRef.current
+    if (!el) return
+    // 直写 DOM，不走 virtuoso scrollToIndex：后者对测高不全的列表走「估算跳转→测量校正」
+    // 两步，校正的反向回落会被上翻侦测误判为脱锚（发送新轮后跟随静默死掉的根因），
+    // 且逐 chunk 重复估算-校正即肉眼可见的抖动。scrollTop 写 scrollHeight 自动钳制到
+    // 最大值，瞬时精确落在真底部（含 Footer 尾部净空），且只增不减、永不误触 unpin。
+    if (behavior === 'auto') el.scrollTop = el.scrollHeight
+    else el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [])
+
+  // 空态不挂 Virtuoso（下方 early return），scroller 在首条消息出现时才有 DOM，需按此重绑
+  const hasMessages = messages.length > 0
+
+  // 上翻脱锚 / 回底重锚。回底用距离判定而非只看 atBottomStateChange：后者只在布尔跳变时
+  // 触发，阈值内小幅上翻再下来全程无跳变，纯靠它会出现「人在底部、跟随已死」的静默卡死。
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        setShouldFollow(false)
-      } else if (e.deltaY > 0 && atBottomRef.current) {
-        // 阈值内轻微上翻后向下滚回——恢复跟随
-        setShouldFollow(true)
-      }
-    }
+    let lastTop = el.scrollTop
+    let upIntentUntil = 0
+    let pointerHeld = false
+    const armUpIntent = () => { upIntentUntil = performance.now() + 150 }
+    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) armUpIntent() }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'Home') {
-        setShouldFollow(false)
-      }
+      if (e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'Home') armUpIntent()
     }
-    const onTouchStart = (e: TouchEvent) => {
-      touchStartYRef.current = e.touches[0]?.clientY ?? null
-    }
+    let touchY: number | null = null
+    const onTouchStart = (e: TouchEvent) => { touchY = e.touches[0]?.clientY ?? null }
     const onTouchMove = (e: TouchEvent) => {
-      const startY = touchStartYRef.current
-      if (startY == null) return
       const y = e.touches[0]?.clientY
-      if (y != null && y - startY > 8) setShouldFollow(false) // 下拉=看向历史
+      if (touchY != null && y != null && y > touchY + 4) armUpIntent()
+      if (y != null) touchY = y
     }
+    const hold = () => { pointerHeld = true }
+    const release = () => { pointerHeld = false }
+    const onScroll = () => {
+      const top = el.scrollTop
+      if (!manualRef.current) {
+        if (pinnedRef.current && top < lastTop - 1) {
+          if (performance.now() < upIntentUntil || pointerHeld) {
+            setPinnedBoth(false)
+          } else {
+            // 无输入意图的下降 = 滚动补偿/锚定调整：pinned 语义=钉住真底，当场顶回
+            scrollToLatest('auto')
+          }
+        } else if (!pinnedRef.current && el.scrollHeight - top - el.clientHeight <= AT_BOTTOM_THRESHOLD) {
+          setPinnedBoth(true)
+        }
+      }
+      lastTop = top
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
     el.addEventListener('wheel', onWheel, { passive: true })
     el.addEventListener('keydown', onKeyDown)
     el.addEventListener('touchstart', onTouchStart, { passive: true })
     el.addEventListener('touchmove', onTouchMove, { passive: true })
+    window.addEventListener('pointerdown', hold, true)
+    window.addEventListener('pointerup', release, true)
+    window.addEventListener('pointercancel', release, true)
+    window.addEventListener('blur', release)
     return () => {
+      el.removeEventListener('scroll', onScroll)
       el.removeEventListener('wheel', onWheel)
       el.removeEventListener('keydown', onKeyDown)
       el.removeEventListener('touchstart', onTouchStart)
       el.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('pointerdown', hold, true)
+      window.removeEventListener('pointerup', release, true)
+      window.removeEventListener('pointercancel', release, true)
+      window.removeEventListener('blur', release)
     }
-  }, [messages.length === 0])
+  }, [hasMessages, setPinnedBoth, scrollToLatest])
 
-  // 翻阅期间统计"新增轮次"（按 turn 计数，不随字符流跳动）
+  // 逐 chunk 钉底（rAF 合并进绘制帧）。刻意只随 messages 触发、不随 pinned 翻转立即拽动：
+  // 回底重锚后等下一次内容增长自然钉回，避免在阈值边界缓慢滚动时的吸附抖动
+  useEffect(() => {
+    if (manualFollow || !pinnedRef.current) return
+    const raf = requestAnimationFrame(() => scrollToLatest('auto'))
+    return () => cancelAnimationFrame(raf)
+  }, [messages, manualFollow, scrollToLatest])
+
+  // 无 messages 变化的高度增长（图片/图表/晚加载撑开已渲染项）与视口尺寸变化：保持钉底
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    const list = scroller?.firstElementChild
+    if (!scroller || !list) return
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      if (manualRef.current || !pinnedRef.current) return
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        scrollToLatest('auto')
+      })
+    })
+    ro.observe(list)
+    ro.observe(scroller)
+    return () => {
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [hasMessages, scrollToLatest])
+
+  // atBottom 状态驱动胶囊显隐；回底跳变同时恢复跟随（距离判定之外的兜底路径）
+  const handleAtBottomStateChange = useCallback((bottom: boolean) => {
+    setAtBottom(bottom)
+    if (bottom) {
+      if (!manualRef.current) setPinnedBoth(true)
+      setNewTurnsWhileAway(0)
+    }
+  }, [setPinnedBoth])
+
+  // 切到手动模式 → 立即脱锚（切回自动不主动拽滚动条：回底或点胶囊时自然恢复）
+  useEffect(() => {
+    if (manualFollow) setPinnedBoth(false)
+  }, [manualFollow, setPinnedBoth])
+
+  // 翻阅期间统计"新增轮次"（按 turn 计数，不随字符流跳动；手动模式恒在翻阅态）
   const prevTurnsLenRef = useRef(turns.length)
   useEffect(() => {
     const prev = prevTurnsLenRef.current
     prevTurnsLenRef.current = turns.length
-    if (!shouldFollow && turns.length > prev) {
+    if ((!pinned || manualFollow) && turns.length > prev) {
       setNewTurnsWhileAway((c) => c + (turns.length - prev))
     }
-  }, [turns.length, shouldFollow])
+  }, [turns.length, pinned, manualFollow])
 
-  // "回到最新"胶囊点击 → 平滑回到底部，恢复跟随
+  // "回到最新"胶囊点击 → 平滑回到底部；自动模式恢复跟随，手动模式只跳不跟随
   const handleJumpToLatest = useCallback(() => {
-    setShouldFollow(true)
+    if (!manualRef.current) setPinnedBoth(true)
     setNewTurnsWhileAway(0)
-    virtuosoRef.current?.scrollToIndex({
-      index: turns.length - 1,
-      behavior: 'smooth',
-      align: 'end',
-    })
-  }, [turns.length])
+    const behavior: 'auto' | 'smooth' = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth'
+    scrollToLatest(behavior)
+  }, [scrollToLatest, setPinnedBoth])
 
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center space-y-3">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-primary-100 flex items-center justify-center overflow-hidden">
-            <img src="./iris-logo.svg" alt="Iris" className="w-12 h-12 object-contain" />
-          </div>
-          <h3 className="text-lg font-semibold text-surface-700">{t('chat.messageList.startChat')}</h3>
-          <p className="text-sm text-surface-400 max-w-xs mx-auto">
+          {/* 裸标居中（旧 primary-100 圆角砖在暗色下是一块白边，2026-08-13 用户反馈拆除） */}
+          <img src="./logo.ico" alt="WonWork" className="w-16 h-16 mx-auto object-contain" />
+          <h3 className="text-lg font-semibold text-[var(--wf-sub)]">{t('chat.messageList.startChat')}</h3>
+          <p className="text-sm text-[var(--wf-faint)] max-w-xs mx-auto">
             {t('chat.messageList.startChatDescription')}
           </p>
         </div>
@@ -301,7 +330,6 @@ export function MessageList({ messages }: MessageListProps) {
   return (
     <>
       <Virtuoso
-        ref={virtuosoRef}
         scrollerRef={(el) => { scrollerRef.current = el as HTMLElement | null }}
         className="flex-1 wf-chat-scroll"
         data={turns}
@@ -309,9 +337,10 @@ export function MessageList({ messages }: MessageListProps) {
         initialTopMostItemIndex={turns.length - 1}
         atBottomThreshold={AT_BOTTOM_THRESHOLD}
         atBottomStateChange={handleAtBottomStateChange}
-        followOutput={(isAtBottom) => (shouldFollow && isAtBottom ? 'auto' : false)}
         increaseViewportBy={{ top: 0, bottom: 160 }}
         itemContent={(index, turn) => {
+          // §16.6：轻量轮（整轮轻行）渲染为折叠占位行，点开按轮补拉
+          const isLightTurn = turn.messages.every((m) => m.light)
           const isStreaming = turn.messages.some((m) => m.isStreaming)
           const assistantMsgs = turn.messages.filter(
             (m) => m.role === 'assistant'
@@ -319,126 +348,74 @@ export function MessageList({ messages }: MessageListProps) {
           const dividers = dividersByTurn.get(index)
 
           return (
-            <div className="wf-turn-wrapper">
+            <div className="wf-turn-wrapper" data-turn-idx={turnUserMsgIdx.get(index)}>
               {dividers?.map((b) => (
                 <div key={b.id} className="wf-compact-divider">
                   <span className="cd-line" />
                   <span className="cd-text">
-                    {b.trigger === 'auto' ? '上下文已自动压缩' : '上下文已压缩'}
-                    {b.coveredCount > 0 ? ` · 此前 ${b.coveredCount} 条已摘要为背景` : ' · 此前内容已摘要为背景'}
+                    {b.trigger === 'auto' ? t('chat.messageList.autoCompacted') : t('chat.messageList.compacted')}
+                    {b.coveredCount > 0 ? ` · ${t('chat.messageList.summarizedWithCount', { count: b.coveredCount })}` : ` · ${t('chat.messageList.summarized')}`}
                   </span>
                   <span className="cd-line" />
                 </div>
               ))}
-              <WaterfallTurn
-                userMessage={turn.userMessage}
-                assistantMessages={assistantMsgs}
-                allMessages={turn.messages}
-                isStreaming={isStreaming}
-              />
+              {isLightTurn ? (
+                <LightTurnRow turn={turn} />
+              ) : (
+                <WaterfallTurn
+                  userMessage={turn.userMessage}
+                  assistantMessages={assistantMsgs}
+                  allMessages={turn.messages}
+                  isStreaming={isStreaming}
+                />
+              )}
             </div>
           )
         }}
         components={{
           Footer: () => {
             const trailing = dividersByTurn.get(turns.length)
-            if (!trailing) return null
             return (
-              <div className="wf-turn-wrapper">
-                {trailing.map((b) => (
-                  <div key={b.id} className="wf-compact-divider">
-                    <span className="cd-line" />
-                    <span className="cd-text">
-                      {b.trigger === 'auto' ? '上下文已自动压缩' : '上下文已压缩'}
-                      {b.coveredCount > 0 ? ` · 此前 ${b.coveredCount} 条已摘要为背景` : ' · 此前内容已摘要为背景'}
-                    </span>
-                    <span className="cd-line" />
+              <>
+                {trailing && (
+                  <div className="wf-turn-wrapper">
+                    {trailing.map((b) => (
+                      <div key={b.id} className="wf-compact-divider">
+                        <span className="cd-line" />
+                        <span className="cd-text">
+                          {b.trigger === 'auto' ? '上下文已自动压缩' : '上下文已压缩'}
+                          {b.coveredCount > 0 ? ` · 此前 ${b.coveredCount} 条已摘要为背景` : ' · 此前内容已摘要为背景'}
+                        </span>
+                        <span className="cd-line" />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+                {/* 任务会话进行中实况（as_task 运行内联渲染，非任务会话恒 null） */}
+                <TaskLiveRun />
+                {/* 末轮底部净空（防浮动输入框遮挡）：替代被 Virtuoso 恒真命中的
+                    .wf-turn-wrapper:last-child 200px——那个写法把 200px 加给了每一轮 */}
+                <div className="wf-chat-tail-space" />
+              </>
             )
           },
         }}
       />
 
-      {/* "回到最新"胶囊——用户离开底部后出现，点击恢复跟随 */}
-      {!shouldFollow && !atBottom && (
+      {/* "回到最新"圆钮——离开底部后出现（手动模式=唯一跳转入口，不在底部即常驻）；
+          absolute 挂 ChatView 相对容器，右侧与输入坞同水平带，不遮正文 */}
+      {(!pinned || manualFollow) && !atBottom && (
         <button
           className="wf-jump-pill"
           onClick={handleJumpToLatest}
-          aria-label="回到最新内容"
+          aria-label={t('chat.messageList.backToLatestAria')}
+          title={t('chat.messageList.backToLatest')}
         >
-          ↓ 回到最新
+          <ArrowDown size={17} />
           {newTurnsWhileAway > 0 && (
-            <span className="wf-jump-n"> · {newTurnsWhileAway} 轮新内容</span>
+            <span className="wf-jump-n">{newTurnsWhileAway}</span>
           )}
         </button>
-      )}
-
-      {/* 浮动审批栏（v9.5）——待审批工具以整条 bar 垂直堆叠在 composer 正上方，
-          与 composer 同宽同中线。整条点击 = 批准（与 Tab 同语义），✗ = 拒绝；
-          决定后原地淡化 500ms 再收拢，其余条目平滑补位，不主动打破专注。
-          经 Portal 挂到 body：避免祖先 overflow/transform 让 fixed 失效或被裁剪 */}
-      {displayOrder.length > 0 && (
-        <Portal>
-          <div className="wf-approval-bar">
-            {displayOrder.map((id) => {
-              const live = activeApprovals.find((a) => a.toolCallId === id)
-              if (live) {
-                const busy = approvalBusy.has(id)
-                const isFirst = live.toolCallId === activeApprovals[0]?.toolCallId
-                const risk = live.riskLevel
-                return (
-                  <div
-                    key={id}
-                    className="wf-approval-item"
-                    role="button"
-                    tabIndex={-1}
-                    title="点击任意处批准"
-                    onClick={() => decideApproval(live, 'approved')}
-                  >
-                    <span className={`ap-dot${risk === 'destructive' ? ' danger' : risk === 'elevated' ? ' warn' : ''}`} />
-                    <span className="ap-name">{live.toolName}</span>
-                    <span className="ap-reason" title={live.impactStatement}>{live.impactStatement}</span>
-                    {isFirst && <kbd className="ap-tab">Tab 批准</kbd>}
-                    <span className="ap-acts">
-                      <button
-                        type="button"
-                        className="ap-btn ok"
-                        disabled={busy}
-                        title="批准"
-                        onClick={(e) => { e.stopPropagation(); decideApproval(live, 'approved') }}
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="ap-btn no"
-                        disabled={busy}
-                        title="拒绝"
-                        onClick={(e) => { e.stopPropagation(); decideApproval(live, 'rejected') }}
-                      >
-                        <X size={14} />
-                      </button>
-                    </span>
-                  </div>
-                )
-              }
-              const ghost = approvalGhosts.get(id)
-              if (!ghost) return null
-              return (
-                <div key={id} className={`wf-approval-item ghost ${ghost.decision}${ghost.collapsing ? ' collapse' : ''}`}>
-                  <span className="ap-dot" />
-                  <span className="ap-name">{ghost.approval.toolName}</span>
-                  <span className="ap-reason">{ghost.decision === 'approved' ? '已批准' : '已拒绝'}</span>
-                  <span className="ap-acts">
-                    {ghost.decision === 'approved' ? <Check size={14} /> : <X size={14} />}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </Portal>
       )}
     </>
   )

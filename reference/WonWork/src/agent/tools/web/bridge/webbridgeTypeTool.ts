@@ -26,16 +26,16 @@ interface WebBridgeTypeInput {
 }
 
 function resolveSelector(input: WebBridgeTypeInput): ElementSelector {
+  if (input.selector) {
+    return {
+      selector_type: input.selector_type || 'css',
+      value: input.selector,
+    }
+  }
   if (input.target) {
     return targetToSelector(input.target)
   }
-  if (!input.selector) {
-    throw new Error('必须提供 target 或 selector 之一')
-  }
-  return {
-    selector_type: input.selector_type || 'css',
-    value: input.selector,
-  }
+  throw new Error('必须提供 target 或 selector 之一')
 }
 
 export const webbridgeTypeTool = createTool<WebBridgeTypeInput, WebBridgePrimitiveResult>({
@@ -43,7 +43,7 @@ export const webbridgeTypeTool = createTool<WebBridgeTypeInput, WebBridgePrimiti
   description: '在浏览器输入框中输入文本。支持自然语言 target 或显式 selector。',
   inputSchema: {
     type: 'object',
-    required: ['value'],
+    required: ['target', 'value'],
     properties: {
       target: {
         type: 'string',

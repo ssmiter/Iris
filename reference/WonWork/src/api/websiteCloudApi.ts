@@ -26,9 +26,10 @@ function getWebsiteAuthHeaders(): Record<string, string> {
  */
 export const websiteCloudApi = {
   /** GET /api/cloud/plan/current */
-  getCurrentPlan: (): Promise<CloudPlanResponse> =>
+  getCurrentPlan: (opts?: { silent?: boolean }): Promise<CloudPlanResponse> =>
     fetchApi<CloudPlanResponse>('/api/cloud/plan/current', {
       headers: getWebsiteAuthHeaders(),
+      silent: opts?.silent,
     }),
 
   /** GET /api/cloud/plans（website r125 新增，可购套餐列表） */
@@ -38,16 +39,18 @@ export const websiteCloudApi = {
     }),
 
   /** GET /api/cloud/tokenhub/key */
-  getTokenHubKeyMeta: (): Promise<CloudTokenHubKeyResponse> =>
+  getTokenHubKeyMeta: (opts?: { silent?: boolean }): Promise<CloudTokenHubKeyResponse> =>
     fetchApi<CloudTokenHubKeyResponse>('/api/cloud/tokenhub/key', {
       headers: getWebsiteAuthHeaders(),
+      silent: opts?.silent,
     }),
 
   /** POST /api/cloud/tokenhub/key/reveal */
-  revealTokenHubKey: (): Promise<CloudRevealKeyResponse> =>
+  revealTokenHubKey: (opts?: { silent?: boolean }): Promise<CloudRevealKeyResponse> =>
     fetchApi<CloudRevealKeyResponse>('/api/cloud/tokenhub/key/reveal', {
       method: 'POST',
       headers: getWebsiteAuthHeaders(),
+      silent: opts?.silent,
     }),
 
   /** GET /api/cloud/quota/usage */

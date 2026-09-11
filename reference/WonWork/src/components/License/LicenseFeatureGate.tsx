@@ -1,4 +1,5 @@
 import { cn } from '@/utils'
+import { useTranslation } from 'react-i18next'
 import { useLicenseGuard } from '@/hooks/useLicenseGuard'
 import { Lock, Sparkles } from 'lucide-react'
 
@@ -27,6 +28,7 @@ export function LicenseFeatureGate({
   onUpgrade,
   className,
 }: LicenseFeatureGateProps) {
+  const { t } = useTranslation()
   const { allowed, reason, showUpgrade } = useLicenseGuard(feature)
 
   if (allowed) {
@@ -44,19 +46,19 @@ export function LicenseFeatureGate({
   return (
     <div
       className={cn(
-        'flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-100 text-surface-500 text-xs',
+        'flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--wf-mono-bg)] text-[var(--wf-mut)] text-xs',
         className
       )}
     >
       <Lock size={14} />
-      <span className="flex-1 truncate">{reason || '当前套餐不支持此功能'}</span>
+      <span className="flex-1 truncate">{reason || t('license.gate.unsupported')}</span>
       {showUpgrade && onUpgrade && (
         <button
           onClick={onUpgrade}
           className="flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium"
         >
           <Sparkles size={12} />
-          升级
+          {t('license.gate.upgrade')}
         </button>
       )}
     </div>

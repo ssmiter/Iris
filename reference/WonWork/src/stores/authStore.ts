@@ -6,10 +6,11 @@ import type { WebsiteUser, WebsiteAccountInfo } from '@/types/website'
 import { authApi } from '@/api/client'
 import { cloudApi } from '@/api/cloudApi'
 import { websiteAuthApi } from '@/api/websiteAuthApi'
-import { isOnline, isPreview } from '@/config/product'
+import { isOnline } from '@/config/product'
 import { getErrorMessage } from '@/utils/error'
 import { useTokenHubStore } from '@/stores/tokenHubStore'
 import { useRuntimeConfigStore } from '@/stores/runtimeConfigStore'
+import { startSessionGuard, stopSessionGuard } from '@/stores/sessionGuard'
 
 const IS_STANDALONE = import.meta.env.VITE_STANDALONE_MODE === 'true'
 
@@ -308,6 +309,9 @@ export const useAuthStore = create<AuthState>()(
             isLoggedIn: true,
             isMesLoggedIn: !local,
           })
+          // mescli-online 恢复路径不经 restoreWebsiteSession，守卫在此补启动
+          // （守卫钉 wonclaw_website_token，与 MES 活跃身份互不干扰）
+          if (websiteMode) startSessionGuard()
         } catch {
           // MES 会话失效：清 MES 身份，website 会话（若存在）保持登录态
           const keepWebsite = websiteMode && get().isWebsiteLoggedIn
@@ -317,6 +321,7 @@ export const useAuthStore = create<AuthState>()(
             isLoggedIn: keepWebsite,
             isMesLoggedIn: false,
           })
+          if (keepWebsite) startSessionGuard()
         }
       },
 
@@ -493,6 +498,7 @@ export const useAuthStore = create<AuthState>()(
             isWebsiteLoggedIn: true,
             isLoading: false,
           })
+          startSessionGuard()
           return true
         } catch (err) {
           set({ error: getErrorMessage(err, '登录异常'), isLoading: false })
@@ -528,6 +534,7 @@ export const useAuthStore = create<AuthState>()(
             isWebsiteLoggedIn: true,
             isLoading: false,
           })
+          startSessionGuard()
           return true
         } catch (err) {
           set({ error: getErrorMessage(err, '注册异常'), isLoading: false })
@@ -552,6 +559,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       websiteLogout: async () => {
+        stopSessionGuard()
         try {
           await websiteAuthApi.logout()
         } catch {
@@ -607,6 +615,7 @@ export const useAuthStore = create<AuthState>()(
             websiteAccount: accountInfo,
             isWebsiteLoggedIn: true,
           })
+          startSessionGuard()
           return true
         } catch {
           clearWebsiteToken()

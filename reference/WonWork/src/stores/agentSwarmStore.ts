@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { chatApi } from '@/api/client'
-import { useMemoryStore } from '@/stores/memoryStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useSkillStore } from '@/stores/skillStore'
 import { executeSwarm } from '@/stores/agentSwarmEngine'
@@ -523,17 +522,18 @@ export const useAgentSwarmStore = create<AgentSwarmState>()(
               addTask: get().addTask,
               updateTask: get().updateTask,
               getProvider: () => get().activeProvider || useChatStore.getState().activeProvider,
-              getSkillPrompts: (taskDescription) => {
+              getSkillPrompts: (_taskDescription) => {
+                // SKILL v2：trigger 已退役——只注入用户 pin 的技能正文（层级 0）
                 const skillStore = useSkillStore.getState()
-                const activeSkills = skillStore.getActiveSkillsForMessage(taskDescription)
-                const manualSkills = skillStore.activeSkillIds
+                return skillStore.activeSkillIds
                   .map((id) => skillStore.skills.find((s) => s.id === id))
-                  .filter(Boolean) as SkillManifest[]
-                const merged = [...new Map([...activeSkills, ...manualSkills].map((s) => [s.id, s])).values()]
-                return merged.map((s) => `## [Skill: ${s.name}]\n${s.prompt}`)
+                  .filter((s): s is SkillManifest => Boolean(s && s.enabled))
+                  .map((s) => `## [Skill: ${s.name}]\n${s.prompt}`)
               },
-              getMemories: (task) =>
-                useMemoryStore.getState().searchMemories(task, 3).map((m) => m.content),
+              getMemories: () => {
+                // 2026-09-03：agentSwarm 已废弃，不随记忆文件化重接——摘掉对旧 memoryStore 的依赖。
+                return [] as string[]
+              },
             }
           )
           set({ lastExecutionResult: result })

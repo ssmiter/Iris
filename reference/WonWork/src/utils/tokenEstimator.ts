@@ -31,9 +31,9 @@ export function getModelContextWindow(model: string): number {
   if (m.includes('8k')) return 8192
   if (m.includes('gpt-4o') || m.includes('gpt-4-turbo')) return 128000
   if (m.includes('claude-3')) return 200000
-  // deepseek-v3.1 及以后均为 128K；更老的 64K 型号若误猜，
-  // 由 400 下行校准自动收紧一次即永久修正（modelCapabilityRegistry）
-  if (m.includes('deepseek')) return 128000
+  // 2026-08-05 用户拍板：DeepSeek 默认上下文按 1M 猜（主力默认模型）。
+  // 若实际型号窗口更小，由 400 下行校准自动收紧一次即永久修正（modelCapabilityRegistry）
+  if (m.includes('deepseek')) return 1000000
   return MODEL_CONTEXT_WINDOW
 }
 

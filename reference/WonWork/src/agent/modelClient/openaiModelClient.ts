@@ -1,13 +1,4 @@
-/**
- * OpenAI 兼容 ModelClient
- *
- * 适用于：
- * - OpenAI 官方
- * - Kimi（Moonshot）
- * - DeepSeek / 通义千问 / 智谱 / 百川 / 讯飞 / 腾讯 / 字节 / 百度等国产模型
- * - LM Studio / 自定义 OpenAI 兼容端点
- */
-
+import { normalizeToolCalls } from '@/utils/normalizeToolCalls'
 import type {
   Message,
   ToolDefinition,
@@ -22,10 +13,19 @@ import type {
 import type { TransportProvider } from '@/agent/transport/transport'
 import { createSSEParserState, parseSSEBuffer, flushSSEBuffer, parseSSEData } from '@/utils/sseParser'
 import type { SSEEvent } from '@/utils/sseParser'
-import { useUsageStore, buildTodayUsageRecord } from '@/stores/usageStore'
-import { estimateTextTokens } from '@/utils/tokenEstimator'
+import { createUsageTrackingCallbacks } from './usageTracking'
 import { buildOpenAICompatibleMessages } from './messageNormalizer'
 import { createRetryableStream, type StreamAttempt } from './retryingStream'
+
+/**
+ * OpenAI 兼容 ModelClient
+ *
+ * 适用于：
+ * - OpenAI 官方
+ * - Kimi（Moonshot）
+ * - DeepSeek / 通义千问 / 智谱 / 百川 / 讯飞 / 腾讯 / 字节 / 百度等国产模型
+ * - LM Studio / 自定义 OpenAI 兼容端点
+ */
 
 export interface OpenAIModelClientOptions {
   providerId: string
@@ -106,6 +106,11 @@ function buildOpenAIRequestBody(
     temperature: request.temperature ?? 0.7,
     max_tokens: request.maxTokens ?? 2048,
     stream: true,
+  }
+
+  // 思考强度（claude-code effort 的 OpenAI 链映射）：chat completions 顶层 reasoning_effort
+  if (request.effort) {
+    body.reasoning_effort = request.effort
   }
 
   if (request.tools && request.tools.length > 0) {
@@ -340,52 +345,6 @@ function executeFallback(options: ExecuteOptions): StreamAttempt {
   }
 }
 
-function createUsageTrackingCallbacks(
-  request: ModelClientRequest,
-  userCallbacks: ModelClientStreamCallbacks
-): {
-  callbacks: ModelClientStreamCallbacks
-  reportUsage: () => void
-} {
-  let outputText = ''
-  let realTokensIn: number | undefined
-  let realTokensOut: number | undefined
-
-  const reportUsage = () => {
-    const inputText = request.messages.map((m) => m.content).join('\n')
-    const tokensIn = realTokensIn ?? estimateTextTokens(inputText)
-    const tokensOut = realTokensOut ?? estimateTextTokens(outputText)
-    if (tokensIn > 0 || tokensOut > 0) {
-      useUsageStore.getState().report(
-        buildTodayUsageRecord({
-          tokensIn,
-          tokensOut,
-          apiCalls: 1,
-        })
-      )
-    }
-  }
-
-  const callbacks: ModelClientStreamCallbacks = {
-    onChunk: (chunk) => {
-      if (chunk.type === 'content') {
-        outputText += chunk.content || ''
-      } else if (chunk.type === 'usage' && chunk.usage) {
-        if (typeof chunk.usage.tokensIn === 'number') realTokensIn = chunk.usage.tokensIn
-        if (typeof chunk.usage.tokensOut === 'number') realTokensOut = chunk.usage.tokensOut
-      }
-      userCallbacks.onChunk(chunk)
-    },
-    onError: (error) => userCallbacks.onError(error),
-    onDone: () => {
-      reportUsage()
-      userCallbacks.onDone()
-    },
-  }
-
-  return { callbacks, reportUsage }
-}
-
 function parseStreamChunk(
   parsedData: Record<string, unknown>,
   accumulator: ReturnType<typeof createToolCallAccumulator>
@@ -478,20 +437,6 @@ function createToolCallAccumulator() {
       }
     },
   }
-}
-
-function normalizeToolCalls(raw: unknown[]): StreamChunk['toolCalls'] {
-  return raw.map((tc: any) => ({
-    id: tc.id || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: 'function' as const,
-    function: {
-      name: tc.function?.name || '',
-      arguments:
-        typeof tc.function?.arguments === 'string'
-          ? tc.function.arguments
-          : JSON.stringify(tc.function?.arguments || {}),
-    },
-  }))
 }
 
 // 避免循环依赖：BrowserFetchTransport 定义在 transport.ts

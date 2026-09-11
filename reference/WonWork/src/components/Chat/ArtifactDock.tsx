@@ -10,12 +10,14 @@
  */
 
 import { memo, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useArtifactDockStore } from '@/stores/artifactDockStore'
 import { PreviewPane } from './PreviewPane'
 import { FilesPane } from './FilesPane'
 import { RecentStrip } from './RecentStrip'
 
 export const ArtifactDock = memo(function ArtifactDock() {
+  const { t } = useTranslation()
   const isOpen = useArtifactDockStore((s) => s.isOpen)
   const activeTab = useArtifactDockStore((s) => s.activeTab)
   const currentArtifactId = useArtifactDockStore((s) => s.currentArtifactId)
@@ -53,7 +55,7 @@ export const ArtifactDock = memo(function ArtifactDock() {
   )
 
   return (
-    <aside className={`wf-dock${isOpen ? ' open' : ''}`} aria-label="预览坞">
+    <aside className={`wf-dock${isOpen ? ' open' : ''}`} aria-label={t('chat.artifactDock.title')}>
       {/* Head */}
       <div className="wf-dock-head">
         <div className="wf-dock-tabs">
@@ -61,20 +63,20 @@ export const ArtifactDock = memo(function ArtifactDock() {
             className={`wf-dock-tab${activeTab === 'preview' ? ' active' : ''}`}
             onClick={() => handleTabClick('preview')}
           >
-            预览
+            {t('chat.artifactDock.previewTab')}
           </button>
           <button
             className={`wf-dock-tab${activeTab === 'files' ? ' active' : ''}`}
             onClick={() => handleTabClick('files')}
           >
-            工作区
+            {t('chat.artifactDock.workspaceTab')}
           </button>
         </div>
         <button
           className="wf-dock-close"
           onClick={close}
-          title="关闭（Esc）"
-          aria-label="关闭预览坞"
+          title={t('chat.artifactDock.closeTitle')}
+          aria-label={t('chat.artifactDock.closeAria')}
         >
           ✕
         </button>
@@ -87,9 +89,9 @@ export const ArtifactDock = memo(function ArtifactDock() {
             <PreviewPane artifact={currentArtifact} />
           ) : (
             <div className="wf-dock-empty">
-              暂无预览内容
+              {t('chat.artifactDock.empty')}
               <br />
-              <span className="wf-dock-empty-hint">点击正文中的文件卡片开始预览</span>
+              <span className="wf-dock-empty-hint">{t('chat.artifactDock.emptyHint')}</span>
             </div>
           )}
         </div>

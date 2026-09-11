@@ -1,5 +1,0 @@
-export * from './RoomShell'
-export * from './RoomTopBar'
-export * from './RoomSide'
-export * from './RoomStage'
-export * from './NoticeBar'

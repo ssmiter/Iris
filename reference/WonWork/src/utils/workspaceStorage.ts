@@ -1,4 +1,5 @@
-import type { SkillManifest, SkillType } from '@/types/skill'
+import type { SkillManifest } from '@/types/skill'
+import type { WorkflowDoc, WorkflowListEntry } from '@/types/workflow'
 import { IS_STANDALONE } from '@/config/product'
 import { getIndexedDBName } from '@/utils/storageScope'
 
@@ -232,7 +233,10 @@ function parseYamlValue(v: string): unknown {
     return inner.split(',').map(s => parseYamlValue(s.trim()))
   }
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-    return v.slice(1, -1)
+    const inner = v.slice(1, -1)
+    // 双引号标量反转义（与 yamlValue 对偶：先 \" 后 \\，往返保真；
+    // 2026-09-03 审计修复——此前只转义不反转义，含引号内容每轮读写累积一层反斜杠）
+    return v[0] === '"' ? inner.replace(/\\"/g, '"').replace(/\\\\/g, '\\') : inner
   }
   return v
 }
@@ -309,54 +313,23 @@ export function parseSkillMdToManifest(text: string, dirName: string): SkillMani
   const body = match[2].trim()
   const fm = parseYamlFrontmatter(yaml)
 
-  const id = String(fm.id || dirName)
-  const name = String(fm.name || dirName)
-  const description = String(fm.description || '')
-  const version = String(fm.version || '1.0.0')
-  const author = String(fm.author || 'User')
-  const rawType = String(fm.type || 'custom')
-
-  const typeMap: Record<string, SkillType> = {
-    'capability': 'custom',
-    'custom': 'custom',
-    'document-word': 'document-word',
-    'document-excel': 'document-excel',
-    'document-generic': 'document-generic',
-  }
-  const type = typeMap[rawType] || 'custom'
-
-  const tags = Array.isArray(fm.tags) ? fm.tags.map(String) : []
-  const icon = String(fm.icon || 'Puzzle')
-
-  const triggerRaw = (fm.trigger as Record<string, unknown> | undefined) || {}
-  const triggerMode = String(triggerRaw.mode || 'manual') as import('@/types/skill').SkillTriggerMode
-  const triggerKeywords = Array.isArray(triggerRaw.keywords)
-    ? triggerRaw.keywords.map(String)
-    : undefined
-
-  const enabled = fm.enabled === true
-  const installedAt = String(fm.installedAt || new Date().toISOString())
-  const updatedAt = String(fm.updatedAt || new Date().toISOString())
-  const source = String(fm.source || 'local') as SkillManifest['source']
-
   return {
-    id,
-    name,
-    description,
-    version,
-    author,
-    type,
-    tags,
-    icon,
-    trigger: {
-      mode: triggerMode,
-      ...(triggerKeywords ? { keywords: triggerKeywords } : {}),
-    },
+    id: String(fm.id || dirName),
+    name: String(fm.name || dirName),
+    description: String(fm.description || ''),
+    whenToUse: String(fm.whenToUse || ''),
+    domain: String(fm.domain || 'general'),
+    keywords: Array.isArray(fm.keywords) ? fm.keywords.map(String) : [],
+    version: String(fm.version || '1.0.0'),
+    author: String(fm.author || 'User'),
+    icon: String(fm.icon || 'Puzzle'),
     prompt: body,
-    enabled,
-    installedAt,
-    updatedAt,
-    source,
+    // 缺省启用/可调用：frontmatter 省略字段时视为 true（只有显式 false 才关闭）
+    enabled: fm.enabled !== false,
+    userInvocable: fm.userInvocable !== false,
+    installedAt: String(fm.installedAt || new Date().toISOString()),
+    updatedAt: String(fm.updatedAt || new Date().toISOString()),
+    source: String(fm.source || 'local') as SkillManifest['source'],
   }
 }
 
@@ -367,7 +340,7 @@ function yamlValue(v: unknown): string {
   if (typeof v === 'string') {
     if (v.includes('\n') || v.includes(':') || v.includes('#') || v.includes('"') || v.includes("'") || v.includes(',') ||
         v === '' || v === 'true' || v === 'false' || v.startsWith('[') || v.startsWith('"') || v.startsWith("'")) {
-      return `"${v.replace(/"/g, '\\"')}"`
+      return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
     }
     return v
   }
@@ -390,19 +363,14 @@ export function skillToYaml(skill: SkillManifest): string {
   lines.push(`id: ${skill.id}`)
   lines.push(`name: ${yamlValue(skill.name)}`)
   lines.push(`description: ${yamlValue(skill.description)}`)
+  if (skill.whenToUse) lines.push(`whenToUse: ${yamlValue(skill.whenToUse)}`)
+  lines.push(`domain: ${skill.domain}`)
+  if (skill.keywords.length > 0) lines.push(`keywords: ${yamlValue(skill.keywords)}`)
   lines.push(`version: ${yamlValue(skill.version)}`)
   lines.push(`author: ${yamlValue(skill.author)}`)
-  lines.push(`type: ${skill.type}`)
-  lines.push(`tags: ${yamlValue(skill.tags)}`)
   lines.push(`icon: ${skill.icon}`)
-
-  lines.push(`trigger:`)
-  lines.push(`  mode: ${skill.trigger.mode}`)
-  if (skill.trigger.keywords) {
-    lines.push(`  keywords: ${yamlValue(skill.trigger.keywords)}`)
-  }
-
   lines.push(`enabled: ${skill.enabled}`)
+  if (!skill.userInvocable) lines.push(`userInvocable: false`)
   lines.push(`installedAt: ${skill.installedAt}`)
   lines.push(`updatedAt: ${skill.updatedAt}`)
   lines.push(`source: ${skill.source}`)
@@ -415,19 +383,30 @@ export function skillToMarkdown(skill: SkillManifest): string {
 }
 
 // ==================== Skill 文件操作 ====================
+// 统一布局：skills/{id}/SKILL.md（与后端 ~/.wonwork/skills/<id>/SKILL.md 同构——
+// 本文件是 Standalone 车道实现，根是用户自选工作区；旧版曾从工作区根目录直接扫
+// {id}/ 子目录，2026-08-08 规范 v2 起统一到 skills/ 下）
+
+async function getSkillsDir(create = false): Promise<FileSystemDirectoryHandle | null> {
+  if (!state.isConnected || state.isFallbackMode || !state.dirHandle) return null
+  try {
+    return await state.dirHandle.getDirectoryHandle('skills', { create })
+  } catch {
+    return null
+  }
+}
 
 export async function listSkills(): Promise<SkillManifest[]> {
-  if (state.isConnected && !state.isFallbackMode && state.dirHandle) {
+  const skillsDir = await getSkillsDir()
+  if (skillsDir) {
     try {
       const skills: SkillManifest[] = []
-      const skipDirs = new Set(['templates', 'exports', 'config'])
 
-      for await (const [name, handle] of (state.dirHandle as any).entries()) {
+      for await (const [name, handle] of (skillsDir as any).entries()) {
         if (handle.kind !== 'directory') continue
-        if (skipDirs.has(name)) continue
 
         try {
-          const skillDir = await state.dirHandle.getDirectoryHandle(name)
+          const skillDir = await skillsDir.getDirectoryHandle(name)
           const fileHandle = await skillDir.getFileHandle('SKILL.md')
           const file = await fileHandle.getFile()
           const text = await file.text()
@@ -458,9 +437,10 @@ export async function listSkills(): Promise<SkillManifest[]> {
 }
 
 export async function readSkill(id: string): Promise<SkillManifest | null> {
-  if (state.isConnected && !state.isFallbackMode && state.dirHandle) {
+  const skillsDir = await getSkillsDir()
+  if (skillsDir) {
     try {
-      const skillDir = await state.dirHandle.getDirectoryHandle(id)
+      const skillDir = await skillsDir.getDirectoryHandle(id)
       const fileHandle = await skillDir.getFileHandle('SKILL.md')
       const file = await fileHandle.getFile()
       const text = await file.text()
@@ -481,20 +461,24 @@ export async function writeSkill(skill: SkillManifest): Promise<void> {
 
   console.log('[workspace] writeSkill:', skill.id, 'state.isConnected:', state.isConnected)
 
-  if (state.isConnected && !state.isFallbackMode && state.dirHandle) {
+  const skillsDir = await getSkillsDir(true)
+  if (skillsDir) {
     try {
-      const skillDir = await state.dirHandle.getDirectoryHandle(skill.id, { create: true })
+      const skillDir = await skillsDir.getDirectoryHandle(skill.id, { create: true })
       const handle = await skillDir.getFileHandle('SKILL.md', { create: true })
       const writable = await (handle as any).createWritable()
       await writable.write(content)
       await writable.close()
       console.log('[workspace] writeSkill: success for', skill.id)
     } catch (err) {
+      // 审计修复（2026-08-09）：已连接工作区时磁盘是权威源——写失败必须上抛，
+      // 否则 fallback 与磁盘状态分叉：UI 显示"已沉淀"，重启后技能凭空消失
       console.error('[workspace] writeSkill: filesystem write failed:', err)
+      throw new Error(`技能写入工作区失败：${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  // 始终同步到 IndexedDB 缓存
+  // 未连接工作区时 IndexedDB 是唯一存储；已连接时作为读缓存同步
   const skills = (await metaGet<SkillManifest[]>(FALLBACK_SKILLS_KEY())) || []
   const idx = skills.findIndex((s) => s.id === skill.id)
   if (idx >= 0) {
@@ -506,9 +490,10 @@ export async function writeSkill(skill: SkillManifest): Promise<void> {
 }
 
 export async function deleteSkill(id: string): Promise<void> {
-  if (state.isConnected && !state.isFallbackMode && state.dirHandle) {
+  const skillsDir = await getSkillsDir()
+  if (skillsDir) {
     try {
-      await (state.dirHandle as any).removeEntry(id, { recursive: true })
+      await (skillsDir as any).removeEntry(id, { recursive: true })
       console.log('[workspace] deleteSkill: removed directory', id)
     } catch (err) {
       console.error('[workspace] deleteSkill: failed to remove directory', id, err)
@@ -519,6 +504,133 @@ export async function deleteSkill(id: string): Promise<void> {
   const skills = (await metaGet<SkillManifest[]>(FALLBACK_SKILLS_KEY())) || []
   const filtered = skills.filter((s) => s.id !== id)
   await metaSet(FALLBACK_SKILLS_KEY(), filtered)
+}
+
+// ==================== WorkFlow（工作流）文件操作 ====================
+// 统一布局：workflow/{id}.json 平铺（与后端 ~/.wonwork/workflow/<id>.json 同构）。
+// Standalone 车道实现；模型侧在 Standalone 下不暴露绝对路径（清单头注降级）。
+
+const FALLBACK_WORKFLOWS_KEY = () => `${getWorkspaceScope()}_fallback_workflows`
+
+async function getWorkflowDir(create = false): Promise<FileSystemDirectoryHandle | null> {
+  if (!state.isConnected || state.isFallbackMode || !state.dirHandle) return null
+  try {
+    return await state.dirHandle.getDirectoryHandle('workflow', { create })
+  } catch {
+    return null
+  }
+}
+
+function workflowDocToListEntry(doc: WorkflowDoc): WorkflowListEntry {
+  return {
+    id: doc.id,
+    name: doc.name,
+    version: doc.version,
+    description: doc.description,
+    whenToUse: doc.whenToUse,
+    domain: doc.domain,
+    source: doc.source,
+    nodeCount: doc.nodes?.length ?? 0,
+    edgeCount: doc.edges?.length ?? 0,
+    valid: true,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export async function listWorkflows(): Promise<WorkflowListEntry[]> {
+  const dir = await getWorkflowDir()
+  if (dir) {
+    try {
+      const entries: WorkflowListEntry[] = []
+      for await (const [name, handle] of (dir as any).entries()) {
+        if (handle.kind !== 'file' || !name.endsWith('.json')) continue
+        try {
+          const file = await (handle as FileSystemFileHandle).getFile()
+          const doc = JSON.parse(await file.text()) as WorkflowDoc
+          entries.push(workflowDocToListEntry(doc))
+        } catch (err) {
+          // 解析失败的文件也进清单（valid=false）——「结构待修」是可见信号不是静默消失
+          entries.push({
+            id: name.replace(/\.json$/, ''),
+            name,
+            version: '',
+            description: '',
+            whenToUse: '',
+            domain: 'general',
+            source: 'authored',
+            nodeCount: 0,
+            edgeCount: 0,
+            valid: false,
+            error: err instanceof Error ? err.message : String(err),
+            updatedAt: '',
+          })
+        }
+      }
+      const docs = entries.filter((e) => e.valid)
+      await metaSet(FALLBACK_WORKFLOWS_KEY(), docs)
+      return entries.sort((a, b) => a.id.localeCompare(b.id))
+    } catch (err) {
+      console.warn('[workspace] listWorkflows: filesystem read failed:', err)
+    }
+  }
+  try {
+    return (await metaGet<WorkflowListEntry[]>(FALLBACK_WORKFLOWS_KEY())) || []
+  } catch {
+    return []
+  }
+}
+
+export async function readWorkflow(id: string): Promise<WorkflowDoc | null> {
+  const dir = await getWorkflowDir()
+  if (dir) {
+    try {
+      const handle = await dir.getFileHandle(`${id}.json`)
+      const file = await handle.getFile()
+      return JSON.parse(await file.text()) as WorkflowDoc
+    } catch {
+      // not found
+    }
+  }
+  return null
+}
+
+export async function writeWorkflow(doc: WorkflowDoc): Promise<void> {
+  const dir = await getWorkflowDir(true)
+  if (dir) {
+    try {
+      const handle = await dir.getFileHandle(`${doc.id}.json`, { create: true })
+      const writable = await (handle as any).createWritable()
+      await writable.write(JSON.stringify(doc, null, 2) + '\n')
+      await writable.close()
+    } catch (err) {
+      // 与 writeSkill 同款纪律：已连接工作区时磁盘是权威源，写失败必须上抛防分叉
+      throw new Error(`工作流写入工作区失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // 未连接工作区时 IndexedDB 是唯一存储；已连接时作为读缓存同步
+  const cached = (await metaGet<WorkflowListEntry[]>(FALLBACK_WORKFLOWS_KEY())) || []
+  const entry = workflowDocToListEntry(doc)
+  const idx = cached.findIndex((w) => w.id === doc.id)
+  if (idx >= 0) {
+    cached[idx] = entry
+  } else {
+    cached.push(entry)
+  }
+  await metaSet(FALLBACK_WORKFLOWS_KEY(), cached)
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  const dir = await getWorkflowDir()
+  if (dir) {
+    try {
+      await (dir as any).removeEntry(`${id}.json`)
+    } catch (err) {
+      console.error('[workspace] deleteWorkflow: failed to remove', id, err)
+    }
+  }
+  const cached = (await metaGet<WorkflowListEntry[]>(FALLBACK_WORKFLOWS_KEY())) || []
+  await metaSet(FALLBACK_WORKFLOWS_KEY(), cached.filter((w) => w.id !== id))
 }
 
 // ==================== 通用文件操作 ====================

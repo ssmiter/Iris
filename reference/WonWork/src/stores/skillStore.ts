@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SkillManifest } from '@/types/skill'
+import type { SkillManifest, SkillUsageStat } from '@/types/skill'
 import {
   initWorkspace,
   pickWorkspace,
@@ -15,16 +15,27 @@ import {
   skillToMarkdown,
 } from '@/utils/workspaceStorage'
 import { skillApi } from '@/api/skillApi'
+import { withRetry } from '@/utils/retry'
+import { useConversationStore } from '@/stores/conversationStore'
+import { buildDomainPackSkills } from '@/agent/domainPackSkills'
 
 const IS_STANDALONE = import.meta.env.VITE_STANDALONE_MODE === 'true'
 
 interface SkillStoreState {
   skills: SkillManifest[]
+  /** 用户挂载（pin）的技能 id：正文常驻 system section，语义=用户强制本场有效 */
   activeSkillIds: string[]
+  /** 技能用量统计（运行态，持久化在前端本地，驱动管理页排序与斜杠菜单 recency） */
+  usageStats: Record<string, SkillUsageStat>
   isLoading: boolean
+  /** 是否完成过首次加载（2026-08-09 排版闪帧根治）：区分"从未加载"与"已有数据在刷新"——
+   *  视图据此决定首帧渲染骨架还是直接铺存量行，杜绝"空状态闪一帧→骨架→真行"的三段跳 */
+  hasLoaded: boolean
   isWorkspaceConnected: boolean
   isFallbackMode: boolean
   workspacePath: string | null
+  /** 技能根目录绝对路径（MESCLI 车道从后端取；Standalone 为 null）。模型清单头注入用 */
+  skillsDir: string | null
 
   init(): Promise<void>
   pickWorkspace(): Promise<void>
@@ -37,12 +48,20 @@ interface SkillStoreState {
   toggleSkill(id: string): Promise<void>
   loadSkill(id: string): void
   unloadSkill(id: string): void
+  recordSkillUsage(id: string): void
 
   importFromFile(file: File): Promise<void>
   exportToFile(id: string): void
   createSkill(data: Partial<SkillManifest>): Promise<SkillManifest>
 
   getEnabledSkills(): SkillManifest[]
+
+  /**
+   * @deprecated v1 关键词触发已随 SKILL v2 退役（见 types/skill.ts 头注）。
+   * 仅为兼容仍走 v1 注入路径的调用方保留（chatStore/agentSwarmStore
+   * 的未迁版本）：v2 语义下消息不再触发技能注入，恒返回空——手动 pin（activeSkillIds）
+   * 由调用方自行合并，enabled 技能经元数据清单（层级 1）常驻。
+   */
   getActiveSkillsForMessage(message: string): SkillManifest[]
 }
 
@@ -74,46 +93,106 @@ async function deleteSkill(id: string): Promise<void> {
   }
 }
 
+/** 用量统计持久化（localStorage）：前端是 agent 闭环，用量天然是按客户端统计的运行态 */
+const USAGE_STORAGE_KEY = 'wonwork_skill_usage'
+
+function loadUsageStats(): Record<string, SkillUsageStat> {
+  try {
+    const raw = localStorage.getItem(USAGE_STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, SkillUsageStat>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * pin 会话级持久化（2026-08-09 第二波，审计缺口修复）：
+ * activeSkillIds 原是全局纯内存态——刷新即丢、切会话串台。现按会话 id 分桶存
+ * localStorage，订阅 conversationStore 切换即恢复对应桶；无会话（尚未建会话）落 'none' 桶。
+ * skillStore ← conversationStore 单向引用，无环（chatStore 同时引用两者）。
+ */
+const PINS_STORAGE_KEY = 'wonwork_skill_pins'
+
+function loadPinsMap(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(PINS_STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, string[]>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function pinsKeyOf(conversationId: number | null): string {
+  return conversationId != null ? String(conversationId) : 'none'
+}
+
+let currentPinsKey = pinsKeyOf(useConversationStore.getState().currentConversationId)
+
+function persistPins(ids: string[]): void {
+  try {
+    const map = loadPinsMap()
+    if (ids.length > 0) map[currentPinsKey] = ids
+    else delete map[currentPinsKey]
+    localStorage.setItem(PINS_STORAGE_KEY, JSON.stringify(map))
+  } catch {
+    // 存储满等异常不影响主流程
+  }
+}
+
 export const useSkillStore = create<SkillStoreState>((set, get) => ({
   skills: [],
-  activeSkillIds: [],
+  activeSkillIds: loadPinsMap()[currentPinsKey] ?? [],
+  usageStats: loadUsageStats(),
   isLoading: false,
+  hasLoaded: false,
   isWorkspaceConnected: false,
   isFallbackMode: false,
   workspacePath: null,
+  skillsDir: null,
 
   init: async () => {
     set({ isLoading: true })
     try {
-      if (IS_STANDALONE) {
-        await initWorkspace()
-        const ws = getWorkspaceState()
-        const skills = await listSkills()
-        await syncBuiltInSkills(skills)
+      await withRetry(async () => {
+        if (IS_STANDALONE) {
+          await initWorkspace()
+          const ws = getWorkspaceState()
+          const skills = await listSkills()
+          await syncBuiltInSkills(skills)
 
-        set({
-          skills,
-          isWorkspaceConnected: ws.isConnected,
-          isFallbackMode: ws.isFallbackMode,
-          workspacePath: ws.workspacePath,
-          isLoading: false,
-        })
-      } else {
-        // MESCLI/安装包模式：后端托管工作区，无需用户选择
-        const skills = await listSkills()
-        await syncBuiltInSkills(skills)
+          set({
+            skills,
+            isWorkspaceConnected: ws.isConnected,
+            isFallbackMode: ws.isFallbackMode,
+            workspacePath: ws.workspacePath,
+            isLoading: false,
+            hasLoaded: true,
+          })
+        } else {
+          // MESCLI/安装包模式：后端托管工作区，无需用户选择
+          const skills = await listSkills()
+          await syncBuiltInSkills(skills)
+          // 技能根目录绝对路径（2026-09-03 文件化）：注入清单头，模型用文件原语直读 SKILL.md
+          const skillsDir = await skillApi.getDir()
 
-        set({
-          skills,
-          isWorkspaceConnected: true,
-          isFallbackMode: false,
-          workspacePath: '{InstallDir}\\workspace\\skills',
-          isLoading: false,
-        })
-      }
+          set({
+            skills,
+            isWorkspaceConnected: true,
+            isFallbackMode: false,
+            workspacePath: skillsDir ?? '{UserProfile}\\.wonwork\\skills',
+            skillsDir,
+            isLoading: false,
+            hasLoaded: true,
+          })
+        }
+      }, {
+        maxRetries: 1,
+        baseDelayMs: 300,
+      })
     } catch (err) {
       console.error('Skill Store 初始化失败:', err)
-      set({ isLoading: false })
+      // 失败也落 hasLoaded——视图据此显示空态/错误而非永远转骨架
+      set({ isLoading: false, hasLoaded: true })
     }
   },
 
@@ -133,6 +212,7 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
         isFallbackMode: ws.isFallbackMode,
         workspacePath: ws.workspacePath,
         isLoading: false,
+        hasLoaded: true,
       })
     } catch (err) {
       console.error('[skillStore] 选择工作区失败:', err)
@@ -190,13 +270,17 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
       skills: s.skills.filter((sk) => sk.id !== id),
       activeSkillIds: s.activeSkillIds.filter((aid) => aid !== id),
     }))
+    persistPins(get().activeSkillIds)
   },
 
   updateSkill: async (id, updates) => {
-    const skill = get().skills.find((s) => s.id === id)
-    if (!skill) return
+    // 先重读磁盘再合并（2026-09-03 审计修复）：模型可能用文件原语改过 SKILL.md 正文，
+    // 用内存旧 manifest 整文件重写会把模型改动盖掉
+    const fresh = await readSkill(id).catch(() => null)
+    const base = fresh ?? get().skills.find((s) => s.id === id)
+    if (!base) return
 
-    const updated: SkillManifest = { ...skill, ...updates, updatedAt: new Date().toISOString() }
+    const updated: SkillManifest = { ...base, ...updates, updatedAt: new Date().toISOString() }
     await writeSkill(updated)
     set((s) => ({
       skills: s.skills.map((sk) => (sk.id === id ? updated : sk)),
@@ -213,12 +297,30 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
     set((s) => ({
       activeSkillIds: s.activeSkillIds.includes(id) ? s.activeSkillIds : [...s.activeSkillIds, id],
     }))
+    persistPins(get().activeSkillIds)
   },
 
   unloadSkill: (id) => {
     set((s) => ({
       activeSkillIds: s.activeSkillIds.filter((aid) => aid !== id),
     }))
+    persistPins(get().activeSkillIds)
+  },
+
+  recordSkillUsage: (id) => {
+    set((s) => {
+      const prev = s.usageStats[id]
+      const usageStats = {
+        ...s.usageStats,
+        [id]: { count: (prev?.count ?? 0) + 1, lastUsedAt: new Date().toISOString() },
+      }
+      try {
+        localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(usageStats))
+      } catch {
+        // 存储满等异常不影响主流程
+      }
+      return { usageStats }
+    })
   },
 
   importFromFile: async (file) => {
@@ -266,14 +368,15 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
       id: generateId(),
       name: data.name || '未命名 Skill',
       description: data.description || '',
+      whenToUse: data.whenToUse || '',
+      domain: data.domain || 'general',
+      keywords: data.keywords || [],
       version: '1.0.0',
       author: data.author || 'User',
-      type: data.type || 'custom',
-      tags: data.tags || [],
       icon: data.icon || 'Puzzle',
-      trigger: data.trigger || { mode: 'manual' },
       prompt: data.prompt || '',
       enabled: true,
+      userInvocable: true,
       installedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       source: 'local',
@@ -288,16 +391,9 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
     return get().skills.filter((s) => s.enabled)
   },
 
-  getActiveSkillsForMessage: (message) => {
-    const enabled = get().getEnabledSkills()
-    return enabled.filter((skill) => {
-      if (skill.trigger.mode === 'always') return true
-      if (skill.trigger.mode === 'keyword' && skill.trigger.keywords) {
-        const lower = message.toLowerCase()
-        return skill.trigger.keywords.some((kw) => lower.includes(kw.toLowerCase()))
-      }
-      return false
-    })
+  // v1 兼容壳：关键词/always 触发已退役，消息不再触发技能（见接口处 @deprecated 说明）
+  getActiveSkillsForMessage: (_message) => {
+    return []
   },
 }))
 
@@ -329,6 +425,10 @@ async function loadBuiltInSkills(): Promise<SkillManifest[]> {
       console.warn(`[skillStore] 加载内置 Skill 失败: ${id}`, err)
     }
   }
+
+  // 域知识包技能化（2026-08-09 S4）：程序化内置条目，单一事实来源=domainPacks.ts
+  // （版本号驱动下面的同步覆盖，改包 bump version 即生效）
+  skills.push(...buildDomainPackSkills())
 
   return skills
 }
@@ -362,3 +462,11 @@ async function syncBuiltInSkills(skills: SkillManifest[]): Promise<void> {
     }
   }
 }
+
+// 会话切换 → 恢复对应 pin 桶（subscribe 每次 conversationStore 变更都触发，靠 key 比较短路）
+useConversationStore.subscribe((state) => {
+  const key = pinsKeyOf(state.currentConversationId)
+  if (key === currentPinsKey) return
+  currentPinsKey = key
+  useSkillStore.setState({ activeSkillIds: loadPinsMap()[key] ?? [] })
+})

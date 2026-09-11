@@ -7,13 +7,23 @@ const IS_STANDALONE = import.meta.env.VITE_STANDALONE_MODE === 'true'
 
 /**
  * MESCLI 模式技能 API：通过后端 /api/skills 读写技能文件。
- * 后端默认将技能存储在 {InstallDir}\workspace\skills 下，无需用户手动选择文件夹。
+ * 技能存储在 ~/.wonwork/skills/ 下（2026-09-03 起；用户主目录，删安装目录重装不丢）。
  *
  * 单个 Skill 的读写/导入统一使用 text/markdown 格式（SKILL.md），列表仍返回 JSON 元数据。
  */
 const mescliSkillApi = {
   listSkills: (): Promise<SkillManifest[]> =>
     fetchApi<SkillManifest[]>('/api/skills'),
+
+  /** 技能根目录绝对路径（模型文件原语直读 SKILL.md 的定位依据）；失败返回 null 降级 */
+  getDir: async (): Promise<string | null> => {
+    try {
+      const res = await fetchApi<{ dir: string }>('/api/skills/dir', { silent: true })
+      return res.dir || null
+    } catch {
+      return null
+    }
+  },
 
   readSkill: async (id: string): Promise<SkillManifest | null> => {
     try {

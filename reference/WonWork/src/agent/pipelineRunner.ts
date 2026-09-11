@@ -5,6 +5,7 @@ import { createModelClient, isAnthropicCompatibleProvider } from './modelClient'
 import { createBackendProxyModelClient } from './modelClient/backendProxyModelClient'
 import { IS_STANDALONE } from '@/api/client'
 import { isLocalRuntime } from '@/utils/runtimeMode'
+import { buildAnswerLanguageNote } from '@/agent/prompt'
 
 /**
  * pipelineRunner —— 一次性模型调用的统一入口（对标 claude-code sideQuery）
@@ -33,6 +34,7 @@ export type PipelineName =
   | 'compact_summary'
   | 'session_title'
   | 'memory_organize'
+  | 'memory_remember'
   | 'approval_explain'
 
 /** TODO(pipeline-model-slot): 'small' 当前等价于 'main'，见文件头 TODO */
@@ -104,7 +106,7 @@ const circuitState = new Map<PipelineName, CircuitState>()
 function isCircuitOpen(name: PipelineName): boolean {
   const s = circuitState.get(name)
   if (!s || s.failures < CIRCUIT_FAILURE_THRESHOLD) return false
-  // 冷却后半开：允许一次试探，成功则 recordSuccess 清零
+  // 冷却后半开：允许一次试探，成功则 recordSuccess 清零，失败则 recordFailure 重新计时
   return Date.now() - s.openedAt <= CIRCUIT_COOLDOWN_MS
 }
 
@@ -113,13 +115,23 @@ function recordPipelineSuccess(name: PipelineName): void {
 }
 
 function recordPipelineFailure(name: PipelineName): void {
-  const s = circuitState.get(name) ?? { failures: 0, openedAt: 0 }
-  s.failures += 1
-  if (s.failures >= CIRCUIT_FAILURE_THRESHOLD && s.openedAt === 0) {
-    s.openedAt = Date.now()
-    console.warn(`[pipelineRunner] 熔断开启：${name} 连续失败 ${s.failures} 次，暂停 ${CIRCUIT_COOLDOWN_MS / 60000} 分钟`)
+  const now = Date.now()
+  const s = circuitState.get(name)
+  // 半开试探失败：重新计时熔断（旧实现 openedAt 一旦置位就永不再开，
+  // 熔断退化成"永久半开"，provider 持续故障时后台任务会每次硬打满重试）
+  if (s && s.openedAt !== 0 && now - s.openedAt > CIRCUIT_COOLDOWN_MS) {
+    circuitState.set(name, { failures: CIRCUIT_FAILURE_THRESHOLD, openedAt: now })
+    console.warn(`[pipelineRunner] 半开试探失败，重新熔断：${name}`)
+    return
   }
-  circuitState.set(name, s)
+  const failures = (s?.failures ?? 0) + 1
+  if (failures >= CIRCUIT_FAILURE_THRESHOLD && !s?.openedAt) {
+    console.warn(`[pipelineRunner] 熔断开启：${name} 连续失败 ${failures} 次，暂停 ${CIRCUIT_COOLDOWN_MS / 60000} 分钟`)
+  }
+  circuitState.set(name, {
+    failures,
+    openedAt: failures >= CIRCUIT_FAILURE_THRESHOLD ? s?.openedAt || now : 0,
+  })
 }
 
 /** 手动恢复熔断（测试/调试入口） */
@@ -256,6 +268,11 @@ export async function runPipeline<I, O>(
         : m
     )
   }
+
+  // 回答语言注记（2026-08-19 拍板）：仅英文界面注入——标题/压缩摘要/审批解释
+  // 等 pipeline 产物直接面向用户，语言须跟界面走；中文默认不加。
+  const languageNote = buildAnswerLanguageNote()
+  if (languageNote) system = system ? `${system}\n\n${languageNote}` : languageNote
 
   let attempts = 0
 

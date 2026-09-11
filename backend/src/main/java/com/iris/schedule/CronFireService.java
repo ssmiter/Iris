@@ -1,13 +1,11 @@
 package com.iris.schedule;
 
-import com.iris.agent.run.AgentRunLauncher;
 import com.iris.conversation.application.ConversationCommandService;
 import com.iris.conversation.domain.ConversationCommands.CreateConversationRequest;
 import com.iris.conversation.domain.ConversationCommands.CreateTurnRequest;
 import com.iris.conversation.domain.ConversationCommands.TurnInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -16,9 +14,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 到点执行（docs/33 §2）：为任务创建新会话 + root Run 并立刻唤醒。
- * 执行记录先写失败态再改成功态——任何一步异常都留下可见的
- * cron_execution 行，而不是静默丢失。
+ * 到点执行（docs/33 §2）：为任务创建新会话 + Turn 事实并落库。
+ * 客观能力层不启动模型 Run——前端 Runtime 通过 /api/history 发现
+ * 新 fired 会话后自行驱动模型 Loop。执行记录先写失败态再改成功态。
  */
 @Service
 public class CronFireService {
@@ -29,19 +27,14 @@ public class CronFireService {
 
     private final CronScheduleService schedules;
     private final ConversationCommandService conversations;
-    // Launcher 按需解析：工具注册 → 本服务 → Launcher → 上下文组装 →
-    // 工具注册 的启动环由 ObjectProvider 打断（docs/28 §5 的既定模式）。
-    private final ObjectProvider<AgentRunLauncher> launcher;
     private final Clock clock = Clock.systemUTC();
 
     public CronFireService(
             CronScheduleService schedules,
-            ConversationCommandService conversations,
-            ObjectProvider<AgentRunLauncher> launcher
+            ConversationCommandService conversations
     ) {
         this.schedules = schedules;
         this.conversations = conversations;
-        this.launcher = launcher;
     }
 
     /**
@@ -86,7 +79,7 @@ public class CronFireService {
                             null
                     )
             );
-            launcher.getObject().launch(acceptance.rootRunId());
+            // 无后端 Run 可唤醒；rootRunId 仅为兼容字段，直接记 fired。
             return schedules.recordExecution(
                     task.taskId(),
                     triggerKind,

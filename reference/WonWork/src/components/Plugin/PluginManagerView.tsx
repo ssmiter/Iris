@@ -57,13 +57,13 @@ export function PluginManagerView() {
   )
 
   return (
-    <div className="flex flex-col h-full bg-surface-50">
+    <div className="flex flex-1 min-w-0 flex-col h-full bg-[var(--wf-bg)]">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-surface-200">
+      <div className="flex items-center justify-between px-6 py-4 bg-[var(--wf-card-bg)] border-b border-[var(--wf-line)]">
         <div className="flex items-center gap-3">
           <Puzzle size={20} className="text-primary-500" />
-          <h1 className="text-lg font-semibold text-surface-800">{t('plugin.manager.title')}</h1>
-          <span className="text-xs text-surface-400">
+          <h1 className="text-lg font-semibold text-[var(--wf-ink)]">{t('plugin.manager.title')}</h1>
+          <span className="text-xs text-[var(--wf-faint)]">
             {t('plugin.manager.installed', { count: plugins.length })}
           </span>
         </div>
@@ -96,7 +96,7 @@ export function PluginManagerView() {
           <button
             onClick={() => loadPlugins()}
             disabled={isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-surface-600 hover:bg-surface-100 rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] rounded-lg transition-colors disabled:opacity-50"
             title={t('plugin.manager.refresh')}
           >
             <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
@@ -106,27 +106,27 @@ export function PluginManagerView() {
 
       {/* Error banner */}
       {error && (
-        <div className="flex items-center justify-between gap-2 px-6 py-2 bg-red-50 border-b border-red-200">
+        <div className="flex items-center justify-between gap-2 px-6 py-2 bg-[var(--wf-err-bg)] border-b border-[var(--wf-err-line)]">
           <div className="flex items-center gap-2">
-            <AlertCircle size={14} className="text-red-500" />
-            <span className="text-xs text-red-700">{error}</span>
+            <AlertCircle size={14} className="text-[var(--wf-err-ink)]" />
+            <span className="text-xs text-[var(--wf-err-ink)]">{error}</span>
           </div>
-          <button onClick={clearError} className="text-xs text-red-600 hover:text-red-800">
+          <button onClick={clearError} className="text-xs text-[var(--wf-err-ink)] hover:text-[var(--wf-err-ink)]">
             {t('plugin.manager.dismiss')}
           </button>
         </div>
       )}
 
       {/* Search */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-surface-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--wf-line)] bg-[var(--wf-card-bg)]">
         <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400" />
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--wf-faint)]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={t('plugin.manager.search')}
-            className="pl-8 pr-3 py-1.5 text-sm bg-surface-100 rounded-lg border border-surface-200 focus:outline-none focus:border-primary-400 w-64"
+            className="pl-8 pr-3 py-1.5 text-sm bg-[var(--wf-mono-bg)] rounded-lg border border-[var(--wf-line)] focus:outline-none focus:border-[var(--wf-accent)] w-64"
           />
         </div>
       </div>
@@ -134,16 +134,16 @@ export function PluginManagerView() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full text-surface-400">
+          <div className="flex items-center justify-center h-full text-[var(--wf-faint)]">
             <RefreshCw size={20} className="animate-spin mr-2" />
             {t('plugin.manager.loading')}
           </div>
         ) : filteredPlugins.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-surface-400 gap-2">
-            <Puzzle size={48} className="text-surface-300" />
+          <div className="flex flex-col items-center justify-center h-full text-[var(--wf-faint)] gap-2">
+            <Puzzle size={48} className="text-[var(--wf-faint)]" />
             <p className="text-sm">{searchQuery ? t('plugin.manager.noMatch') : t('plugin.manager.noPlugins')}</p>
             {!searchQuery && (
-              <p className="text-xs text-surface-400">{t('plugin.manager.installHint')}</p>
+              <p className="text-xs text-[var(--wf-faint)]">{t('plugin.manager.installHint')}</p>
             )}
           </div>
         ) : (
@@ -181,7 +181,7 @@ function PluginCard({
   const { manifest, isEnabled } = plugin
 
   return (
-    <div className="bg-white rounded-xl border border-surface-200 overflow-hidden hover:shadow-md transition-shadow">
+    <div className="bg-[var(--wf-card-bg)] rounded-xl border border-[var(--wf-line)] overflow-hidden hover:shadow-md transition-shadow">
       <div className="p-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3 min-w-0">
@@ -189,11 +189,11 @@ function PluginCard({
               <Puzzle size={18} className="text-primary-500" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-surface-800 truncate">{manifest.name}</h3>
+              <h3 className="text-sm font-semibold text-[var(--wf-ink)] truncate">{manifest.name}</h3>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[10px] text-surface-400">v{manifest.version}</span>
+                <span className="text-[10px] text-[var(--wf-faint)]">v{manifest.version}</span>
                 {manifest.author && (
-                  <span className="text-[10px] text-surface-400 truncate max-w-[8rem]">{manifest.author}</span>
+                  <span className="text-[10px] text-[var(--wf-faint)] truncate max-w-[8rem]">{manifest.author}</span>
                 )}
               </div>
             </div>
@@ -202,7 +202,7 @@ function PluginCard({
             onClick={onToggle}
             className={cn(
               'w-8 h-5 rounded-full transition-colors relative flex-shrink-0',
-              isEnabled ? 'bg-primary-500' : 'bg-surface-300'
+              isEnabled ? 'bg-primary-500' : 'bg-[var(--wf-faint)]'
             )}
           >
             <span
@@ -214,7 +214,7 @@ function PluginCard({
           </button>
         </div>
 
-        <p className="text-xs text-surface-500 mt-3 line-clamp-2">
+        <p className="text-xs text-[var(--wf-mut)] mt-3 line-clamp-2">
           {manifest.description || t('plugin.manager.noDescription')}
         </p>
 
@@ -223,31 +223,31 @@ function PluginCard({
             <ContributionTag key={`${c.type}:${c.id}`} contribution={c} />
           ))}
           {(manifest.contributions || []).length > 4 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-50 text-surface-400">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--wf-bg)] text-[var(--wf-faint)]">
               +{(manifest.contributions || []).length - 4}
             </span>
           )}
         </div>
 
         {expanded && (
-          <div className="mt-3 pt-3 border-t border-surface-100 space-y-2">
+          <div className="mt-3 pt-3 border-t border-[var(--wf-hair)] space-y-2">
             <div>
-              <p className="text-[10px] font-medium text-surface-500 mb-1">{t('plugin.manager.pluginId')}</p>
-              <p className="text-xs text-surface-600 font-mono break-all">{manifest.id}</p>
+              <p className="text-[10px] font-medium text-[var(--wf-mut)] mb-1">{t('plugin.manager.pluginId')}</p>
+              <p className="text-xs text-[var(--wf-sub)] font-mono break-all">{manifest.id}</p>
             </div>
             {manifest.targetCoreVersion && (
               <div>
-                <p className="text-[10px] font-medium text-surface-500 mb-1">{t('plugin.manager.targetCoreVersion')}</p>
-                <p className="text-xs text-surface-600">{manifest.targetCoreVersion}</p>
+                <p className="text-[10px] font-medium text-[var(--wf-mut)] mb-1">{t('plugin.manager.targetCoreVersion')}</p>
+                <p className="text-xs text-[var(--wf-sub)]">{manifest.targetCoreVersion}</p>
               </div>
             )}
             {(manifest.contributions || []).length > 0 && (
               <div>
-                <p className="text-[10px] font-medium text-surface-500 mb-1">{t('plugin.manager.contributions')}</p>
-                <ul className="text-xs text-surface-600 space-y-1">
+                <p className="text-[10px] font-medium text-[var(--wf-mut)] mb-1">{t('plugin.manager.contributions')}</p>
+                <ul className="text-xs text-[var(--wf-sub)] space-y-1">
                   {(manifest.contributions || []).map((c) => (
                     <li key={`${c.type}:${c.id}`} className="flex items-center gap-1">
-                      <span className="px-1.5 py-0.5 rounded bg-surface-100 text-surface-500 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--wf-mono-bg)] text-[var(--wf-mut)] text-[10px]">
                         {c.type}
                       </span>
                       <span className="font-medium">{c.name}</span>
@@ -256,24 +256,24 @@ function PluginCard({
                 </ul>
               </div>
             )}
-            <div className="text-[10px] text-surface-400">
+            <div className="text-[10px] text-[var(--wf-faint)]">
               {t('plugin.manager.updatedAt', { datetime: new Date(plugin.updatedAt).toLocaleString() })}
             </div>
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between px-4 py-2 bg-surface-50 border-t border-surface-100">
+      <div className="flex items-center justify-between px-4 py-2 bg-[var(--wf-bg)] border-t border-[var(--wf-hair)]">
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-xs text-surface-500 hover:text-surface-700 transition-colors"
+          className="flex items-center gap-1 text-xs text-[var(--wf-mut)] hover:text-[var(--wf-sub)] transition-colors"
         >
           <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
           {expanded ? t('plugin.manager.collapse') : t('plugin.manager.details')}
         </button>
         <button
           onClick={onUninstall}
-          className="p-1.5 rounded hover:bg-red-100 text-surface-500 hover:text-red-500 transition-colors"
+          className="p-1.5 rounded hover:bg-[var(--wf-err-bg)] text-[var(--wf-mut)] hover:text-[var(--wf-err-ink)] transition-colors"
           title={t('plugin.manager.uninstall')}
         >
           <Trash2 size={12} />
@@ -286,11 +286,10 @@ function PluginCard({
 function ContributionTag({ contribution }: { contribution: PluginContribution }) {
   const labels: Record<PluginContribution['type'], string> = {
     skill: 'SKILL',
-    workflow_node: 'NODE',
     webbridge_action: 'WB',
   }
   return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 text-surface-500">
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--wf-mono-bg)] text-[var(--wf-mut)]">
       {labels[contribution.type]}
     </span>
   )

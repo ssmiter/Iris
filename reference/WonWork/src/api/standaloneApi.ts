@@ -12,10 +12,6 @@ import type {
   FavoriteItem,
   AddFavoriteRequest,
   UpdateFavoriteRequest,
-  StartWorkflowRequest,
-  StartWorkflowResponse,
-  WorkflowStepResponse,
-  WorkflowSearchResponse,
   ProviderConfig,
   UserConfigDto,
   ToolCatalogItem,
@@ -29,7 +25,6 @@ import type {
   CapabilityNode,
 } from '@/types/mescli'
 import type { CronTask, CronTaskResult, TaskExecutionMode, TaskStatus } from '@/types/cron'
-import type { DagWorkflow } from '@/types/dagWorkflow'
 import type { InstalledPlugin, PluginManifest } from '@/types/plugin'
 import { validateManifest } from '@/types/plugin'
 import { getIdentityPrompt } from '@/utils/identityPrompt'
@@ -37,7 +32,8 @@ import { buildCapabilityRegistry } from '@/utils/capabilityRegistry'
 import { estimateTextTokens } from '@/utils/tokenEstimator'
 import { getStandaloneToolCatalog } from '@/agent/tools'
 import { useUsageStore, buildTodayUsageRecord } from '@/stores/usageStore'
-import { mescliCronApi } from './mescli/cronApi'
+import { mescliCronApi, type CreateTaskInput, type CronExecutionReport } from './mescli/cronApi'
+import { sliceTail, sliceTurnRange, type LayeredMessages } from './historyTurns'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/utils/error'
 import { createSSEParserState, parseSSEBuffer, flushSSEBuffer, parseSSEData, type SSEEvent } from '@/utils/sseParser'
@@ -55,7 +51,7 @@ import {
 
 /**
  * 当 VITE_USE_BACKEND_API=true 时，Standalone API 将部分操作转发到本地 AIGateway /api/*。
- * 这样 Preview 安装包可以保留 Standalone UI，同时把数据持久化到后端 SQLite。
+ * 这样本地桌面版可以保留 Standalone UI，同时把数据持久化到后端 SQLite。
  */
 const USE_BACKEND = import.meta.env.VITE_USE_BACKEND_API === 'true'
 
@@ -196,9 +192,6 @@ async function openDB(): Promise<StandaloneDB> {
       if (!db.objectStoreNames.contains('templates')) {
         db.createObjectStore('templates', { keyPath: 'fileName' })
       }
-      if (!db.objectStoreNames.contains('workflowSessions')) {
-        db.createObjectStore('workflowSessions', { keyPath: 'sessionId' })
-      }
       if (!db.objectStoreNames.contains('attachments')) {
         const store = db.createObjectStore('attachments', { keyPath: 'id' })
         store.createIndex('conversationId', 'conversationId', { unique: false })
@@ -214,9 +207,6 @@ async function openDB(): Promise<StandaloneDB> {
       if (!db.objectStoreNames.contains('cronTaskExecutions')) {
         const store = db.createObjectStore('cronTaskExecutions', { keyPath: 'id', autoIncrement: true })
         store.createIndex('task_id', 'task_id', { unique: false })
-      }
-      if (!db.objectStoreNames.contains('dagWorkflows')) {
-        db.createObjectStore('dagWorkflows', { keyPath: 'id' })
       }
       if (!db.objectStoreNames.contains('plugins')) {
         db.createObjectStore('plugins', { keyPath: 'id' })
@@ -347,10 +337,11 @@ function getStandaloneConfig(): StandaloneConfig {
     isMesLoggedIn: false,
   })
   return {
-    provider: 'kimi',
+    // 2026-08-05 用户拍板：默认用 DeepSeek（很好用，后续都默认它）；kimi 等提供商仅隐藏不删
+    provider: 'deepseek',
     apiKey: '',
-    model: 'kimi-k2.6',
-    temperature: 0.7,
+    model: 'deepseek-v4-flash',
+    temperature: 1.0,
     maxTokens: 2048,
     systemPrompt: '', // 结构化 system prompt 由 chatStore 动态构建；其他入口使用 getIdentityPrompt 兜底
     searchProvider: 'bing',
@@ -635,8 +626,8 @@ const PROVIDERS: Record<string, AIProvider> = {
   // 国产模型预设（OpenAI 兼容）
   deepseek: createOpenAICompatibleProvider('DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'),
 
-  // Kimi Code 走 Anthropic 兼容端点；Kimi Code 官方模型名为 kimi-for-coding
-  'kimi-code': createAnthropicCompatibleProvider('KimiCode', 'https://api.kimi.com/coding/', 'kimi-for-coding'),
+  // Kimi Code 走 Anthropic 兼容端点；2026-07-28 用户拍板模型名以本机实测可用值 kimi-k2.7-code 为准
+  'kimi-code': createAnthropicCompatibleProvider('KimiCode', 'https://api.kimi.com/coding/', 'kimi-k2.7-code'),
 
   qwen: createOpenAICompatibleProvider('Qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen3.7-plus'),
   zhipu: createOpenAICompatibleProvider('Zhipu GLM', 'https://open.bigmodel.cn/api/paas/v4', 'glm-4.7'),
@@ -645,6 +636,13 @@ const PROVIDERS: Record<string, AIProvider> = {
   hunyuan: createOpenAICompatibleProvider('Hunyuan', 'https://api.hunyuan.cloud.tencent.com/v1', 'hunyuan-turbos-latest'),
   doubao: createOpenAICompatibleProvider('Doubao', 'https://ark.cn-beijing.volces.com/api/v3', 'doubao-seed-2-1-pro'),
   ernie: createOpenAICompatibleProvider('ERNIE', 'https://qianfan.baidubce.com/v2', 'ernie-5.1'),
+
+  // 火山方舟 Ark Code（OpenAI 兼容协议）
+  'ark-code-latest': createOpenAICompatibleProvider(
+    'Ark Code',
+    'https://ark.cn-beijing.volces.com/api/coding/v1',
+    'ark-code-latest'
+  ),
 
   // WonWork Cloud / TokenHub（OpenAI 兼容，baseUrl/model 由官网套餐运行时下发）
   tokenhub: createOpenAICompatibleProvider('WonWork Cloud', '', ''),
@@ -865,12 +863,15 @@ export const standaloneChatApi = {
       return () => {}
     }
 
-    // Anthropic 兼容 Provider（Kimi Code 等）在浏览器中直接跨域会触发 OPTIONS 预检，
-    // 而 Kimi 服务端未实现 OPTIONS 响应导致请求失败。
-    // 解决方案：开发时通过 Vite proxy（/anthropic-proxy）转发；生产 Standalone 通过本地代理脚本。
-    const useAnthropicProxy = isAnthropic && !USE_BACKEND
-    const url = useAnthropicProxy
-      ? '/anthropic-proxy/coding/v1/messages'
+    // Anthropic 兼容 Provider 在浏览器中直接跨域会触发 OPTIONS 预检，
+    // 服务端未实现 OPTIONS 响应导致请求失败。
+    // 解决方案：开发时通过 Vite proxy 转发；生产 Standalone 通过本地代理脚本。
+    // Ark Code 同样需要开发时代理以绕过 CORS。
+    const useDevProxy = (isAnthropic || providerKey === 'ark-code-latest') && !USE_BACKEND && import.meta.env.DEV
+    const url = useDevProxy
+      ? providerKey === 'ark-code-latest'
+        ? '/ark-proxy/api/coding/v1/chat/completions'
+        : '/anthropic-proxy/coding/v1/messages'
       : provider.buildUrl
         ? provider.buildUrl(baseUrl)
         : buildOpenAIChatUrl(baseUrl)
@@ -1058,6 +1059,31 @@ interface LocalMessage extends Message {
   conversationId: number
 }
 
+/**
+ * 消息载荷归一化（2026-07-31 收口）：structuredData / renderNodes 可能是 JSON 字符串
+ * （后端 History API 返回字符串；IndexedDB 存对象但旧数据可能是字符串），
+ * 在 API 边界统一解析成对象，调用方不再逐条 try/catch。
+ */
+export function normalizeMessagePayload(m: Message): Message {
+  let structuredData = (m as { structuredData?: unknown }).structuredData
+  if (typeof structuredData === 'string' && structuredData) {
+    try {
+      structuredData = JSON.parse(structuredData)
+    } catch {
+      // 单条消息 structuredData 解析失败不应阻断整页加载
+    }
+  }
+  let renderNodes = (m as { renderNodes?: unknown }).renderNodes
+  if (typeof renderNodes === 'string' && renderNodes) {
+    try {
+      renderNodes = JSON.parse(renderNodes)
+    } catch {
+      renderNodes = undefined
+    }
+  }
+  return { ...m, structuredData, renderNodes } as Message
+}
+
 export const standaloneHistoryApi = {
   getConversations: async (): Promise<Conversation[]> => {
     if (USE_BACKEND) {
@@ -1082,9 +1108,45 @@ export const standaloneHistoryApi = {
       createdAt: now,
       updatedAt: now,
       updatedAtNum: Date.now(),
+      // 任务会话（2026-09-01 二阶段）：父子归属与状态机透传进 IndexedDB
+      ...(req.parentConversationId != null
+        ? { parentConversationId: req.parentConversationId, taskState: 'running' as const }
+        : {}),
     }
     const id = await dbPut('conversations', conv) as number
     return { id, title: conv.title }
+  },
+
+  /** 任务会话状态回写（IndexedDB 车道） */
+  updateTaskState: async (conversationId: number, taskState: 'running' | 'done' | 'error' | 'cancelled'): Promise<void> => {
+    if (USE_BACKEND) {
+      await backendFetch<void>(`/api/history/${conversationId}/task-state`, {
+        method: 'PUT',
+        body: JSON.stringify({ taskState }),
+      })
+      return
+    }
+    const conv = await dbGet<LocalConversation>('conversations', conversationId)
+    if (conv) {
+      conv.taskState = taskState
+      await dbPut('conversations', conv)
+    }
+  },
+
+  /** 项目目录绑定（2026-09-09 二阶段）：后端车道走端点，纯本地落会话记录字段（schemaless 直接加） */
+  setConversationProject: async (conversationId: number, path: string | null): Promise<void> => {
+    if (USE_BACKEND) {
+      await backendFetch<void>(`/api/history/${conversationId}/project`, {
+        method: 'PUT',
+        body: JSON.stringify({ path }),
+      })
+      return
+    }
+    const conv = await dbGet<LocalConversation>('conversations', conversationId)
+    if (conv) {
+      conv.projectPath = path ?? undefined
+      await dbPut('conversations', conv)
+    }
   },
 
   updateTitle: async (conversationId: number, req: UpdateTitleRequest): Promise<void> => {
@@ -1106,7 +1168,9 @@ export const standaloneHistoryApi = {
 
   getMessages: async (conversationId: number): Promise<Message[]> => {
     if (USE_BACKEND) {
-      return backendFetch<Message[]>(`/api/history/${conversationId}/messages`)
+      return (await backendFetch<Message[]>(`/api/history/${conversationId}/messages`)).map(
+        normalizeMessagePayload
+      )
     }
     const messages = await dbGetByIndex<LocalMessage>('messages', 'conversationId', conversationId)
     return messages
@@ -1119,12 +1183,24 @@ export const standaloneHistoryApi = {
         }
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       })
-      .map(({ conversationId: _cid, ...msg }) => msg as Message)
+      .map(({ conversationId: _cid, ...msg }) => normalizeMessagePayload(msg as Message))
+  },
+
+  /** 分层历史（§16.6）：standalone 车道无后端切片，内存切片成同形状（输入为 IndexedDB 新读出的对象，可安全原地轻量行化） */
+  getMessagesTail: async (conversationId: number, tailTurns: number): Promise<LayeredMessages> => {
+    const messages = await standaloneHistoryApi.getMessages(conversationId)
+    return sliceTail(messages, tailTurns)
+  },
+
+  /** 按轮补拉（§16.6）：turns [fromTurn, toTurn) 全量行 */
+  getMessagesTurnRange: async (conversationId: number, fromTurn: number, toTurn: number): Promise<Message[]> => {
+    const messages = await standaloneHistoryApi.getMessages(conversationId)
+    return sliceTurnRange(messages, fromTurn, toTurn)
   },
 
   saveMessage: async (conversationId: number, message: Message): Promise<void> => {
     if (USE_BACKEND) {
-      // MESCLI 后端未实现该端点，静默失败避免重复 Toast
+      // 后端已实现该端点（LocalHistoryService.SaveMessageAsync）；静默失败避免重复 Toast
       await backendFetch<void>(
         `/api/history/${conversationId}/messages`,
         {
@@ -1136,6 +1212,33 @@ export const standaloneHistoryApi = {
       return
     }
     await saveMessage(conversationId, message)
+  },
+
+  /**
+   * 按 toolCallId 更新已持久化 tool 消息的内容。
+   * P0-5b（2026-07-28 归档决策冻结）：contextAssembler 折叠 tool 结果后一次性写回，
+   * 该消息之后每次装配读到的都是已折叠文本——历史字节永久稳定（前缀缓存命中前提）。
+   */
+  updateToolMessageContent: async (
+    conversationId: number,
+    toolCallId: string,
+    content: string
+  ): Promise<void> => {
+    if (USE_BACKEND) {
+      // 后端端点 2026-08-04 起已实现（HistoryController.UpdateToolMessageContent）
+      await backendFetch<void>(
+        `/api/history/${conversationId}/messages/tool/${encodeURIComponent(toolCallId)}`,
+        { method: 'PUT', body: JSON.stringify({ content }) },
+        true
+      )
+      return
+    }
+    const messages = await dbGetByIndex<LocalMessage>('messages', 'conversationId', conversationId)
+    const target = messages.find(
+      (m) => (m as unknown as { toolCallId?: string }).toolCallId === toolCallId
+    )
+    if (!target) return
+    await dbPut('messages', { ...target, content })
   },
 
   deleteConversation: async (conversationId: number): Promise<void> => {
@@ -1236,125 +1339,6 @@ export const standaloneFavoriteApi = {
   },
 }
 
-export const standaloneWorkflowApi = {
-  /** 前端本地工作流引擎 */
-  start: async (req: StartWorkflowRequest): Promise<StartWorkflowResponse> => {
-    const sessionId = `standalone-wf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const session = {
-      sessionId,
-      workflowCode: req.workflowCode,
-      currentStep: 0,
-      data: {} as Record<string, unknown>,
-      status: 'running' as const,
-      createdAt: Date.now(),
-    }
-    await dbPut('workflowSessions', session)
-
-    return {
-      sessionId,
-      workflowName: req.workflowCode,
-      step: {
-        type: 'form',
-        success: true,
-        step: {
-          id: 'step-1',
-          name: req.workflowCode,
-          type: 'Form',
-          prompt: '请在下方填写所需信息',
-          fields: [
-            { id: 'input', name: 'input', type: 'TextArea', required: true },
-          ],
-        },
-      },
-    }
-  },
-
-  submit: async (sessionId: string, stepData: Record<string, unknown>): Promise<WorkflowStepResponse> => {
-    const session = await dbGet<{
-      sessionId: string
-      currentStep: number
-      data: Record<string, unknown>
-      status: string
-    }>('workflowSessions', sessionId)
-
-    if (!session) throw new Error('工作流会话不存在')
-
-    session.currentStep += 1
-    session.data = { ...session.data, ...stepData }
-    await dbPut('workflowSessions', session)
-
-    if (session.currentStep >= 3) {
-      return {
-        type: 'result',
-        success: true,
-        step: {
-          id: `step-${session.currentStep + 1}`,
-          name: '处理完成',
-          type: 'Result',
-          prompt: '工作流已执行完毕',
-        },
-        result: {
-          success: true,
-          message: '工作流执行完成',
-        },
-      }
-    }
-
-    return {
-      type: 'form',
-      success: true,
-      step: {
-        id: `step-${session.currentStep + 1}`,
-        name: `步骤 ${session.currentStep + 1}`,
-        type: 'Form',
-        prompt: '请继续填写信息',
-        fields: [
-          { id: `field-${session.currentStep}`, name: `field_${session.currentStep}`, type: 'Text', required: true },
-        ],
-      },
-    }
-  },
-
-  getCurrentStep: async (sessionId: string): Promise<WorkflowStepResponse> => {
-    const session = await dbGet<{
-      sessionId: string
-      currentStep: number
-      data: Record<string, unknown>
-    }>('workflowSessions', sessionId)
-
-    if (!session) throw new Error('工作流会话不存在')
-
-    return {
-      type: 'form',
-      success: true,
-      step: {
-        id: `step-${session.currentStep + 1}`,
-        name: `步骤 ${session.currentStep + 1}`,
-        type: 'Form',
-        prompt: '继续填写',
-        fields: [
-          { id: `field-${session.currentStep}`, name: `field_${session.currentStep}`, type: 'Text', required: true },
-        ],
-      },
-    }
-  },
-
-  cancel: async (sessionId: string): Promise<{ message: string }> => {
-    await dbDelete('workflowSessions', sessionId)
-    return { message: '工作流已取消' }
-  },
-
-  search: async (): Promise<WorkflowSearchResponse> => {
-    return {
-      success: true,
-      message: '本地工作流列表',
-      items: [
-        { id: 'standalone-analysis', name: '数据分析', description: '上传数据进行分析' },
-      ],
-    }
-  },
-}
-
 export const standaloneToolApi = {
   /** Standalone 模式返回前端本地工具目录（read_file / write_file / list_files / grep / glob 等） */
   list: async (_systemCode?: string): Promise<ToolCatalogItem[]> => {
@@ -1373,7 +1357,6 @@ export const standaloneToolApi = {
       domainTools: [],
       primitiveTools: [],
       adminTools: [],
-      workflowTools: [],
     }
   },
 
@@ -1444,6 +1427,15 @@ export const standaloneToolApi = {
     return { path: normalizedPath, nodes: [] }
   },
 
+  /** Standalone 模式扁平能力清单：所有本地原语挂在 /local 下（v1.6，供 /capabilities 虚拟文件系统） */
+  all: async (_systemCode?: string): Promise<ToolCatalogItem[]> => {
+    const catalog = getStandaloneToolCatalog(_systemCode)
+    return catalog.map((item) => ({
+      ...item,
+      path: `/local/${item.name}`,
+    }))
+  },
+
   /** Standalone 模式读取本地原语 schema */
   schema: async (path: string, _systemCode?: string): Promise<CapabilitySchemaResponse> => {
     const normalizedPath = path.replace(/\\/g, '/').replace(/\/+/g, '/')
@@ -1490,7 +1482,7 @@ export const standaloneConfigApi = {
       { provider: 'kimi', model: 'kimi-k2.6', baseUrl: 'https://api.moonshot.cn/v1' },
       { provider: 'claude', model: 'claude-sonnet-4-6', baseUrl: 'https://api.anthropic.com' },
       { provider: 'deepseek', model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com' },
-      { provider: 'kimi-code', model: 'opus', baseUrl: 'https://api.kimi.com/coding/' },
+      { provider: 'kimi-code', model: 'kimi-k2.7-code', baseUrl: 'https://api.kimi.com/coding/' },
       { provider: 'qwen', model: 'qwen3.7-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
       { provider: 'zhipu', model: 'glm-4.7', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
       { provider: 'baichuan', model: 'Baichuan4', baseUrl: 'https://api.baichuan-ai.com/v1' },
@@ -1498,6 +1490,7 @@ export const standaloneConfigApi = {
       { provider: 'hunyuan', model: 'hunyuan-turbos-latest', baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1' },
       { provider: 'doubao', model: 'doubao-seed-2-1-pro', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
       { provider: 'ernie', model: 'ernie-5.1', baseUrl: 'https://qianfan.baidubce.com/v2' },
+      { provider: 'ark-code-latest', model: 'ark-code-latest', baseUrl: 'https://ark.cn-beijing.volces.com/api/coding/v1' },
       { provider: 'tokenhub', model: '', baseUrl: '' },
       { provider: 'custom', model: '', baseUrl: '' },
     ]
@@ -1677,7 +1670,7 @@ function computeNextRun(expression?: string, from = new Date()): string | undefi
   }
 }
 
-function buildCronTask(input: Omit<CronTask, 'id' | 'status' | 'created_at' | 'updated_at' | 'last_run_at' | 'next_run_at' | 'run_count'>, id: string, now: string): CronTask {
+function buildCronTask(input: CreateTaskInput, id: string, now: string): CronTask {
   return {
     id,
     name: input.name,
@@ -1692,7 +1685,8 @@ function buildCronTask(input: Omit<CronTask, 'id' | 'status' | 'created_at' | 'u
     created_at: now,
     updated_at: now,
     last_run_at: undefined,
-    next_run_at: computeNextRun(input.cron?.expression),
+    // 调用方算好的 next_run_at 优先（单次任务的精确时刻），缺省回退 cron 解析
+    next_run_at: input.next_run_at ?? computeNextRun(input.cron?.expression),
     run_count: 0,
     stale_after_days: input.stale_after_days ?? 7,
     stale_policy: input.stale_policy ?? 'notify_and_delete',
@@ -1714,7 +1708,7 @@ export const standaloneCronApi = {
     })
   },
 
-  createTask: async (task: Omit<CronTask, 'id' | 'status' | 'created_at' | 'updated_at' | 'last_run_at' | 'next_run_at' | 'run_count'>): Promise<CronTask> => {
+  createTask: async (task: CreateTaskInput): Promise<CronTask> => {
     if (USE_BACKEND) {
       return mescliCronApi.createTask(task)
     }
@@ -1741,7 +1735,7 @@ export const standaloneCronApi = {
     }
 
     if (updates.cron?.expression !== undefined || updates.is_enabled !== undefined) {
-      updated.next_run_at = updated.is_enabled ? computeNextRun(updated.cron?.expression) : undefined
+      updated.next_run_at = updates.next_run_at ?? (updated.is_enabled ? computeNextRun(updated.cron?.expression) : undefined)
     }
 
     await dbPut('cronTasks', updated)
@@ -1816,8 +1810,6 @@ export const standaloneCronApi = {
           )
         })
         output = content
-      } else if (mode === 'workflow') {
-        throw new Error('Standalone 模式不支持需要 MES 数据库的工作流任务')
       } else {
         throw new Error(`Standalone 模式暂不支持执行模式: ${mode}`)
       }
@@ -1853,9 +1845,9 @@ export const standaloneCronApi = {
     return result
   },
 
-  toggleTask: async (id: string): Promise<CronTask> => {
+  toggleTask: async (id: string, nextRunAt?: string): Promise<CronTask> => {
     if (USE_BACKEND) {
-      return mescliCronApi.toggleTask(id)
+      return mescliCronApi.toggleTask(id, nextRunAt)
     }
     const existing = await dbGet<CronTask>('cronTasks', id)
     if (!existing) throw new Error(`Task not found: ${id}`)
@@ -1864,7 +1856,47 @@ export const standaloneCronApi = {
     const updated: CronTask = {
       ...existing,
       is_enabled: isEnabled,
-      next_run_at: isEnabled ? computeNextRun(existing.cron?.expression) : undefined,
+      next_run_at: isEnabled ? (nextRunAt ?? computeNextRun(existing.cron?.expression)) : undefined,
+      updated_at: now,
+    }
+    await dbPut('cronTasks', updated)
+    return updated
+  },
+
+  /** 执行历史（2026-08-08 接上）：在线走后端 executions 表，离线读 IndexedDB */
+  getExecutions: async (id: string, limit = 20): Promise<CronTaskResult[]> => {
+    if (USE_BACKEND) {
+      return mescliCronApi.getExecutions(id, limit)
+    }
+    return standaloneCronApi._getExecutions(id, limit)
+  },
+
+  /** 执行回报（与 mescliCronApi.reportExecution 对齐；离线路径写 IndexedDB） */
+  reportExecution: async (id: string, report: CronExecutionReport): Promise<CronTask> => {
+    if (USE_BACKEND) {
+      return mescliCronApi.reportExecution(id, report)
+    }
+    const existing = await dbGet<CronTask>('cronTasks', id)
+    if (!existing) throw new Error(`Task not found: ${id}`)
+    const now = new Date().toISOString()
+    const result: CronTaskResult = {
+      task_id: id,
+      triggered_at: report.triggeredAt ?? now,
+      completed_at: now,
+      status: report.status,
+      output: report.output,
+      error_message: report.errorMessage,
+      execution_time_ms: report.executionTimeMs,
+    }
+    await dbPut('cronTaskExecutions', result)
+    const isEnabled = report.disableAfterReport ? false : existing.is_enabled
+    const updated: CronTask = {
+      ...existing,
+      status: report.status,
+      is_enabled: isEnabled,
+      last_run_at: now,
+      next_run_at: isEnabled ? (report.nextRunAt ?? undefined) : undefined,
+      run_count: (existing.run_count ?? 0) + 1,
       updated_at: now,
     }
     await dbPut('cronTasks', updated)
@@ -1886,116 +1918,6 @@ export const standaloneCronApi = {
       .filter((r) => r.task_id === taskId)
       .sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime())
       .slice(0, limit)
-  },
-}
-
-function generateDagWorkflowId(): string {
-  return `dag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-export const standaloneDagWorkflowApi = {
-  getAll: async (): Promise<DagWorkflow[]> => {
-    const items = await dbGetAll<DagWorkflow>('dagWorkflows')
-    return items.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-  },
-
-  getById: async (id: string): Promise<DagWorkflow | undefined> => {
-    return dbGet<DagWorkflow>('dagWorkflows', id)
-  },
-
-  create: async (workflow: Omit<DagWorkflow, 'id' | 'createdAt' | 'updatedAt'>): Promise<DagWorkflow> => {
-    const now = new Date().toISOString()
-    const created: DagWorkflow = {
-      ...workflow,
-      id: generateDagWorkflowId(),
-      createdAt: now,
-      updatedAt: now,
-    }
-    await dbPut('dagWorkflows', created)
-    return created
-  },
-
-  update: async (id: string, updates: Partial<DagWorkflow>): Promise<DagWorkflow> => {
-    const existing = await dbGet<DagWorkflow>('dagWorkflows', id)
-    if (!existing) throw new Error(`DAG workflow not found: ${id}`)
-
-    const updated: DagWorkflow = {
-      ...existing,
-      ...updates,
-      id: existing.id,
-      createdAt: existing.createdAt,
-      updatedAt: new Date().toISOString(),
-    }
-    await dbPut('dagWorkflows', updated)
-    return updated
-  },
-
-  delete: async (id: string): Promise<void> => {
-    await dbDelete('dagWorkflows', id)
-  },
-
-  duplicate: async (id: string): Promise<DagWorkflow> => {
-    const original = await dbGet<DagWorkflow>('dagWorkflows', id)
-    if (!original) throw new Error(`DAG workflow not found: ${id}`)
-    const now = new Date().toISOString()
-    const copy: DagWorkflow = {
-      ...original,
-      id: generateDagWorkflowId(),
-      name: `${original.name} (Copy)`,
-      createdAt: now,
-      updatedAt: now,
-    }
-    await dbPut('dagWorkflows', copy)
-    return copy
-  },
-
-  /** Standalone 模式下导出全部工作流为 JSON Blob */
-  exportAll: async (): Promise<Blob> => {
-    const items = await dbGetAll<DagWorkflow>('dagWorkflows')
-    const exportDto = {
-      ExportedAt: new Date().toISOString(),
-      Version: '1.0',
-      Workflows: items.map((wf) => ({
-        Name: wf.name,
-        Description: wf.description,
-        Version: wf.version,
-        NodesJson: JSON.stringify(wf.nodes),
-        EdgesJson: JSON.stringify(wf.edges),
-        InputSchemaJson: wf.inputSchema ? JSON.stringify(wf.inputSchema) : null,
-        OutputMappingJson: wf.outputMapping ? JSON.stringify(wf.outputMapping) : null,
-        SecurityPolicyJson: wf.securityPolicy ? JSON.stringify(wf.securityPolicy) : null,
-        TagsJson: wf.tags ? JSON.stringify(wf.tags) : null,
-      })),
-    }
-    const json = JSON.stringify(exportDto, null, 2)
-    return new Blob([json], { type: 'application/json' })
-  },
-
-  /** Standalone 模式下从 JSON 文本导入工作流 */
-  import: async (jsonText: string): Promise<DagWorkflow[]> => {
-    const parsed = JSON.parse(jsonText)
-    const items = parsed.Workflows ?? parsed.workflows ?? (Array.isArray(parsed) ? parsed : [parsed])
-    const imported: DagWorkflow[] = []
-    for (const wf of items) {
-      const now = new Date().toISOString()
-      const created: DagWorkflow = {
-        id: generateDagWorkflowId(),
-        name: wf.Name || wf.name || 'Imported Workflow',
-        description: wf.Description ?? wf.description ?? '',
-        version: wf.Version ?? wf.version ?? '1.0.0',
-        nodes: wf.NodesJson ? JSON.parse(wf.NodesJson) : (wf.nodes ?? []),
-        edges: wf.EdgesJson ? JSON.parse(wf.EdgesJson) : (wf.edges ?? []),
-        inputSchema: wf.InputSchemaJson ? JSON.parse(wf.InputSchemaJson) : (wf.inputSchema ?? undefined),
-        outputMapping: wf.OutputMappingJson ? JSON.parse(wf.OutputMappingJson) : (wf.outputMapping ?? undefined),
-        securityPolicy: wf.SecurityPolicyJson ? JSON.parse(wf.SecurityPolicyJson) : (wf.securityPolicy ?? undefined),
-        tags: wf.TagsJson ? JSON.parse(wf.TagsJson) : (wf.tags ?? undefined),
-        createdAt: now,
-        updatedAt: now,
-      }
-      await dbPut('dagWorkflows', created)
-      imported.push(created)
-    }
-    return imported
   },
 }
 

@@ -36,7 +36,7 @@ export interface FileEntry {
 export interface WorkspaceAdapter {
   readonly kind: 'indexedDb' | 'backend'
 
-  readFile(path: string): Promise<FileEntry | undefined>
+  readFile(path: string, options?: { fresh?: boolean }): Promise<FileEntry | undefined>
   writeFile(
     path: string,
     content: string,

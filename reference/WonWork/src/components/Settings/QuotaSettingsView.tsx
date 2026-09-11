@@ -35,11 +35,11 @@ export function QuotaSettingsView() {
   const percentage = total > 0 ? Math.min((used / total) * 100, 100) : 0
 
   return (
-    <div className="bg-white border border-surface-200 rounded-xl p-5 space-y-5">
+    <div className="bg-[var(--wf-card-bg)] border border-[var(--wf-line)] rounded-xl p-5 space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Coins size={16} className="text-surface-500" />
-          <h3 className="text-sm font-semibold text-surface-700">{t('settings.quota.title')}</h3>
+          <Coins size={16} className="text-[var(--wf-mut)]" />
+          <h3 className="text-sm font-semibold text-[var(--wf-sub)]">{t('settings.quota.title')}</h3>
         </div>
         <div className="flex items-center gap-2">
           {isWebsiteOnline() ? (
@@ -64,7 +64,7 @@ export function QuotaSettingsView() {
           <button
             onClick={refresh}
             disabled={isLoading}
-            className="p-1.5 rounded-lg text-surface-400 hover:bg-surface-100 transition-colors disabled:opacity-50"
+            className="p-1.5 rounded-lg text-[var(--wf-faint)] hover:bg-[var(--wf-hover)] transition-colors disabled:opacity-50"
             title={t('settings.quota.refresh')}
           >
             <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
@@ -73,20 +73,20 @@ export function QuotaSettingsView() {
       </div>
 
       {isLoading && !usage && (
-        <div className="flex items-center gap-2 text-sm text-surface-500">
+        <div className="flex items-center gap-2 text-sm text-[var(--wf-mut)]">
           <Loader2 size={16} className="animate-spin" />
           {t('settings.quota.loading')}
         </div>
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-          <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="p-3 bg-[var(--wf-err-bg)] border border-[var(--wf-err-line)] rounded-lg flex items-start gap-2">
+          <AlertCircle size={16} className="text-[var(--wf-err-ink)] flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm text-[var(--wf-err-ink)]">{error}</p>
             <button
               onClick={clearError}
-              className="text-xs text-red-600 underline mt-1 hover:text-red-800"
+              className="text-xs text-[var(--wf-err-ink)] underline mt-1 hover:text-[var(--wf-err-ink)]"
             >
               {t('settings.quota.dismiss')}
             </button>
@@ -98,10 +98,10 @@ export function QuotaSettingsView() {
         <div className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-surface-600">
+              <span className="text-[var(--wf-sub)]">
                 {usage.planName || t('settings.quota.currentPlan')}
               </span>
-              <span className="font-medium text-surface-800">
+              <span className="font-medium text-[var(--wf-ink)]">
                 {unlimited
                   ? t('settings.quota.unlimited')
                   : t('settings.quota.usageCount', {
@@ -111,7 +111,7 @@ export function QuotaSettingsView() {
               </span>
             </div>
             {!unlimited && (
-              <div className="h-2 bg-surface-100 rounded-full overflow-hidden">
+              <div className="h-2 bg-[var(--wf-mono-bg)] rounded-full overflow-hidden">
                 <div
                   className={cn(
                     'h-full rounded-full transition-all',
@@ -124,21 +124,21 @@ export function QuotaSettingsView() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 bg-surface-50 rounded-lg">
-              <p className="text-xs text-surface-500">{t('settings.quota.remaining')}</p>
-              <p className="text-lg font-semibold text-surface-800">
+            <div className="p-3 bg-[var(--wf-bg)] rounded-lg">
+              <p className="text-xs text-[var(--wf-mut)]">{t('settings.quota.remaining')}</p>
+              <p className="text-lg font-semibold text-[var(--wf-ink)]">
                 {unlimited ? t('settings.quota.unlimited') : remaining.toLocaleString()}
               </p>
             </div>
-            <div className="p-3 bg-surface-50 rounded-lg">
-              <p className="text-xs text-surface-500">{t('settings.quota.used')}</p>
-              <p className="text-lg font-semibold text-surface-800">{used.toLocaleString()}</p>
+            <div className="p-3 bg-[var(--wf-bg)] rounded-lg">
+              <p className="text-xs text-[var(--wf-mut)]">{t('settings.quota.used')}</p>
+              <p className="text-lg font-semibold text-[var(--wf-ink)]">{used.toLocaleString()}</p>
             </div>
           </div>
 
           {(usage.resetAt || usage.expiresAt) && (
-            <div className="flex items-center gap-2 text-sm text-surface-600">
-              <Calendar size={14} className="text-surface-400" />
+            <div className="flex items-center gap-2 text-sm text-[var(--wf-sub)]">
+              <Calendar size={14} className="text-[var(--wf-faint)]" />
               <span>
                 {usage.resetAt
                   ? t('settings.quota.resetAt', { date: new Date(usage.resetAt).toLocaleDateString() })
@@ -150,10 +150,10 @@ export function QuotaSettingsView() {
       )}
 
       {plans.length > 0 && (
-        <div className="pt-4 border-t border-surface-100 space-y-3">
+        <div className="pt-4 border-t border-[var(--wf-hair)] space-y-3">
           <div className="flex items-center gap-2">
-            <Package size={14} className="text-surface-400" />
-            <span className="text-xs font-medium text-surface-500">{t('settings.quota.availablePlans')}</span>
+            <Package size={14} className="text-[var(--wf-faint)]" />
+            <span className="text-xs font-medium text-[var(--wf-mut)]">{t('settings.quota.availablePlans')}</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {plans.map((plan) => (
@@ -161,19 +161,19 @@ export function QuotaSettingsView() {
                 key={plan.id}
                 className={cn(
                   'p-3 border rounded-lg',
-                  plan.isActive ? 'border-primary-300 bg-primary-50' : 'border-surface-200 bg-white'
+                  plan.isActive ? 'border-primary-300 bg-primary-50' : 'border-[var(--wf-line)] bg-[var(--wf-card-bg)]'
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-surface-700">{plan.name}</span>
+                  <span className="text-sm font-medium text-[var(--wf-sub)]">{plan.name}</span>
                   <span className="text-sm font-semibold text-primary-600">
                     ¥{plan.price}
                   </span>
                 </div>
                 {plan.description && (
-                  <p className="text-xs text-surface-500 mt-1">{plan.description}</p>
+                  <p className="text-xs text-[var(--wf-mut)] mt-1">{plan.description}</p>
                 )}
-                <p className="text-xs text-surface-500 mt-1">
+                <p className="text-xs text-[var(--wf-mut)] mt-1">
                   {plan.tokenAmount.toLocaleString()} tokens
                   {plan.durationDays && ` · ${plan.durationDays}${t('settings.quota.days')}`}
                 </p>

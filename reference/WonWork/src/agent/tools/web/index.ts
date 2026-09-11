@@ -24,15 +24,6 @@ export { WebSearchThinking } from './search/WebSearchThinking'
 export { WebFetchResult as WebFetchResultRenderer } from './fetch/WebFetchResult'
 export { WebFetchThinking } from './fetch/WebFetchThinking'
 
-// WebBridge 复合工具（降级保留，用于简单 1-3 步任务）
-export { webbridgeExecuteTool } from './bridge/webbridgeExecuteTool'
-export { WebBridgeExecuteResult as WebBridgeExecuteResultRenderer } from './bridge/WebBridgeExecuteResult'
-export type {
-  WebBridgeExecuteInput,
-  WebBridgeExecuteResult as WebBridgeExecuteResultData,
-} from './bridge/webbridgeExecuteTool'
-export const WEBBRIDGE_EXECUTE_TOOL_NAME = 'webbridge_execute'
-
 // WebBridge Sense-Act-Verify 原语
 export { webbridgeNavigateTool, WEBBRIDGE_NAVIGATE_TOOL_NAME } from './bridge/webbridgeNavigateTool'
 export { webbridgeScreenshotTool, WEBBRIDGE_SCREENSHOT_TOOL_NAME } from './bridge/webbridgeScreenshotTool'

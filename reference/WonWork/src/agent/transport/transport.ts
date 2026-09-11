@@ -109,3 +109,9 @@ export class AnthropicDevProxyTransport extends BrowserFetchTransport {
     return '/anthropic-proxy/coding/v1/messages'
   }
 }
+
+export class ArkDevProxyTransport extends BrowserFetchTransport {
+  buildUrl(_providerId: string, _baseUrl: string): string {
+    return '/ark-proxy/api/coding/v1/chat/completions'
+  }
+}

@@ -16,8 +16,8 @@ export interface ThinkingProcessData {
 
 // ==================== RenderNode（瀑布流渲染节点） ====================
 
-/** 过程节点通用状态 */
-export type ProcessNodeStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+/** 过程节点通用状态（2026-07-31：'queued' 幽灵状态移除——单轨 builder 创建即 running） */
+export type ProcessNodeStatus = 'running' | 'done' | 'error' | 'cancelled'
 
 /** 注意力节点状态 */
 export type AttentionNodeStatus = 'waiting' | 'resolved' | 'skipped' | 'timeout' | 'cancelled'
@@ -83,6 +83,11 @@ export interface AttentionNode extends RenderNodeBase {
   prompt?: string
   /** 澄清选项列表（subtype='clarify' 时使用） */
   options?: string[]
+  /** 与 options 平行的可选描述数组（chip tooltip / 副行小字） */
+  optionHints?: string[]
+  /** 决策留痕（2026-07-31）：拒绝理由/超时说明等 resolve 时携带的 value，
+   * 此前在投影层被丢弃，卡片关闭后无法回看"当时批准/拒绝了什么、为什么" */
+  resolutionNote?: string
   startedAt: number
   durationMs?: number
 }
@@ -163,14 +168,10 @@ export interface ChatMessage extends Message {
   status?: ChatMessageStatus
   /** 模型 reasoning / thinking 内容（可折叠展示） */
   reasoningContent?: string
-  /** 思考过程内容（可折叠展示） */
-  thinkingContent?: string
   /** 思考持续时间（毫秒） */
   thinkingDuration?: number
   /** 错误信息，status 为 error 时显示 */
   errorMessage?: string
-  /** 用户反馈：like 点赞 / dislike 点踩 / null 无 */
-  feedback?: 'like' | 'dislike' | null
   /** 助手消息携带的 tool_use 请求 */
   toolCalls?: ToolCall[]
   /** 执行模式：auto 自动 / confirm 确认 / sandbox 沙箱 / bypass 全部自动 */
@@ -183,6 +184,13 @@ export interface ChatMessage extends Message {
   renderNodes?: RenderNode[]
   /** 过程中补充标记：用户在模型工作期间发送的额外指令（§7 SupplementGateway） */
   isSupplement?: boolean
+  /** 系统事件标记：子 Agent 完成/取消通知等"伪装 user 消息"（2026-08-01 异步子 Agent）。
+   *  语义=给模型的输入而非用户亲口说的话，视觉层应与普通 user 气泡区分。 */
+  isSystemEvent?: boolean
+  /** 记忆便签（2026-07-30 记忆可视化；2026-09-03 起无生产者——自动提取管线已随
+   *  记忆文件化退役，此字段只为旧会话回放保留）：在瀑布流留下的淡墨行，
+   *  渲染为可点击的 ink-note，点开记忆抽屉。role 固定为 assistant，content 为空 */
+  memoryNote?: { items: Array<{ id: string; summary: string }> }
   /** 内核投影的 turn 相位（唯一事实源）；旧消息为 undefined 时前端按启发式兜底一次并写回 */
   turnPhase?: 'active' | 'settled' | 'stopped' | 'failed'
   /** 内核统计（唯一事实源），由 turnProjector.computeStats 填充 */
@@ -195,6 +203,20 @@ export interface ChatMessage extends Message {
   answers?: string[]
   /** v9.2 过程中补充的投影记录（含注入时轮次 roundIndex），渲染定位用 */
   supplements?: SupplementRecord[]
+  /** P0-5a（2026-07-28）：本 loop 每轮实际发给模型的 assistant 序列（content+toolCalls，
+   *  含参数）。持久化后装配历史时按它展开为"每轮 assistant + tool 结果按 toolCallId 插回"，
+   *  使历史=实际发送序列（前缀缓存命中的总开关）；旧消息无此字段时按合并单条兜底。
+   *  precededByUserNote（2026-08-01 Fix6）：该轮 assistant 之前 wire 上插过合成 user 消息
+   *  （max_tokens 续写"请继续输出剩余内容"）时记录原文，重装配时先补插该 user 再展开
+   *  assistant——否则相邻 assistant 被 normalizer 合并，字节与实发发散。 */
+  sentTurns?: Array<{ content: string; reasoningContent?: string; toolCalls?: ToolCall[]; precededByUserNote?: string }>
+  /** 2026-08-01 Fix4（前缀缓存保真）：本 user 消息发送时实际发出的完整 wire 文本
+   *  （content+附件渲染+trailingMeta 记忆索引/最近文件注记）的冻结快照。发送时一次性算好
+   *  写回 store，之后每轮重放逐字节复用——否则 trailingMeta 只上 wire 不进 store，
+   *  下轮重放裸 content，自首个带 meta 的 user 消息起前缀缓存全 miss。
+   *  仅会话内内存冻结（claude-code 同款：渲染输入创建时预计算）；持久化 defer 到 P2
+   *  （重载即冷缓存，见 learn/05/workshop/前缀缓存审计交接-2026-08-01.md）。UI 显示仍用 content。 */
+  wireContent?: string
 }
 
 // ==================== RoundStats / RoundState（v4.0 轮次模型） ====================
@@ -269,13 +291,6 @@ export interface ChatCoreState {
   // WebBridge 对话状态
   lastAssistantWorkflowJson: unknown | null
   pendingSecurityPreset: string | null
-
-  // PPT 模板选择
-  pptTemplateSelection: {
-    isPending: boolean
-    content: string
-    attachmentIds?: string[]
-  } | null
 
   // M3 审批闸：待审批工具调用列表
   pendingApprovals: ApprovalRequest[]

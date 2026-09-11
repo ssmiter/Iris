@@ -1,10 +1,10 @@
 /**
  * WonWork 轨迹日志系统
- * 记录 chat / dag / webbridge / workflow 等各类执行过程
+ * 记录 chat / webbridge 等各类执行过程
  * Standalone 模式写入 IndexedDB，MESCLI 模式优先调用后端接口
  */
 
-export type TrajectoryType = 'chat' | 'dag' | 'webbridge' | 'workflow' | 'tool'
+export type TrajectoryType = 'chat' | 'webbridge' | 'tool'
 
 export type TrajectoryPhaseStatus = 'running' | 'completed' | 'error' | 'skipped'
 

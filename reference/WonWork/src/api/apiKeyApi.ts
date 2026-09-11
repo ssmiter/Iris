@@ -37,6 +37,7 @@ const localApiKeyApi = {
       name: req.name,
       provider: req.provider,
       baseUrl: req.baseUrl,
+      model: req.model,
       key: req.key,
       keyHint: `${req.key.slice(0, 4)}****${req.key.slice(-4)}`,
       scope: req.scope || 'all',
@@ -70,6 +71,29 @@ const localApiKeyApi = {
     })
     saveStoredKeys(keys)
     return { success: true }
+  },
+
+  updateApiKey: async (
+    id: string,
+    patch: { key?: string; baseUrl?: string }
+  ): Promise<ApiKeyDto | undefined> => {
+    const keys = readStoredKeys()
+    const index = keys.findIndex((k) => k.id === id)
+    if (index < 0) return undefined
+
+    const current = keys[index]
+    const nextKey = patch.key ?? current.key
+    const updated: ApiKeyDto = {
+      ...current,
+      key: nextKey,
+      keyHint: nextKey
+        ? `${nextKey.slice(0, 4)}****${nextKey.slice(-4)}`
+        : current.keyHint,
+      baseUrl: patch.baseUrl ?? current.baseUrl,
+    }
+    keys[index] = updated
+    saveStoredKeys(keys)
+    return updated
   },
 }
 

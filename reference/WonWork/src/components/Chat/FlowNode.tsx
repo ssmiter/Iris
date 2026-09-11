@@ -1,9 +1,14 @@
 import { memo, useState, useCallback, useEffect, type ReactNode } from 'react'
-import type { RenderNode, ThinkingNode, ToolNode, AttentionNode, AnswerNode } from '@/types/chat'
+import { useTranslation } from 'react-i18next'
+import type { RenderNode, ThinkingNode, ToolNode, AttentionNode, AnswerNode, ChatMessage } from '@/types/chat'
 import { cn } from '@/utils'
 import { InlineTable, extractTableRows } from './InlineTable'
 import { ClampController } from './ClampController'
-import { useTextReveal } from './useTextReveal'
+import { useReveal } from './useTextReveal'
+import { getToolRenderer, isResultPromoted } from '@/agent/tools/toolRenderRegistry'
+import { formatToolDisplayName } from '@/utils/toolDisplayNames'
+// 与 SubAgentFlow 相互 import（渲染期引用，模块初始化期不互调，详见该文件头注释）
+import { SubAgentFlow, isSubAgentToolNode } from './SubAgentFlow'
 
 /** Turn 级别阶段，由 WaterfallTurn 计算并传入 */
 export type TurnPhase = 'active' | 'settling' | 'settled'
@@ -19,8 +24,6 @@ interface FlowNodeProps {
   /** 是否为整个脊柱的最后一个可视节点（跨越 FlowGroup 时不携带此标记） */
   isLastInFlow?: boolean
   onToggle: (nodeId: string) => void
-  /** 澄清选项被选中时的回调 */
-  onClarifyPick?: (nodeId: string, value: string) => void
   /** 接管浏览器回调 */
   onTakeover?: (nodeId: string) => void
   /** 跳过当前 attention 回调 */
@@ -56,13 +59,13 @@ export const FlowNode = memo(function FlowNode({
   isOverridden,
   isLastInFlow,
   onToggle,
-  onClarifyPick,
   onTakeover,
   onSkipAttention,
   onApprove,
   onReject,
   promotedToolCallIds,
 }: FlowNodeProps) {
+  const { t } = useTranslation()
   const cls = statusClass(node)
   const userOverridden = isOverridden
   const autoShouldOpen = shouldAutoOpen(node, turnPhase)
@@ -92,7 +95,7 @@ export const FlowNode = memo(function FlowNode({
 
   return (
     <div
-      className={cn('wf-node', cls, open && 'open', born && 'born', isLastInFlow && 'wf-node-last')}
+      className={cn('wf-node', cls, open && 'open', born && 'born')}
       data-nid={node.id}
       data-seg-flowed={segFlowed ? '' : undefined}
     >
@@ -109,14 +112,17 @@ export const FlowNode = memo(function FlowNode({
           aria-expanded={open}
           onClick={handleToggle}
         >
-          <span className="wf-node-label">{nodeLabel(node)}</span>
-          <span className="wf-node-meta">{nodeMeta(node)}</span>
+          <span className="wf-node-label">{nodeLabel(node, t)}</span>
+          <span className="wf-node-meta">{nodeMeta(node, t)}</span>
           <span className="wf-node-toggle">▾</span>
         </button>
         <div className="wf-node-body">
           <div className="wf-node-body-inner">
             <div className="wf-node-body-pad">
-              {nodeBody(node, { onClarifyPick, onTakeover, onSkipAttention, onApprove, onReject, promotedToolCallIds })}
+              {/* 子 Agent 派遣节点：折叠时子瀑布不挂载 DOM（真懒渲染，非 grid 0fr 视觉折叠） */}
+              {isSubAgentToolNode(node) && !open
+                ? null
+                : nodeBody(node, { onTakeover, onSkipAttention, onApprove, onReject, promotedToolCallIds })}
             </div>
           </div>
         </div>
@@ -137,7 +143,6 @@ function statusClass(node: RenderNode): string {
     return 'attention'  // waiting
   }
   if (node.type === 'tool') {
-    if (node.status === 'queued') return 'queued'
     if (node.status === 'error') return 'error'
     if (node.status === 'cancelled') return 'cancelled'
     if (node.status === 'running') return 'active'
@@ -165,8 +170,12 @@ function statusClass(node: RenderNode): string {
  * 导致的页面反复跳动。
  */
 function shouldAutoOpen(node: RenderNode, turnPhase: TurnPhase): boolean {
+  // ── 子 Agent 派遣节点：全程默认闭合（2026-08-01 用户拍板）——
+  // 运行中也不自动展开，围观子瀑布靠手动点击；进度经节点 meta 与 executionLog 透出 ──
+  if (isSubAgentToolNode(node)) return false
+
   // ── 运行时节点：始终展开 ──
-  if (node.type === 'tool' && (node.status === 'queued' || node.status === 'running')) return true
+  if (node.type === 'tool' && node.status === 'running') return true
   if (node.type === 'thinking' && node.status === 'running') return true
   if (node.type === 'attention' && node.status === 'waiting') return true
   if (node.type === 'answer' && node.status === 'streaming') return true
@@ -187,34 +196,34 @@ function shouldAutoOpen(node: RenderNode, turnPhase: TurnPhase): boolean {
   return false
 }
 
-function nodeLabel(node: RenderNode): string {
+function nodeLabel(node: RenderNode, t: (key: string, options?: Record<string, unknown>) => string): string {
   switch (node.type) {
     case 'thinking':
-      return node.role === 'verify' ? '验证' : '思考'
+      return node.role === 'verify' ? t('chat.flowNode.kindVerify') : t('chat.flowNode.kindThinking')
     case 'tool':
-      return node.toolName
+      return formatToolDisplayName(node.toolName)
     case 'attention':
-      return node.toolName || '需要你的操作'
+      return node.toolName ? formatToolDisplayName(node.toolName) : t('chat.flowNode.attentionNeedAction')
     case 'artifact':
       return node.title
     case 'answer':
-      return '回答'
+      return t('chat.flowNode.kindAnswer')
   }
 }
 
-function nodeMeta(node: RenderNode): string {
+function nodeMeta(node: RenderNode, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (node.type === 'thinking') {
     if (node.durationMs != null) return `${(node.durationMs / 1000).toFixed(1)}s`
-    return node.status === 'running' ? '思考中…' : ''
+    return node.status === 'running' ? t('chat.flowNode.thinking') : ''
   }
   if (node.type === 'tool') {
     const parts: string[] = []
-    if (node.status === 'queued') parts.push('排队中…')
-    else if (node.status === 'running') parts.push('运行中…')
-    else if (node.status === 'error') parts.push('失败')
-    else if (node.status === 'cancelled') parts.push('已取消')
+    if (node.status === 'running') parts.push(t('chat.flowNode.running'))
+    else if (node.status === 'error') parts.push(t('chat.flowNode.failed'))
+    else if (node.status === 'cancelled') parts.push(t('chat.flowNode.cancelled'))
     if (node.durationMs != null) parts.push(`${(node.durationMs / 1000).toFixed(1)}s`)
-    if (node.summary && node.status !== 'running') {
+    // error 态不回显摘要——红盒（ToolBody wf-err-box）已装全文，meta 再塞是同一信息同屏重复
+    if (node.summary && node.status !== 'running' && node.status !== 'error') {
       const short = node.summary.split('\n')[0].slice(0, 40)
       parts.push(short)
     }
@@ -225,14 +234,14 @@ function nodeMeta(node: RenderNode): string {
     if (node.durationMs != null) return `${(node.durationMs / 1000).toFixed(0)}s`
     if (node.status === 'waiting') {
       const elapsed = ((Date.now() - node.startedAt) / 1000).toFixed(0)
-      return `等待中… ${elapsed}s`
+      return t('chat.flowNode.waiting', { elapsed })
     }
     return ''
   }
   if (node.type === 'answer') {
-    if (node.status === 'streaming') return '输出中…'
-    if (node.status === 'stopped') return '已停止'
-    if (node.status === 'error') return '出错'
+    if (node.status === 'streaming') return t('chat.flowNode.outputting')
+    if (node.status === 'stopped') return t('chat.flowNode.stopped')
+    if (node.status === 'error') return t('chat.flowNode.error')
     return ''
   }
   return ''
@@ -241,7 +250,6 @@ function nodeMeta(node: RenderNode): string {
 // ── body dispatch ────────────────────────────────────
 
 interface BodyCallbacks {
-  onClarifyPick?: (nodeId: string, value: string) => void
   onTakeover?: (nodeId: string) => void
   onSkipAttention?: (nodeId: string) => void
   onApprove?: (toolCallId: string) => void
@@ -254,6 +262,8 @@ function nodeBody(node: RenderNode, cbs: BodyCallbacks): ReactNode {
     case 'thinking':
       return <ThinkingBody node={node} />
     case 'tool':
+      // 子 Agent 派遣节点：嵌套同款子瀑布（任务书 + FlowNode 递归 + 真实终态页脚）
+      if (isSubAgentToolNode(node)) return <SubAgentFlow node={node} />
       return <ToolBody node={node} promotedToolCallIds={cbs.promotedToolCallIds} />
     case 'attention':
       return <AttentionBody node={node} cbs={cbs} />
@@ -266,18 +276,16 @@ function nodeBody(node: RenderNode, cbs: BodyCallbacks): ReactNode {
 
 function ThinkingBody({ node }: { node: ThinkingNode }) {
   if (!node.content) return null
-  // TextReveal chars 模式：用 reveal hook 逐字流出思考内容
-  // 仅在 running 时启用动画，done 后直接全量显示
+  // 视觉时钟揭示：running 时连续生长，done 后追尾全量（历史水合直接全量，不重放）
   return (
     <ThinkingReveal text={node.content} isActive={node.status === 'running'} />
   )
 }
 
-/** 思考内容的流式 reveal 包装器 */
+/** 思考内容的流式揭示包装器（平滑由视觉时钟保证，不再依赖逐字 span） */
 function ThinkingReveal({ text, isActive }: { text: string; isActive: boolean }) {
-  const { revealed, tailWindow } = useTextReveal(text, { mode: 'chars', enabled: isActive })
-  const displayText = isActive ? revealed : text
-  const steps = displayText.split('\n').filter(Boolean)
+  const visible = useReveal(text, isActive)
+  const steps = visible.split('\n').filter(Boolean)
   if (steps.length === 0) return null
 
   return (
@@ -288,16 +296,6 @@ function ThinkingReveal({ text, isActive }: { text: string; isActive: boolean })
             {s}
           </div>
         ))}
-        {/* 尾部窗口：最新 ~12 字逐字淡入 */}
-        {isActive && tailWindow && tailWindow.length > 0 && (
-          <span className="wf-step">
-            {tailWindow.map((ch, j) => (
-              <span key={j} className="wf-reveal-ch" style={{ animationDelay: `${Math.min(j * 12, 3200)}ms` }}>
-                {ch}
-              </span>
-            ))}
-          </span>
-        )}
       </div>
     </ClampController>
   )
@@ -309,7 +307,59 @@ function extractToolCallId(nodeId: string): string | undefined {
   return m?.[1]
 }
 
-function ToolBody({ node, promotedToolCallIds }: { node: ToolNode; promotedToolCallIds?: Set<string> }) {
+/**
+ * 2026-07-31 渲染保真：注册表里有专属 resultRenderer 的工具（web_search/web_fetch/
+ * webbridge 原语等），结果直接内联渲染在 ToolNode 体内，不再退化为裸摘要/表格。
+ * 排除规则：
+ * - promoteResult 条目（render_chart 等）由 WaterfallTurn.PromotedToolResult 提升到答案区
+ * - present_artifact 由 extractFileCards 产物卡承接
+ */
+const INLINE_RENDERER_DENYLIST = new Set(['present_artifact'])
+
+function ToolInlineResult({ node }: { node: ToolNode }) {
+  const entry = getToolRenderer(node.toolName)
+  if (!entry?.resultRenderer || isResultPromoted(node.toolName, node.result)) return null
+  if (INLINE_RENDERER_DENYLIST.has(node.toolName)) return null
+  const Renderer = entry.resultRenderer
+  const message: ChatMessage = {
+    id: `inline:${node.id}`,
+    role: 'tool',
+    content: node.summary,
+    structuredData: node.result,
+    toolCallName: node.toolName,
+    toolCallStatus: node.status === 'error' ? 'error' : 'done',
+  }
+  return (
+    <div style={{ marginTop: 8 }}>
+      <Renderer message={message} argsText={node.args} />
+    </div>
+  )
+}
+
+/** 工具参数行：超 120 字符折叠，点击展开/收起全文。
+ *  2026-07-31：不再重复 toolName 前缀（节点标题已是工具名，参数行只承担参数）。 */
+function ArgsLine({ args }: { args: string }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const truncated = args.length > 120
+  return (
+    <div
+      className="wf-args-line"
+      style={truncated ? { cursor: 'pointer' } : undefined}
+      title={truncated ? (expanded ? t('chat.flowNode.collapseArgs') : t('chat.flowNode.expandArgs')) : undefined}
+      onClick={truncated ? () => setExpanded((v) => !v) : undefined}
+    >
+      {truncated && !expanded ? args.slice(0, 120) + '…' : args}
+      {truncated && (
+        <span style={{ marginLeft: 6, opacity: 0.6 }}>{expanded ? '▴' : '▾'}</span>
+      )}
+    </div>
+  )
+}
+
+/** 导出给 SubAgentFlow 历史水合兜底用（无运行记录时退化为普通工具体） */
+export function ToolBody({ node, promotedToolCallIds }: { node: ToolNode; promotedToolCallIds?: Set<string> }) {
+  const { t } = useTranslation()
   const errorLines = node.status === 'error' && node.summary
     ? node.summary.split('\n').filter(Boolean)
     : []
@@ -317,17 +367,17 @@ function ToolBody({ node, promotedToolCallIds }: { node: ToolNode; promotedToolC
   const errorHint = errorLines.slice(1).join(' ') || undefined
 
   const promoted = promotedToolCallIds?.has(extractToolCallId(node.id) || '')
-  const rows = node.status === 'done' && node.result && !promoted
+  const hasInlineRenderer = node.status === 'done' && node.result != null
+    && !!getToolRenderer(node.toolName)?.resultRenderer
+    && !isResultPromoted(node.toolName, node.result)
+    && !INLINE_RENDERER_DENYLIST.has(node.toolName)
+  const rows = node.status === 'done' && node.result && !promoted && !hasInlineRenderer
     ? extractTableRows(node.result)
     : null
 
   return (
     <>
-      {node.args && (
-        <div className="wf-args-line">
-          {node.toolName}({node.args.length > 120 ? node.args.slice(0, 120) + '…' : node.args})
-        </div>
-      )}
+      {node.args && <ArgsLine args={node.args} />}
       {node.executionLog && (
         <ClampController maxHeight={160}>
           <div className="wf-log">{node.executionLog}</div>
@@ -336,61 +386,51 @@ function ToolBody({ node, promotedToolCallIds }: { node: ToolNode; promotedToolC
       {/* 停滞提示（watchdog 30s 无进展） */}
       {node.status === 'running' && node.executionLog?.includes('等待较久') && (
         <div className="wf-stalled-banner">
-          <span>⏳ 等待较久，仍在执行或可能已卡住</span>
+          <span>{t('chat.flowNode.stalledBanner')}</span>
         </div>
       )}
       {node.status === 'error' && (
         <div className="wf-err-box">
-          <div className="wf-err-title">⛔ 执行失败</div>
-          <div>{errorMain || node.summary}</div>
+          <div className="wf-err-title">{t('chat.flowNode.executionFailed')}</div>
+          {/* 稳妥去重：日志盒（executionLog）已装错误全文时，红盒只留标题，不再重复原文 */}
+          {!node.executionLog && <div>{errorMain || node.summary}</div>}
           {errorHint && (
-            <div className="wf-err-hint">小模型解释：{errorHint}</div>
+            <div className="wf-err-hint">{t('chat.flowNode.errorHint', { hint: errorHint })}</div>
           )}
         </div>
       )}
       {promoted && (
-        <div style={{ fontSize: 12.5, color: '#8b8b90', padding: '4px 0' }}>
-          结果已在产物区展示
+        <div style={{ fontSize: 12.5, color: 'var(--wf-mut)', padding: '4px 0' }}>
+          {t('chat.flowNode.resultInArtifacts')}
         </div>
       )}
+      {hasInlineRenderer && <ToolInlineResult node={node} />}
       {rows && rows.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <InlineTable rows={rows} />
         </div>
       )}
-      {node.status === 'done' && node.summary && !node.executionLog && !rows && !promoted && (
-        <div style={{ fontSize: 13, color: '#475569' }}>{node.summary}</div>
+      {node.status === 'done' && node.summary && !node.executionLog && !rows && !promoted && !hasInlineRenderer && (
+        <div style={{ fontSize: 13, color: 'var(--wf-sub)' }}>{node.summary}</div>
       )}
     </>
   )
 }
 
 function AttentionBody({ node, cbs }: { node: AttentionNode; cbs: BodyCallbacks }) {
+  const { t } = useTranslation()
   const subtype = node.subtype || 'approval'
   const isWaiting = node.status === 'waiting'
-  const [busy, setBusy] = useState(false)
-
-  const handleApprove = useCallback(() => {
-    if (!node.toolCallId || busy) return
-    setBusy(true)
-    cbs.onApprove?.(node.toolCallId)
-  }, [cbs.onApprove, node.toolCallId, busy])
-
-  const handleReject = useCallback(() => {
-    if (!node.toolCallId || busy) return
-    setBusy(true)
-    cbs.onReject?.(node.toolCallId)
-  }, [cbs.onReject, node.toolCallId, busy])
 
   if (subtype === 'takeover') {
     return (
       <div className="wf-browser-card">
         <div className="wf-browser-bar">
-          <span className="wf-browser-dot" style={{ background: '#16a34a' }} />
+          <span className="wf-browser-dot" style={{ background: 'var(--wf-ok-ink)' }} />
           <span className="wf-browser-dot" />
           <span className="wf-browser-dot" />
           <div className="wf-browser-url">
-            {node.toolName ? `${node.toolName} 需要人工操作` : '需要人工操作'}
+            {node.toolName ? t('chat.flowNode.toolNeedsManualOperation', { toolName: formatToolDisplayName(node.toolName) }) : t('chat.flowNode.needsManualOperation')}
           </div>
         </div>
         <div className="wf-browser-stage">
@@ -404,13 +444,13 @@ function AttentionBody({ node, cbs }: { node: AttentionNode; cbs: BodyCallbacks 
                 className="wf-btn wf-btn-primary"
                 onClick={() => cbs.onTakeover?.(node.id)}
               >
-                接管浏览器
+                {t('chat.flowNode.takeoverBrowser')}
               </button>
               <button
                 className="wf-btn"
                 onClick={() => cbs.onSkipAttention?.(node.id)}
               >
-                跳过，继续后续步骤
+                {t('chat.flowNode.skipContinue')}
               </button>
             </div>
           )}
@@ -429,37 +469,37 @@ function AttentionBody({ node, cbs }: { node: AttentionNode; cbs: BodyCallbacks 
           <span>{node.reason}</span>
         </div>
         {node.prompt && (
-          <div style={{ fontSize: 12, color: '#64748b' }}>{node.prompt}</div>
+          <div style={{ fontSize: 12, color: 'var(--wf-mut)' }}>{node.prompt}</div>
         )}
-        {subtype === 'clarify' && node.options && node.options.length > 0 && isWaiting && (
-          <div className="wf-chip-row">
-            {node.options.map((opt) => (
-              <button
-                key={opt}
-                className="wf-chip"
-                onClick={() => cbs.onClarifyPick?.(node.id, opt)}
-              >
-                {opt}
-              </button>
-            ))}
+        {/* 2026-08-04 反问入口收敛（与审批同一决策）：浮动操作栏为唯一操作入口，
+            脊柱卡只留痕——等待中仅提示去向，不再渲染第二套选项 chips。 */}
+        {subtype === 'clarify' && isWaiting && (
+          <div style={{ fontSize: 12, color: 'var(--wf-mut)', marginTop: 8 }}>
+            {t('chat.flowNode.waitingAnswerHint')}
           </div>
         )}
+        {/* 2026-07-31 审批入口收敛：浮动审批栏为唯一操作入口（用户拍板），
+            脊柱卡转为只读留痕——等待中仅提示去向，不再放第二套批准/拒绝按钮。 */}
         {subtype === 'approval' && isWaiting && node.toolCallId && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button
-              className="wf-btn wf-btn-primary"
-              disabled={busy}
-              onClick={handleApprove}
-            >
-              {busy ? '处理中…' : '批准执行'}
-            </button>
-            <button
-              className="wf-btn"
-              disabled={busy}
-              onClick={handleReject}
-            >
-              {busy ? '处理中…' : '拒绝'}
-            </button>
+          <div style={{ fontSize: 12, color: 'var(--wf-warn-ink)', marginTop: 8 }}>
+            {t('chat.flowNode.waitingApprovalHint')}
+          </div>
+        )}
+        {/* 2026-07-31 决策留痕：终态 attention 显示解决备注（拒绝理由/超时/中断） */}
+        {!isWaiting && node.resolutionNote && (
+          <div style={{ fontSize: 12, color: 'var(--wf-mut)', marginTop: 6 }}>
+            {t(
+              node.status === 'resolved'
+                ? subtype === 'clarify'
+                  ? 'chat.flowNode.statusAnswered'
+                  : 'chat.flowNode.statusApproved'
+                : node.status === 'timeout'
+                  ? 'chat.flowNode.statusTimedOut'
+                  : node.status === 'cancelled'
+                    ? 'chat.flowNode.statusInterrupted'
+                    : 'chat.flowNode.statusSkipped'
+            )}
+            {node.resolutionNote ? `: ${node.resolutionNote}` : ''}
           </div>
         )}
       </div>
@@ -470,7 +510,7 @@ function AttentionBody({ node, cbs }: { node: AttentionNode; cbs: BodyCallbacks 
 function AnswerBody({ node }: { node: AnswerNode }) {
   if (!node.content) return null
   return (
-    <div className="text-sm text-surface-600 whitespace-pre-wrap">
+    <div className="text-sm text-[var(--wf-sub)] whitespace-pre-wrap">
       {node.content.slice(0, 300)}
       {node.content.length > 300 && '…'}
     </div>

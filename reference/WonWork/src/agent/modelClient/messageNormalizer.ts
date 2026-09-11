@@ -168,7 +168,10 @@ export function ensureToolResultPairing(messages: Message[]): Message[] {
         if (tc.id && missingIds.has(tc.id)) {
           result.push({
             role: 'tool',
-            content: '（工具执行结果缺失：未收到该 tool_call 的执行结果）',
+            // 与 contextAssembler 的墓碑文案（"已执行完成、结果被移除"）严格区分：
+            // 走到这里 = 结果从未进入对话记录（未执行完成/未持久化），语义相反，措辞不能混用。
+            content:
+              '（工具执行结果缺失：该次调用的结果没有进入对话记录——它可能未执行完成或未被保存。不要凭推测叙述它的结果；需要该数据时，重新执行该调用。）',
             toolCallId: tc.id,
           })
         }

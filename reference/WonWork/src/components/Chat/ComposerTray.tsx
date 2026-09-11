@@ -19,41 +19,44 @@ export function ComposerTray() {
   const dequeueMessage = useChatStore((s) => s.dequeueMessage)
   const cancelSupplement = useChatStore((s) => s.cancelSupplement)
 
-  if (queuedMessages.length === 0 && pendingSupplements.length === 0 && pendingCompactAfterTurn === null) return null
+  // kind='system'（子 Agent 通知登记项）不是用户输入——气泡已在瀑布流留痕，托盘不重复占位
+  const visibleSupplements = pendingSupplements.filter((p) => p.kind !== 'system')
+
+  if (queuedMessages.length === 0 && visibleSupplements.length === 0 && pendingCompactAfterTurn === null) return null
 
   return (
     <div className="wf-tray">
       {pendingCompactAfterTurn !== null && (
         <div className="wf-chiprow q">
-          <span className="cr-tag">{t('chat.tray.compactQueued', { defaultValue: '压缩' })}</span>
-          <span className="cr-text">{t('chat.tray.compactQueuedText', { defaultValue: '本轮结束后自动压缩上下文' })}</span>
+          <span className="cr-tag">{t('chat.tray.compactQueued')}</span>
+          <span className="cr-text">{t('chat.tray.compactQueuedText')}</span>
         </div>
       )}
       {queuedMessages.map((q) => (
         <div key={q.id} className="wf-chiprow q">
-          <span className="cr-tag">{t('chat.tray.queued', { defaultValue: '排队' })}</span>
+          <span className="cr-tag">{t('chat.tray.queued')}</span>
           <span className="cr-text" title={q.text}>{q.text}</span>
           <button
             type="button"
             className="cr-x"
-            title={t('chat.tray.cancel', { defaultValue: '取消' })}
+            title={t('chat.tray.cancel')}
             onClick={() => dequeueMessage(q.id)}
           >
             ✕
           </button>
         </div>
       ))}
-      {pendingSupplements.map((p) => (
+      {visibleSupplements.map((p) => (
         <div key={p.id} className="wf-chiprow s">
           <span className="cr-tag">
             <span className="pulse" />
-            {t('chat.tray.pending', { defaultValue: '待送入' })}
+            {t('chat.tray.pending')}
           </span>
           <span className="cr-text" title={p.text}>{p.text}</span>
           <button
             type="button"
             className="cr-x"
-            title={t('chat.tray.withdraw', { defaultValue: '撤回' })}
+            title={t('chat.tray.withdraw')}
             onClick={() => cancelSupplement(p.id)}
           >
             ✕

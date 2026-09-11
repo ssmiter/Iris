@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@/stores/chatStore'
 
 type Phase = 'hidden' | 'running' | 'done' | 'leaving'
@@ -10,10 +11,12 @@ type Phase = 'hidden' | 'running' | 'done' | 'leaving'
  * - done：短暂停留「✓ 已压缩」让用户感知闭环，随后淡出卸载
  */
 export function CompactBar() {
+  const { t } = useTranslation()
   const compactProgress = useChatStore((s) => s.compactProgress)
   const cancelCompact = useChatStore((s) => s.cancelCompact)
   const [phase, setPhase] = useState<Phase>('hidden')
   const [elapsed, setElapsed] = useState(0)
+  const [failedOutcome, setFailedOutcome] = useState(false)
   const lastTrigger = useRef<'manual' | 'auto'>('manual')
 
   const active = compactProgress !== null
@@ -21,16 +24,24 @@ export function CompactBar() {
 
   useEffect(() => {
     if (active) {
+      setFailedOutcome(false)
       setPhase('running')
       setElapsed(0)
       return
     }
     // running → done → leaving → hidden（仅当之前在跑才播完成态）
-    setPhase((p) => {
-      if (p !== 'running') return p
-      return 'done'
-    })
-  }, [active])
+    // 2026-07-31：结局三态——成功播"✓ 已压缩"，失败播失败文案，取消直接隐去
+    // （chatStore 在清 compactProgress 的同一 set 中置 compactOutcome，此处读取时已就绪）。
+    if (phase === 'running') {
+      const outcome = useChatStore.getState().compactOutcome
+      if (outcome === 'cancelled') {
+        setPhase('hidden')
+        return
+      }
+      setFailedOutcome(outcome === 'failed')
+      setPhase('done')
+    }
+  }, [active, phase])
 
   useEffect(() => {
     if (phase !== 'running') return
@@ -55,11 +66,13 @@ export function CompactBar() {
   const label =
     phase === 'running'
       ? trigger === 'auto'
-        ? '上下文接近上限，正在自动压缩…'
-        : '正在压缩上下文…'
-      : trigger === 'auto'
-        ? '✓ 已自动压缩，对话继续'
-        : '✓ 已压缩'
+        ? t('chat.compactBar.autoCompressing')
+        : t('chat.compactBar.compressing')
+      : failedOutcome
+        ? t('chat.compactBar.failed')
+        : trigger === 'auto'
+          ? t('chat.compactBar.autoDone')
+          : t('chat.compactBar.done')
 
   return (
     <div className={`wf-compact-bar${phase === 'leaving' ? ' leaving' : ''}`} role="status">
@@ -71,7 +84,7 @@ export function CompactBar() {
           </span>
           <span className="cb-elapsed">{elapsed.toFixed(0)}s</span>
           {trigger === 'manual' && (
-            <button type="button" className="cb-cancel" onClick={cancelCompact} title="取消压缩">
+            <button type="button" className="cb-cancel" onClick={cancelCompact} title={t('chat.compactBar.cancelTitle')}>
               ✕
             </button>
           )}

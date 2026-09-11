@@ -87,7 +87,7 @@ const onlinePaymentApi = {
 
 const qrCache: Record<string, PaymentQrCode> = {}
 
-// ==================== 禁用实现（Preview / MESCLI） ====================
+// ==================== 禁用实现（MESCLI 本地版） ====================
 
 const disabledPaymentApi = {
   getOrders: async (): Promise<Order[]> => {

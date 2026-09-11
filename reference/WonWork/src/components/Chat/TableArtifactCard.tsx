@@ -97,15 +97,15 @@ export const TableArtifactCard = memo(function TableArtifactCard({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="space-y-0.5">
             {artifact.caption && (
-              <p className="text-base font-semibold text-surface-900 leading-snug">{artifact.caption}</p>
+              <p className="text-base font-semibold text-[var(--wf-ink)] leading-snug">{artifact.caption}</p>
             )}
-            <p className="text-xs text-surface-500">
+            <p className="text-xs text-[var(--wf-mut)]">
               {t('chat.artifactCard.totalRows', { count: artifact.totalRows })}
               {hasMore && ` · ${t('chat.artifactCard.showingTopRows', { count: showingCount })}`}
             </p>
           </div>
           <div className="relative">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400" />
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--wf-faint)]" />
             <input
               type="text"
               value={filter}
@@ -113,17 +113,17 @@ export const TableArtifactCard = memo(function TableArtifactCard({
               placeholder={t('chat.artifactCard.filterPlaceholder')}
               className={cn(
                 'pl-8 pr-3 py-1.5 w-full sm:w-56 rounded-lg text-xs',
-                'border border-surface-200 bg-white text-surface-700',
-                'placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500'
+                'border border-[var(--wf-line)] bg-[var(--wf-card-bg)] text-[var(--wf-sub)]',
+                'placeholder:text-[var(--wf-faint)] focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500'
               )}
             />
           </div>
         </div>
 
-        <div className="rounded-lg border border-surface-200 overflow-hidden">
+        <div className="rounded-lg border border-[var(--wf-line)] overflow-hidden">
           <div className="overflow-x-auto max-h-80">
             <table className="min-w-full text-xs">
-              <thead className="bg-surface-100 sticky top-0 z-10">
+              <thead className="bg-[var(--wf-mono-bg)] sticky top-0 z-10">
                 <tr>
                   {artifact.columns.map((col) => (
                     <th
@@ -131,8 +131,8 @@ export const TableArtifactCard = memo(function TableArtifactCard({
                       scope="col"
                       onClick={() => handleSort(col)}
                       className={cn(
-                        'px-3 py-2 text-left font-semibold text-surface-700 border-b border-surface-200',
-                        'cursor-pointer select-none hover:bg-surface-200 transition-colors'
+                        'px-3 py-2 text-left font-semibold text-[var(--wf-sub)] border-b border-[var(--wf-line)]',
+                        'cursor-pointer select-none hover:bg-[var(--wf-hover)] transition-colors'
                       )}
                     >
                       <div className="flex items-center gap-1">
@@ -140,7 +140,7 @@ export const TableArtifactCard = memo(function TableArtifactCard({
                         <ArrowUpDown
                           size={12}
                           className={cn(
-                            'flex-shrink-0 text-surface-400',
+                            'flex-shrink-0 text-[var(--wf-faint)]',
                             sortColumn === col && 'text-primary-600'
                           )}
                         />
@@ -149,13 +149,13 @@ export const TableArtifactCard = memo(function TableArtifactCard({
                   ))}
                 </tr>
               </thead>
-              <tbody className="bg-white">
+              <tbody className="bg-[var(--wf-card-bg)]">
                 {sortedRows.map((row, i) => (
-                  <tr key={i} className="hover:bg-surface-50 transition-colors">
+                  <tr key={i} className="hover:bg-[var(--wf-hover)] transition-colors">
                     {artifact.columns.map((col) => (
                       <td
                         key={col}
-                        className="px-3 py-2 border-b border-surface-100 text-surface-700 whitespace-nowrap"
+                        className="px-3 py-2 border-b border-[var(--wf-hair)] text-[var(--wf-sub)] whitespace-nowrap"
                       >
                           {String(row[col] ?? '')}
                         </td>
@@ -166,7 +166,7 @@ export const TableArtifactCard = memo(function TableArtifactCard({
                   <tr>
                     <td
                       colSpan={artifact.columns.length}
-                      className="px-3 py-4 text-center text-surface-400"
+                      className="px-3 py-4 text-center text-[var(--wf-faint)]"
                     >
                       {t('chat.messageBubble.noResult')}
                     </td>
@@ -176,14 +176,14 @@ export const TableArtifactCard = memo(function TableArtifactCard({
             </table>
           </div>
           {hasMore && (
-            <div className="px-3 py-2 bg-surface-50 border-t border-surface-200 text-xs text-surface-500">
+            <div className="px-3 py-2 bg-[var(--wf-bg)] border-t border-[var(--wf-line)] text-xs text-[var(--wf-mut)]">
               {t('chat.artifactCard.showingTopRows', { count: showingCount })}
             </div>
           )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs text-surface-500 truncate max-w-[260px]" title={fileName}>
+          <div className="text-xs text-[var(--wf-mut)] truncate max-w-[260px]" title={fileName}>
             {fileName}
             {artifact.sizeBytes > 0 && ` · ${formatFileSize(artifact.sizeBytes)}`}
           </div>
@@ -194,7 +194,7 @@ export const TableArtifactCard = memo(function TableArtifactCard({
               rel="noopener noreferrer"
               className={cn(
                 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-                'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+                'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
               )}
             >
               <Download size={14} />
@@ -205,7 +205,7 @@ export const TableArtifactCard = memo(function TableArtifactCard({
               onClick={handleCopyPath}
               className={cn(
                 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-                'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+                'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
               )}
             >
               <Copy size={14} />

@@ -97,7 +97,7 @@ public class ConversationRepository {
                        state.summary, state.source_run_id,
                        state.source_round_id, state.created_at
                 FROM agent_task_work_state state
-                JOIN agent_run run ON run.run_id = state.source_run_id
+                JOIN client_run run ON run.run_id = state.source_run_id
                 JOIN conversation_event event
                   ON event.turn_id = run.turn_id
                  AND event.event_type = 'turn.accepted'
@@ -106,7 +106,7 @@ public class ConversationRepository {
                   AND state.state_version = (
                     SELECT MAX(candidate.state_version)
                     FROM agent_task_work_state candidate
-                    JOIN agent_run candidate_run
+                    JOIN client_run candidate_run
                       ON candidate_run.run_id = candidate.source_run_id
                     JOIN conversation_event candidate_event
                       ON candidate_event.turn_id = candidate_run.turn_id
@@ -423,13 +423,16 @@ public class ConversationRepository {
             String normalizedInputHash,
             Instant now
     ) {
+        // 客观能力层：Run 是前端 Runtime 拥有的事实（client_run，docs/46），
+        // 后端不再写 agent_run 运行投影，也不保存定义快照/预算。
         jdbc.sql("""
-                INSERT INTO agent_run(
+                INSERT INTO client_run(
                     run_id, conversation_id, branch_id, turn_id, parent_run_id,
-                    root_run_id, kind, purpose, phase, version, started_at, ended_at
+                    root_run_id, owner, purpose, phase, budget_json, version,
+                    started_at, ended_at
                 ) VALUES (
                     :runId, :conversationId, :branchId, :turnId, NULL,
-                    :runId, 'agentic', :purpose, 'running', 1, :now, NULL
+                    :runId, 'frontend', :purpose, 'active', NULL, 1, :now, NULL
                 )
                 """)
                 .param("runId", runId)
@@ -438,21 +441,6 @@ public class ConversationRepository {
                 .param("turnId", turnId)
                 .param("purpose", purpose)
                 .param("now", now.toString())
-                .update();
-        jdbc.sql("""
-                INSERT INTO run_definition_snapshot(
-                    run_id, definition_id, definition_version, snapshot_hash,
-                    normalized_input_hash, dependency_snapshot_ref,
-                    tool_calls_limit, time_limit_ms
-                ) VALUES (
-                    :runId, 'iris.agentic.default', '1', :snapshotHash,
-                    :normalizedInputHash, :contextFrameRef, 30, 600000
-                )
-                """)
-                .param("runId", runId)
-                .param("snapshotHash", snapshotHash)
-                .param("normalizedInputHash", normalizedInputHash)
-                .param("contextFrameRef", contextFrameRef(branchId))
                 .update();
     }
 

@@ -6,6 +6,7 @@
  * 见 learn/04/workshop/对话框v9实现计划-2026-07-22.md §1
  */
 import { toast } from 'sonner'
+import i18n from '@/i18n'
 import { getAllCommands, bumpCommandFreq } from './registry'
 import type { CommandContext } from './types'
 
@@ -20,7 +21,7 @@ export async function dispatchSlashCommand(text: string, ctx: CommandContext): P
   if (!m) {
     // 裸 "/" 或不合命令格式：拦截并引导，不发给模型
     if (text.trim() === '/') {
-      toast.info('输入 / 后接命令名，如 /compact、/help')
+      toast.info(i18n.t('chat.toast.slashHint'))
       return 'handled'
     }
     return false
@@ -34,18 +35,18 @@ export async function dispatchSlashCommand(text: string, ctx: CommandContext): P
 
   // 未识别命令：提示而非发给模型（claude-code 哲学：不打"未知命令"的脸，给引导）
   if (!cmd) {
-    toast.error(`未找到命令 /${name} · 输入 / 查看可用命令`)
+    toast.error(i18n.t('chat.toast.commandNotFound', { name }))
     return 'handled'
   }
 
   if (ctx.isStreaming && cmd.availableWhileStreaming === false) {
-    toast.info(`/${cmd.name} 请在当前任务结束后使用`)
+    toast.info(i18n.t('chat.toast.commandWhileStreaming', { name: cmd.name }))
     return 'handled'
   }
 
   // 需要参数但未提供：保留输入等用户补全
   if (cmd.argumentHint && !args) {
-    toast.info(`/${cmd.name} 需要参数 ${cmd.argumentHint}`)
+    toast.info(i18n.t('chat.toast.commandNeedsArg', { name: cmd.name, hint: cmd.argumentHint }))
     return 'keep-input'
   }
 
@@ -54,7 +55,7 @@ export async function dispatchSlashCommand(text: string, ctx: CommandContext): P
     await cmd.run(args, ctx)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    toast.error(`/${cmd.name} 执行失败：${msg}`)
+    toast.error(i18n.t('chat.toast.commandExecFailed', { name: cmd.name, msg }))
   }
   return 'handled'
 }

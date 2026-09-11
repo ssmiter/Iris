@@ -3,6 +3,11 @@ import { updateApi, type VersionInfo } from '@/api/client'
 
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || '1.0.0'
 
+// 「稍后再说」按版本持久化：用户忽略过的版本不再重复弹窗（重启客户端也不弹），
+// 只有出现更新的版本才再次提醒。存 localStorage 而非 zustand persist——
+// 只需这一个字段，不值得引入 persist 中间件的水合复杂度。
+const DISMISSED_VERSION_KEY = 'wonwork_update_dismissed_version'
+
 interface UpdateState {
   currentVersion: string
   latestVersion: string | null
@@ -12,8 +17,6 @@ interface UpdateState {
   allowedHosts: string[] | null
   isUpdateAvailable: boolean
   isChecking: boolean
-  isUpdating: boolean
-  updateProgress: number | null
   downloadStarted: boolean
   error: string | null
   dismissedVersion: string | null
@@ -30,7 +33,7 @@ function parseVersion(version: string): number[] {
     .map((part) => parseInt(part, 10) || 0)
 }
 
-function isNewer(current: string, latest: string): boolean {
+export function isNewer(current: string, latest: string): boolean {
   const currentParts = parseVersion(current)
   const latestParts = parseVersion(latest)
   const maxLength = Math.max(currentParts.length, latestParts.length)
@@ -53,11 +56,15 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   allowedHosts: null,
   isUpdateAvailable: false,
   isChecking: false,
-  isUpdating: false,
-  updateProgress: null,
   downloadStarted: false,
   error: null,
-  dismissedVersion: null,
+  dismissedVersion: (() => {
+    try {
+      return localStorage.getItem(DISMISSED_VERSION_KEY)
+    } catch {
+      return null
+    }
+  })(),
 
   checkVersion: async () => {
     set({ isChecking: true, error: null })
@@ -86,6 +93,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   dismissUpdate: () => {
     const { latestVersion } = get()
     if (latestVersion) {
+      try {
+        localStorage.setItem(DISMISSED_VERSION_KEY, latestVersion)
+      } catch {
+        // 存储失败仅意味着下次启动会再提醒一次，不影响本次关闭
+      }
       set({ dismissedVersion: latestVersion, isUpdateAvailable: false })
     }
   },
@@ -117,7 +129,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     set({ downloadStarted: true, error: null })
   },
 
-  reset: () =>
+  reset: () => {
+    try {
+      localStorage.removeItem(DISMISSED_VERSION_KEY)
+    } catch {
+      // 忽略存储异常
+    }
     set({
       latestVersion: null,
       downloadUrl: null,
@@ -125,10 +142,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       mandatory: false,
       isUpdateAvailable: false,
       isChecking: false,
-      isUpdating: false,
-      updateProgress: null,
       downloadStarted: false,
       error: null,
       dismissedVersion: null,
-    }),
+    })
+  },
 }))

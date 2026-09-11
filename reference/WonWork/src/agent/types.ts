@@ -35,8 +35,26 @@ export interface PermissionResult {
   /**
    * 底线确认标记（打磨任务2 S1 拍板项1）：
    * 即使在 bypass（全部自动）模式下也保留人工确认——用于删表/删文件类破坏性操作。
+   * 2026-08-31 扩展（用户拍板）：bash 开放命令的 ask 与目录登记 ask 同属不委托集
+   * （对齐 claude-code permissions.ts 1f/1g：内容级 ask 与路径类 safetyCheck 免疫
+   * bypassPermissions——bypass 委托执行风险判断，授权边界扩张不委托）。
    */
   alwaysAsk?: boolean
+  /**
+   * 批准时可沉淀的权限规则建议（2026-08-30 下限工程 P0-2 按对话权限表）。
+   * checkPermissions 返回 ask 时附带，审批卡据此展示"记住"选项；
+   * 删除/移动类破坏性命令不得附带（不沉淀）。非破坏性的 alwaysAsk 可以附带——
+   * 沉淀后同类调用在 checkPermissions 内部命中 allow 规则直接放行，不再触发确认。
+   */
+  suggestedRule?: SuggestedPermissionRule
+}
+
+/** 权限表规则建议（审批卡"记住"按钮的载荷；command=命令族前缀 / directory=目录读前缀 / directory-write=目录写前缀） */
+export interface SuggestedPermissionRule {
+  kind: 'command' | 'directory' | 'directory-write'
+  pattern: string
+  /** 卡片上的展示说明（如「"svn commit" 开头的命令」） */
+  label: string
 }
 
 export interface ToolPermissionContext {
@@ -51,6 +69,14 @@ export interface ToolPermissionContext {
   grantedPermissions?: Set<string>
   /** 是否允许绕过审批（headless/agent 模式） */
   canBypass?: boolean
+  /** 当前会话 id（consult_state 门控按会话匹配活跃状态任务） */
+  conversationId?: number | null
+  /**
+   * consult_state 门控豁免（2026-08-08 双 agent P0）：子 Agent 循环置 true——
+   * 写前对账是主 loop 层的职责（主 Agent 派遣写子任务前自己先对账），
+   * 子 Agent 没有派遣工具，被拦后引导文案对它无解。
+   */
+  stateConsultExempt?: boolean
 }
 
 // ==================== Tool 抽象 ====================
@@ -68,13 +94,16 @@ export interface ToolDefinition {
 }
 
 export interface ToolExecutionContext {
-  traceId: string
   conversationId?: number
   systemCode?: string
   userId?: number
   userName?: string
   abortSignal?: AbortSignal
   onProgress?: (update: ToolProgressUpdate) => void
+  /** 本次工具调用的 toolCallId（2026-08-01 接缝：子 Agent 运行记录与父瀑布节点精确挂靠用） */
+  toolCallId?: string
+  /** 反问闸（ask_user 等交互工具暂停等待用户作答）；缺省环境（DAG/子 Agent）不支持交互 */
+  clarifyGate?: import('./clarifyGate').ClarifyGate
 }
 
 export interface ToolProgressUpdate {
@@ -113,6 +142,9 @@ export interface Tool<TInput = unknown, TOutput = unknown> {
   /** 自定义权限检查 */
   checkPermissions?: (input: TInput, context: ToolPermissionContext) => PermissionResult
   maxResultSizeChars: number
+  /** 单次执行超时（毫秒）。缺省用执行器默认 120s；长程工具（如子 Agent 闭环）必须显式放宽，
+   *  否则跑到一半被超时切断（超时以 abort 信号下发，工具应能把它收敛为"中断+部分结果"） */
+  timeoutMs?: number
   /** 工具分类，用于 prompt 分段、UI 分组与工具发现 */
   category?: string
   /** 是否延迟加载：首次不注入上下文，需通过 tool_search 发现后才可用 */
@@ -131,12 +163,18 @@ export interface Tool<TInput = unknown, TOutput = unknown> {
   approvalMode?: import('@/types/mescli').ApprovalMode
   /** 是否需要显式审批（v1.2） */
   requiresApproval?: boolean
+  /**
+   * 写前状态对账（2026-08-08 双 agent P0，consult_state）：会话存在活跃状态任务时，
+   * 本工具的写调用必须持有 state agent 的 proceed 回执（一次性令牌）才放行，
+   * 否则结构性拒绝并引导先对账。无活跃状态任务时零影响。
+   */
+  requiresStateConsult?: boolean
   /** 是否幂等（v1.2） */
   idempotent?: boolean
   /**
    * 用户可读的影响陈述句模板或函数。
    * 支持 {key} 占位符，运行时由实际参数填充；函数形式用于参数需要转换的场景。
-   * 用于审批卡片中的"影响陈述句"，让用户不展开参数即可判断后果。
+   * 用于审批卡片中的“影响陈述句”，让用户不展开参数即可判断后果。
    */
   impactStatement?: string | ((input: TInput) => string)
   /** 受影响实体类型（v1.4） */
@@ -183,7 +221,7 @@ export interface ApprovalRequest {
   riskLevel: ToolRiskLevel
   /** 用户可读的影响陈述句 */
   impactStatement: string
-  /** 原始参数，用于"查看完整参数"展开区 */
+  /** 原始参数，用于“查看完整参数”展开区 */
   rawParams: Record<string, unknown>
   argumentsSummary: string
   reason: string
@@ -192,18 +230,8 @@ export interface ApprovalRequest {
   expiresAt?: number
   /** SQL 写操作影响解释（approval_explain pipeline 试点，按需生成） */
   sqlExplainSummary?: string
-}
-
-// ==================== AgenticState ====================
-
-export interface AgenticState {
-  traceId: string
-  turn: number
-  executionMode: ExecutionMode
-  messages: ChatMessage[]
-  pendingToolCalls: ToolCall[]
-  pendingApprovals: ApprovalRequest[]
-  completedToolResults: ToolResult[]
+  /** 批准时可沉淀的权限规则建议（P0-2 权限表，由 checkPermissions 经 toolExecutor 透传） */
+  suggestedRule?: SuggestedPermissionRule
 }
 
 // ==================== Trace / Span 可观测骨架 ====================
@@ -215,7 +243,6 @@ export type SpanKind =
   | 'context_assembly'
   | 'webbridge'
   | 'approval'
-  | 'dag'
 
 export interface SpanEvent {
   name: string
@@ -239,7 +266,7 @@ export interface Span {
 
 export interface Trace {
   traceId: string
-  type: 'chat' | 'dag' | 'webbridge' | 'workflow' | 'tool'
+  type: 'chat' | 'webbridge' | 'tool'
   rootSpan: Span
   spans: Span[]
   status: 'running' | 'completed' | 'error'

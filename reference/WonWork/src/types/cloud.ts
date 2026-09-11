@@ -1,137 +1,107 @@
 /**
- * 云服务 DTO
- *
- * 与 E:\code\WonWork\learn\03\workshop\cloud-apis.md 中的接口契约对应。
+ * AIGateway.Cloud (Wongoing SaaS) DTO
+ * 与 D:\Sleven\Projects\MESCLI\AIGateway\AIGateway.Cloud 后端契约对应
  */
 
-// ==================== 用户认证 ====================
+// ==================== 认证 ====================
 
 export interface CloudUser {
-  id: string
-  displayName: string
+  id: number
   email?: string
   phone?: string
-  avatarUrl?: string
-  avatarUrl_base64?: string
-  tenantId?: string
-  tenantName?: string
-  createdAt: string
-  role?: string
+  displayName?: string
+  tier: string
 }
 
-// ==================== 套餐 ====================
+export interface CloudLoginRequest {
+  account: string
+  password: string
+}
+
+export interface CloudRegisterRequest {
+  account: string
+  password: string
+  displayName?: string
+}
+
+export interface CloudTokenResponse {
+  accessToken: string
+  refreshToken: string
+  expiresIn: number
+  user: CloudUser
+}
+
+// ==================== 套餐 / 额度 ====================
 
 export interface CloudPlanDto {
-  key: string
+  id: number
   name: string
-  description?: string
+  tier: string
+  monthlyTokenQuota: number
   price: number
   currency: string
-  /** 月度 token 配额 */
-  monthlyTokenQuota?: number
-  /** 并发对话数上限 */
-  maxConcurrentConversations?: number
-  /** 最大附件大小（MB） */
-  maxAttachmentSizeMb?: number
-  /** 最大历史天数 */
-  maxHistoryDays?: number
-  /** 包含的功能列表 */
-  features?: string[]
-  /** 排序 */
-  sortOrder?: number
-  /** 是否为推荐套餐 */
-  isRecommended?: boolean
+  description?: string
 }
 
-// ==================== 订单与支付 ====================
+export interface CloudCurrentPlanResponse {
+  tier: string
+  plan: CloudPlanDto | null
+}
 
-export type OrderStatus = 'pending_payment' | 'pending_confirm' | 'completed' | 'cancelled' | 'refunded'
+export interface CloudQuotaDto {
+  tier: string
+  monthlyQuota: number
+  usedTokens: number
+  remainingTokens: number
+  isExhausted: boolean
+}
+
+// ==================== License ====================
+
+export interface CloudLicenseDto {
+  id: number
+  licenseKey: string
+  machineFingerprint?: string
+  status: string
+  activatedAt?: string
+  expiresAt?: string
+}
+
+export interface CloudLicenseStatusResponse {
+  license: CloudLicenseDto | null
+}
+
+export interface CloudActivateLicenseRequest {
+  licenseKey: string
+  machineFingerprint: string
+}
+
+// ==================== 订单 / 支付 ====================
 
 export interface CloudOrderDto {
-  id: string
-  planKey: string
-  planName: string
+  id: number
+  planId: number
+  planName?: string
   amount: number
   currency: string
-  status: OrderStatus
-  createdAt: string
+  status: string
+  provider?: string
+  providerTradeNo?: string
   paidAt?: string
-  confirmedAt?: string
-  /** 转账汇款凭证图片 URL */
-  proofImageUrl?: string
-  /** 失败原因 */
-  failReason?: string
-}
-
-export interface PaymentQrCode {
-  type: 'alipay' | 'wechat'
-  amount: number
-  currency: string
-  qrImageUrl: string
-  qrImageUrl_base64?: string
-  expiresAt?: string
-}
-
-// ==================== 许可证 ====================
-
-export type LicenseStatus = 'active' | 'inactive' | 'expired' | 'revoked' | 'trial'
-
-export type LicenseTier = 'free' | 'pro' | 'enterprise'
-
-export interface MachineFingerprint {
-  hardwareId: string
-  hostname?: string
-  os?: string
   createdAt: string
 }
 
-export interface License {
-  licenseKey: string
-  productName: string
-  status: LicenseStatus
-  tier: LicenseTier
-  issuedAt: string
-  expiresAt?: string
-  maxMachines?: number
-  activatedMachines?: number
-  tenantId?: string
-  planId?: string
-  seats?: number
-  features?: string[]
-  metadata?: Record<string, unknown>
+export interface CloudCreateOrderRequest {
+  planId: number
+  provider: string
 }
 
-// ==================== API 响应 ====================
-
-export interface CloudOkResponse {
-  ok: boolean
-  error?: string
+export interface CloudCreateOrderResponse {
+  order: CloudOrderDto
+  payUrl: string
 }
 
-export interface CloudUserResponse extends CloudOkResponse {
-  user: CloudUser | null
-}
-
-export interface CloudPlansResponse extends CloudOkResponse {
-  plans: CloudPlanDto[]
-}
-
-export interface CloudOrdersResponse extends CloudOkResponse {
-  orders: CloudOrderDto[]
-}
-
-export interface CloudOrderResponse extends CloudOkResponse {
-  order: CloudOrderDto | null
-}
-
-export interface CloudPaymentQrResponse extends CloudOkResponse {
-  qr: PaymentQrCode | null
-}
-
-export interface CloudLicenseResponse extends CloudOkResponse {
-  license: License | null
-}
-
-export interface CloudActivateResponse extends CloudOkResponse {
-  license?: License
+export interface CloudPaymentNotifyRequest {
+  providerTradeNo: string
+  status: string
 }

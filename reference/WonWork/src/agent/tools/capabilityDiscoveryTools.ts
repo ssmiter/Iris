@@ -7,7 +7,6 @@ import type {
 import { toolApi } from '@/api/client'
 import type { FrontendToolRegistry } from '@/agent/toolRegistry'
 import { webBridgeClient } from '@/api/webbridgeClient'
-import { webbridgeExecuteTool } from './web/bridge/webbridgeExecuteTool'
 
 /**
  * 文件系统式能力发现原语（v1.5）
@@ -28,7 +27,7 @@ interface ListCapabilitiesInput {
 }
 
 interface ReadCapabilityInput {
-  /** 工具完整路径，例如 "/demo/query_products" */
+  /** 工具完整路径，例如 "/code/sql" */
   path: string
 }
 
@@ -45,12 +44,24 @@ interface ReadCapabilityOutput {
   description: string
   parameters?: unknown
   schemaText: string
+  /** 目录误读时直接承载给模型的引导文本（extractOutputText 优先取 content，避免模型看到 JSON 包装） */
+  content?: string
 }
 
 export interface CapabilityDiscoveryOptions {
   systemCode?: string
   /** 前端工具镜像，read_capability 成功后会将工具注册进去 */
   registry?: FrontendToolRegistry
+  /**
+   * 注册前过滤（explore 子 Agent 只读场景）：返回 false 时不注册该工具，
+   * 并给模型返回"未加载"的引导文本而非 schema——防止写工具经发现通道进入只读环境。
+   */
+  acceptTool?: (schema: CapabilitySchemaResponse) => boolean
+  /**
+   * 是否在目录中展示 /webbridge 域（默认 true）。只读子 Agent 环境传 false：
+   * 浏览器写原语本就不注册进子注册表，列出来只会诱导空转加载。
+   */
+  includeWebBridge?: boolean
 }
 
 function normalizePath(path?: string): string {
@@ -60,6 +71,16 @@ function normalizePath(path?: string): string {
   normalized = normalized.replace(/\/+/g, '/')
   if (normalized.length > 1 && normalized.endsWith('/')) {
     normalized = normalized.slice(0, -1)
+  }
+  // 容错：grep 结果展示的是 /capabilities 命名空间下的 .md 文件路径，
+  // 本目录的规范路径没有这两层包装——剥掉再路由，避免模型照抄展示路径三次空转
+  // （2026-08-14 模具状态对话实测：模型带前缀 read_capability 连错 3 次才自行剥正）
+  if (normalized === '/capabilities') normalized = '/'
+  else if (normalized.startsWith('/capabilities/')) {
+    normalized = normalized.slice('/capabilities'.length)
+  }
+  if (normalized.toLowerCase().endsWith('.md')) {
+    normalized = normalized.slice(0, -3)
   }
   return normalized
 }
@@ -85,7 +106,6 @@ const WEBBRIDGE_CAPABILITY_ENTRIES: WebBridgeCapabilityEntry[] = [
   { path: '/webbridge/type', name: 'webbridge_type', description: '在输入框中输入文本' },
   { path: '/webbridge/scroll', name: 'webbridge_scroll', description: '滚动页面' },
   { path: '/webbridge/wait', name: 'webbridge_wait', description: '等待时间或元素' },
-  { path: '/webbridge/execute', name: 'webbridge_execute', description: '自然语言执行简单浏览器任务（1-3 步，降级保留）' },
 ]
 
 function buildWebBridgeCapabilityGuide(path: string, tool: Tool): string {
@@ -108,7 +128,6 @@ WebBridge 原语用于浏览器自动化。推荐按 Sense-Act-Verify 模式组�
 
 不确定元素选择器时，优先用自然语言 \`target\` 参数调用 webbridge_click / webbridge_type，系统会内部定位；仍不确定时先用 webbridge_locate。
 
-webbridge_execute 仅用于简单 1-3 步任务；多步任务请拆解为上述原语。
 
 现在你可以直接调用工具 ${tool.name}。`
 }
@@ -186,20 +205,22 @@ export function extractDiscoveredNameFromReadCapability(resultText: string): str
 export function createListCapabilitiesTool(
   options: CapabilityDiscoveryOptions = {}
 ): Tool<ListCapabilitiesInput, ListCapabilitiesOutput> {
-  const { systemCode: defaultSystemCode } = options
+  const { systemCode: defaultSystemCode, includeWebBridge = true } = options
 
   return {
     name: LIST_CAPABILITIES_TOOL_NAME,
     description:
       '文件系统式能力浏览原语。像 `ls` 一样列出指定路径下的目录和工具入口。' +
-      '建议先从 "/" 开始，看到顶层域（如 /demo、/code）后再深入。' +
-      '目录名可见，但工具 schema 需要通过 read_capability 单独读取。',
+      '能力目录按工厂工序/业务对象分层组织（工序顺序对应真实业务流转），浏览它可以建立全景：' +
+      '某环节有哪些工具、上下游在哪——跨工序的链状问题尤其需要先从这里入手；' +
+      '词面明确的点状查找用 grep(path="/capabilities") 全文检索更快。' +
+      '建议先从 "/" 开始，看到顶层域后再深入。目录名可见，但工具 schema 需要通过 read_capability 单独读取。',
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: '要浏览的路径，例如 "/"、"/demo"、"/code"，默认 "/"',
+          description: '要浏览的路径，例如 "/"、"/code"，默认 "/"',
           default: '/',
         },
       },
@@ -213,7 +234,7 @@ export function createListCapabilitiesTool(
     execute: async (input: ListCapabilitiesInput): Promise<ListCapabilitiesOutput> => {
       const path = normalizePath(input.path)
 
-      if (isWebBridgeAvailable() && path === WEBBRIDGE_DOMAIN) {
+      if (includeWebBridge && isWebBridgeAvailable() && path === WEBBRIDGE_DOMAIN) {
         const nodes: CapabilityTreeResponse['nodes'] = WEBBRIDGE_CAPABILITY_ENTRIES.map((e) => ({
           name: e.name,
           path: e.path,
@@ -233,7 +254,7 @@ export function createListCapabilitiesTool(
       let nodes = response.nodes
       let note = response.note
 
-      if (isWebBridgeAvailable() && path === '/') {
+      if (includeWebBridge && isWebBridgeAvailable() && path === '/') {
         nodes = [
           ...nodes,
           {
@@ -252,16 +273,77 @@ export function createListCapabilitiesTool(
   }
 }
 
+type SchemaFetchResult =
+  | { kind: 'schema'; schema: CapabilitySchemaResponse }
+  | { kind: 'folderGuide'; guide: ReadCapabilityOutput }
+
+/**
+ * read_capability 的 schema 读取（带目录回退）。
+ *
+ * 模型偶尔会把目录路径（如 /code/sql）当作工具路径传入——这不是错误，是探索中的正常一步。
+ * 后端对目录路径返回 404"不存在或无权访问"，措辞误导且会在瀑布流留下红色错误节点；
+ * 这里回退到 list_capabilities 语义：目录存在则返回其下内容清单 + 纠正指引（作为正常结果，
+ * 经 output.content 直达模型），目录也不存在才把原始错误抛回给模型。
+ */
+async function fetchSchemaWithFolderFallback(
+  path: string,
+  systemCode?: string
+): Promise<SchemaFetchResult> {
+  try {
+    return { kind: 'schema', schema: await toolApi.schema(path, systemCode) }
+  } catch (err) {
+    // WebBridge 目录只存在于前端（后端无此命名空间），单独合成引导
+    if (isWebBridgeAvailable() && path === WEBBRIDGE_DOMAIN) {
+      const listing = WEBBRIDGE_CAPABILITY_ENTRIES.map((e) => e.path).join('、')
+      return {
+        kind: 'folderGuide',
+        guide: {
+          path,
+          name: '',
+          description: '',
+          schemaText: '',
+          content: `${path} 是能力目录而非工具，包含：${listing}。请改用其中一个完整工具路径重新调用 read_capability。`,
+        },
+      }
+    }
+    try {
+      const tree = await toolApi.tree(path, systemCode)
+      if (tree.nodes.length > 0) {
+        const toolPaths = tree.nodes.filter((n) => n.kind !== 'folder').map((n) => n.path)
+        const folderPaths = tree.nodes.filter((n) => n.kind === 'folder').map((n) => n.path)
+        const listing = [
+          ...toolPaths,
+          ...folderPaths.map((p) => `${p}（子目录）`),
+        ].join('、')
+        const example = toolPaths[0] ?? `${path}/<工具名>`
+        return {
+          kind: 'folderGuide',
+          guide: {
+            path,
+            name: '',
+            description: '',
+            schemaText: '',
+            content: `${path} 是能力目录而非工具，包含：${listing}。请改用完整工具路径（如 ${example}）重新调用 read_capability。`,
+          },
+        }
+      }
+    } catch {
+      // 目录也不存在，落入下面的原始错误
+    }
+    throw err
+  }
+}
+
 export function createReadCapabilityTool(
   options: CapabilityDiscoveryOptions = {}
 ): Tool<ReadCapabilityInput, ReadCapabilityOutput> {
-  const { systemCode: defaultSystemCode, registry } = options
+  const { systemCode: defaultSystemCode, registry, acceptTool } = options
 
   return {
     name: READ_CAPABILITY_TOOL_NAME,
     description:
       '文件系统式能力读取原语。像 `cat` 一样读取指定路径工具的完整参数 schema。' +
-      '只有在调用 list_capabilities 发现具体工具路径后，才应调用此工具。' +
+      '只有在通过 grep 检索 /capabilities 或 list_capabilities 浏览目录、发现具体工具路径后，才应调用此工具。' +
       '读取成功后，该工具会自动加入当前会话的可用工具上下文。',
     inputSchema: {
       type: 'object',
@@ -269,7 +351,7 @@ export function createReadCapabilityTool(
       properties: {
         path: {
           type: 'string',
-          description: '工具完整路径，例如 "/demo/query_products"、"/code/python"',
+          description: '工具完整路径，例如 "/code/sql"、"/code/python"',
         },
       },
     },
@@ -285,9 +367,9 @@ export function createReadCapabilityTool(
       // WebBridge 前端原生工具：不走后端 schema 接口，直接返回合成描述
       const webBridgeEntry = isWebBridgeAvailable() ? findWebBridgeCapabilityEntry(path) : undefined
       if (webBridgeEntry) {
-        const tool = (registry?.get(webBridgeEntry.name) as Tool | undefined) || webbridgeExecuteTool
-        if (registry && !registry.get(tool.name)) {
-          registry.register(tool as Tool<unknown, unknown>)
+        const tool = registry?.get(webBridgeEntry.name) as Tool | undefined
+        if (!tool) {
+          throw new Error(`浏览器能力尚未加载：${webBridgeEntry.name}`)
         }
         return {
           path,
@@ -298,31 +380,68 @@ export function createReadCapabilityTool(
         }
       }
 
-      const response = await toolApi.schema(path, defaultSystemCode)
+      const fetched = await fetchSchemaWithFolderFallback(path, defaultSystemCode)
+
+      // 目录误读：直接返回引导文本（非错误），模型一步自我纠正，瀑布流不留红色错误节点
+      if (fetched.kind === 'folderGuide') {
+        return fetched.guide
+      }
+      const response = fetched.schema
+
+      // 只读环境过滤（explore 子 Agent）：写/破坏性工具不注册，给模型明确的"未加载"引导。
+      // name 置空使 agenticLoop 不会把它计入已发现集合。
+      if (acceptTool && !acceptTool(response)) {
+        return {
+          path: response.path,
+          name: '',
+          description: response.description,
+          schemaText: '',
+          content: `能力 ${response.path}（${response.name}）是写/破坏性操作，当前环境为只读探索，未加载该工具。请改用只读查询类工具完成任务。`,
+        }
+      }
 
       // 将读取到的工具注册到前端镜像，使其在后续轮次可被注入上下文
       if (registry) {
-        const tool: Tool = {
-          name: response.name,
-          description: response.description,
-          inputSchema: response.parameters ?? {},
-          riskLevel: response.riskLevel ?? 'standard',
-          isReadOnly:
-            response.operationType === 'read' || response.riskLevel === 'read_only',
-          isConcurrencySafe: response.operationType === 'read',
-          isDestructive: response.riskLevel === 'destructive',
-          requiredPermissions: response.requiredPermissions,
-          maxResultSizeChars: response.maxResultSizeChars ?? 50000,
-          category: response.category,
-          deferred: false,
-          alwaysLoad: false,
-          tier: response.tier,
-          operationType: response.operationType,
-          approvalMode: response.approvalMode,
-          requiresApproval: response.requiresApproval,
-          idempotent: response.idempotent,
+        // 已有同名工具时保留其前端附加面（2026-08-31 审批链根治）：
+        // applyBackendToolOverrides 在目录加载后为 run_command 等工具挂了动态
+        // checkPermissions/riskLevel/isReadOnly——裸注册同名条目会把这些全部
+        // 冲掉（目录闸失效、审批卡不弹、命令直达后端硬拒的实测根因）。
+        // 此处只更新目录元数据与发现状态（deferred→可见），前端附加面不动。
+        const existing = registry.get(response.name)
+        if (existing) {
+          existing.description = response.description
+          existing.inputSchema = response.parameters ?? {}
+          existing.deferred = false
+          existing.alwaysLoad = false
+          existing.tier = response.tier
+          existing.operationType = response.operationType
+          existing.approvalMode = response.approvalMode
+          existing.requiresApproval = response.requiresApproval
+          existing.idempotent = response.idempotent
+          existing.maxResultSizeChars = response.maxResultSizeChars ?? existing.maxResultSizeChars
+        } else {
+          const tool: Tool = {
+            name: response.name,
+            description: response.description,
+            inputSchema: response.parameters ?? {},
+            riskLevel: response.riskLevel ?? 'standard',
+            isReadOnly:
+              response.operationType === 'read' || response.riskLevel === 'read_only',
+            isConcurrencySafe: response.operationType === 'read',
+            isDestructive: response.riskLevel === 'destructive',
+            requiredPermissions: response.requiredPermissions,
+            maxResultSizeChars: response.maxResultSizeChars ?? 50000,
+            category: response.category,
+            deferred: false,
+            alwaysLoad: false,
+            tier: response.tier,
+            operationType: response.operationType,
+            approvalMode: response.approvalMode,
+            requiresApproval: response.requiresApproval,
+            idempotent: response.idempotent,
+          }
+          registry.register(tool)
         }
-        registry.register(tool)
       }
 
       return {

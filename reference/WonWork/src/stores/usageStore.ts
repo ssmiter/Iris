@@ -3,16 +3,6 @@ import { usageApi } from '@/api/usageApi'
 import type { UsageRecordDto } from '@/types/mescli'
 
 interface UsageState {
-  /** 累计当日 Token（输入） */
-  todayTokensIn: number
-  /** 累计当日 Token（输出） */
-  todayTokensOut: number
-  /** 累计当日工作流运行次数 */
-  todayWorkflowRuns: number
-  /** 累计当日 WebBridge 操作次数 */
-  todayWebbridgeActions: number
-  /** 累计当日 API 调用次数 */
-  todayApiCalls: number
   /** 待上报缓存 */
   pendingRecords: UsageRecordDto[]
   isReporting: boolean
@@ -21,22 +11,15 @@ interface UsageState {
   report: (records: UsageRecordDto | UsageRecordDto[]) => Promise<void>
   /** 立即批量上报待上报记录 */
   flush: () => Promise<void>
-  /** 增加本地累计（用于实时 UI 刷新） */
-  accumulate: (patch: Partial<Omit<UsageState, 'pendingRecords' | 'isReporting'>>) => void
-  /** 清空累计 */
-  reset: () => void
 }
 
 function todayDateString(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+// 2026-07-31 减法：当日累计计数器（todayTokensIn 等）与 accumulate/reset 删除——
+// 写入后全仓零读取（UI 不展示本地累计），store 只保留"上报队列"这一真实职责。
 export const useUsageStore = create<UsageState>()((set, get) => ({
-  todayTokensIn: 0,
-  todayTokensOut: 0,
-  todayWorkflowRuns: 0,
-  todayWebbridgeActions: 0,
-  todayApiCalls: 0,
   pendingRecords: [],
   isReporting: false,
 
@@ -44,15 +27,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     const list = Array.isArray(records) ? records : [records]
     if (list.length === 0) return
 
-    // 合并同日期记录到本地累计
-    set((s) => ({
-      todayTokensIn: s.todayTokensIn + list.reduce((sum, r) => sum + (r.tokensIn || 0), 0),
-      todayTokensOut: s.todayTokensOut + list.reduce((sum, r) => sum + (r.tokensOut || 0), 0),
-      todayWorkflowRuns: s.todayWorkflowRuns + list.reduce((sum, r) => sum + (r.workflowRuns || 0), 0),
-      todayWebbridgeActions: s.todayWebbridgeActions + list.reduce((sum, r) => sum + (r.webbridgeActions || 0), 0),
-      todayApiCalls: s.todayApiCalls + list.reduce((sum, r) => sum + (r.apiCalls || 0), 0),
-      pendingRecords: [...s.pendingRecords, ...list],
-    }))
+    set((s) => ({ pendingRecords: [...s.pendingRecords, ...list] }))
 
     // 尝试立即上报；失败时由 pendingRecords 缓存，下次 flush 重试
     await get().flush()
@@ -71,27 +46,6 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       set({ isReporting: false })
       console.warn('Usage report failed:', err)
     }
-  },
-
-  accumulate: (patch) => {
-    set((s) => ({
-      todayTokensIn: s.todayTokensIn + (patch.todayTokensIn || 0),
-      todayTokensOut: s.todayTokensOut + (patch.todayTokensOut || 0),
-      todayWorkflowRuns: s.todayWorkflowRuns + (patch.todayWorkflowRuns || 0),
-      todayWebbridgeActions: s.todayWebbridgeActions + (patch.todayWebbridgeActions || 0),
-      todayApiCalls: s.todayApiCalls + (patch.todayApiCalls || 0),
-    }))
-  },
-
-  reset: () => {
-    set({
-      todayTokensIn: 0,
-      todayTokensOut: 0,
-      todayWorkflowRuns: 0,
-      todayWebbridgeActions: 0,
-      todayApiCalls: 0,
-      pendingRecords: [],
-    })
   },
 }))
 

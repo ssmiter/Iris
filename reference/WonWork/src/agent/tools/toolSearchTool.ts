@@ -61,7 +61,7 @@ const DEFAULT_LIMIT = 5
 const MAX_LIMIT = 50
 
 /**
- * 后端使用 PascalCase 的 enum 名（DomainOperation / Primitive / Admin / Workflow），
+ * 后端使用 PascalCase 的 enum 名（DomainOperation / Primitive / Admin），
  * 而前端 schema 对模型暴露 snake_case。调用 /api/tools/search 前需要转换。
  */
 function toBackendTier(tier: ToolTier): string {
@@ -72,8 +72,6 @@ function toBackendTier(tier: ToolTier): string {
       return 'Primitive'
     case 'admin':
       return 'Admin'
-    case 'workflow':
-      return 'Workflow'
     default:
       return tier
   }
@@ -106,7 +104,7 @@ export function createToolSearchTool(options: ToolSearchOptions = {}): Tool<Tool
           description: '允许返回的工具层级，默认包含 domain_operation 和 primitive',
           items: {
             type: 'string',
-            enum: ['domain_operation', 'primitive', 'admin', 'workflow'],
+            enum: ['domain_operation', 'primitive', 'admin'],
           },
         },
         category: {

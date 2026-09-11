@@ -28,8 +28,6 @@ export interface TurnState {
   turnId: string
   phase: 'active' | 'settled' | 'stopped' | 'failed'
   nodes: RenderNode[]
-  /** segFlowed[i] 为 true 当 nodes[i-1] 已终态（done/error/cancelled） */
-  segFlowed: boolean[]
   /** v4.0: 多轮摘要 answer 内容（保留旧字段兼容，取最后一轮的 answer） */
   answerContent: string
   answerStatus: 'idle' | 'streaming' | 'done' | 'error' | 'stopped'
@@ -169,14 +167,10 @@ function project(log: readonly RenderEvent[]): TurnState {
   const rounds = buildRounds(ctx)
   const answers = buildAnswers(ctx)
 
-  // 计算 segFlowed：前序节点为终态 → 当前节点来路段"已流过"
-  const segFlowed = computeSegFlowed(ctx.nodes)
-
   return {
     turnId: ctx.turnId,
     phase: ctx.phase,
     nodes: ctx.nodes,
-    segFlowed,
     answerContent: ctx.answerContent,
     answerStatus: ctx.answerStatus,
     supplements: [...ctx.supplements],
@@ -355,8 +349,8 @@ function applyNodeDelta(ctx: ProjectionCtx, ev: RenderEvent & { type: 'node.delt
     if (ev.groupId != null && !node.groupId) {
       node.groupId = ev.groupId
     }
-    // 状态转换通道（queued→running）
-    if (ev.status != null && (node.status === 'queued' || node.status === 'running')) {
+    // 状态转换通道（running→done/error 等）
+    if (ev.status != null && node.status === 'running') {
       node.status = ev.status
     }
   }
@@ -461,11 +455,15 @@ function applyAttentionRequest(ctx: ProjectionCtx, ev: RenderEvent & { type: 'at
     toolName: attn.toolName,
     prompt: attn.prompt,
     options: attn.options,
+    optionHints: attn.optionHints,
     toolCallId: attn.toolCallId,
     startedAt: ev.ts,
   }
-  ctx.nodes.push(node)
-  ctx.nodeMap.set(node.id, node)
+  // 必须走 upsertNode：新节点要注册进当前 round 的 nodeIds，
+  // 否则节点只在扁平 nodes 数组里，按 round 渲染的瀑布永远看不到这张卡
+  // （2026-08-04 ask_user clarify 卡"挂起但不上屏"根因——审批卡同一 bug，
+  // 只是浮动审批对话框一直在兜底所以没暴露）。
+  upsertNode(ctx, node)
 }
 
 function applyAttentionResolve(ctx: ProjectionCtx, ev: RenderEvent & { type: 'attention.resolve' }): void {
@@ -473,6 +471,8 @@ function applyAttentionResolve(ctx: ProjectionCtx, ev: RenderEvent & { type: 'at
   if (!node || node.type !== 'attention') return
   node.status = ev.result
   node.durationMs = ev.ts - node.startedAt
+  // 决策留痕：拒绝理由/超时说明随终态落卡（此前 value 被丢弃）
+  if (ev.value) node.resolutionNote = ev.value
 }
 
 function applyAnswerDelta(ctx: ProjectionCtx, ev: RenderEvent & { type: 'answer.delta' }): void {
@@ -579,7 +579,7 @@ function settleAllRunning(ctx: ProjectionCtx, settledAt?: number): void {
       node.status = 'done'
       if (settledAt != null) node.durationMs = settledAt - node.startedAt
     }
-    if (node.type === 'tool' && (node.status === 'running' || node.status === 'queued')) {
+    if (node.type === 'tool' && node.status === 'running') {
       node.status = 'done'
       if (settledAt != null) node.durationMs = settledAt - node.startedAt
     }
@@ -612,7 +612,7 @@ function applyTurnAbort(ctx: ProjectionCtx, ev: RenderEvent & { type: 'turn.abor
     if (node.type === 'thinking' && node.status === 'running') {
       node.status = 'done'
     }
-    if (node.type === 'tool' && (node.status === 'running' || node.status === 'queued')) {
+    if (node.type === 'tool' && node.status === 'running') {
       node.status = 'cancelled'
       node.summary = '用户已中断'
     }
@@ -729,14 +729,6 @@ function isSettled(node: RenderNode): boolean {
   return true
 }
 
-function computeSegFlowed(nodes: RenderNode[]): boolean[] {
-  const result: boolean[] = new Array(nodes.length).fill(false)
-  for (let i = 1; i < nodes.length; i++) {
-    result[i] = isSettled(nodes[i - 1])
-  }
-  return result
-}
-
 // ── 导出 ──────────────────────────────────────────────────
 
-export { project, isSettled, computeSegFlowed }
+export { project, isSettled }

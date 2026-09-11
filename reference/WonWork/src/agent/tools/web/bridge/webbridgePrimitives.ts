@@ -129,7 +129,7 @@ export async function writeArtifact(
 
 export function assertConnected(): void {
   if (!webBridgeClient.isConnected) {
-    throw new Error('WebBridge daemon 未连接，无法执行浏览器自动化')
+    throw new Error('浏览器未连接，无法执行网页操作')
   }
 }
 
@@ -148,7 +148,7 @@ export async function sendBrowserAction(
 
   const result = await useWebBridgeStore.getState().sendAction(action)
   if (!result) {
-    throw new WebBridgeActionError('WebBridge action 未返回结果', 'unknown')
+    throw new WebBridgeActionError('浏览器操作未返回结果', 'unknown')
   }
   if (!result.success) {
     throw new WebBridgeActionError(
@@ -226,7 +226,7 @@ export function buildLocateScript(target: string, maxCandidates = 5, variants?: 
       if (el.id) return '#' + cssEscape(el.id)
       const tag = el.tagName.toLowerCase()
       if (el.className && typeof el.className === 'string') {
-        const classes = el.className.split(/\\s+/).filter(Boolean).filter(c => !/^\\d/.test(c)).slice(0, 3)
+        const classes = el.className.split(/\s+/).filter(Boolean).filter(c => !/^\d/.test(c)).slice(0, 3)
         if (classes.length > 0) {
           return tag + '.' + classes.map(cssEscape).join('.')
         }

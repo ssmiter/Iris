@@ -1,3 +1,7 @@
+import { type RetryOptions, defaultShouldRetry } from '@/utils/retry'
+import type { ModelClientStreamCallbacks } from './modelClient'
+import { StreamIdleError } from './modelErrors'
+
 /**
  * 可重试的流式请求执行器。
  *
@@ -10,10 +14,6 @@
  * - 一旦已经发出过 chunk，就不再重试整个流，避免内容重复
  * - 非流式兜底只执行一次，失败时直接抛错给上层
  */
-
-import { type RetryOptions, defaultShouldRetry } from '@/utils/retry'
-import type { ModelClientStreamCallbacks } from './modelClient'
-import { StreamIdleError } from './modelErrors'
 
 export interface StreamAttempt {
   /** 中断本次尝试 */

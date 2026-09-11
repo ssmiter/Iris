@@ -11,14 +11,20 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -28,6 +34,7 @@ import java.util.function.BooleanSupplier;
 public class WorkspaceFileMutationService {
 
     private static final long MAX_EDIT_BYTES = 4L * 1024 * 1024;
+    private static final int MAX_RECURSIVE_DELETE_ENTRIES = 10_000;
 
     private final WorkspacePathGuard pathGuard;
     private final WorkspaceFileService fileService;
@@ -382,6 +389,53 @@ public class WorkspaceFileMutationService {
                             + target.logicalPath()
             );
         }
+    }
+
+    /**
+     * 用户在文件面板明确确认后的目录删除。先固定待删除快照并完整计数，避免
+     * 删除到一半才因预算耗尽而留下半棵树；walkFileTree 默认不跟随符号链接。
+     */
+    public int deleteDirectoryRecursively(TargetState target) throws IOException {
+        requireKind(target, ResourceKind.DIRECTORY);
+        requireVersion(target, target.version());
+        if (!target.exists()) return 0;
+
+        List<Path> entries = new ArrayList<>();
+        Files.walkFileTree(target.physicalPath(), new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                entries.add(dir);
+                if (entries.size() > MAX_RECURSIVE_DELETE_ENTRIES) {
+                    throw new ToolRuntimeException(
+                            "workspace_recursive_delete_too_large",
+                            "目录内容超过 " + MAX_RECURSIVE_DELETE_ENTRIES
+                                    + " 个条目，Iris 不会一次性递归删除："
+                                    + target.logicalPath());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                entries.add(file);
+                if (entries.size() > MAX_RECURSIVE_DELETE_ENTRIES) {
+                    throw new ToolRuntimeException(
+                            "workspace_recursive_delete_too_large",
+                            "目录内容超过 " + MAX_RECURSIVE_DELETE_ENTRIES
+                                    + " 个条目，Iris 不会一次性递归删除："
+                                    + target.logicalPath());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        // 子项先于父目录删除；快照之外后来出现的内容会让根目录删除失败，保持 fail-close。
+        entries.sort(Comparator.comparingInt(Path::getNameCount).reversed());
+        int deleted = 0;
+        for (Path entry : entries) {
+            if (Files.deleteIfExists(entry)) deleted++;
+        }
+        return deleted;
     }
 
     public void requireEmptyDirectory(TargetState target) throws IOException {

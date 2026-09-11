@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS iris_conversation (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     -- 归档只是从列表收起，历史照常完整保留（不变量 1）；恢复时清空回 NULL。
-    archived_at TEXT
+    archived_at TEXT,
+    task_state TEXT,
+    project_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_branch (
@@ -50,6 +52,7 @@ CREATE TABLE IF NOT EXISTS message (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     client_request_id TEXT,
+    extras_json TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
     FOREIGN KEY (branch_id) REFERENCES conversation_branch(branch_id)
@@ -809,7 +812,8 @@ CREATE TABLE IF NOT EXISTS tool_execution (
     UNIQUE (conversation_id, tool_call_id),
     FOREIGN KEY (conversation_id) REFERENCES iris_conversation(conversation_id),
     FOREIGN KEY (turn_id) REFERENCES conversation_turn(turn_id),
-    FOREIGN KEY (run_id) REFERENCES agent_run(run_id)
+    -- 前端 Runtime 拥有的执行事实；后端工具运行不再要求旧 agent_run 投影。
+    FOREIGN KEY (run_id) REFERENCES client_run(run_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tool_execution_run
@@ -1376,6 +1380,36 @@ CREATE TABLE IF NOT EXISTS cron_execution (
 CREATE INDEX IF NOT EXISTS idx_cron_execution_task
     ON cron_execution(task_id, fired_at);
 
+-- WonWork 契约态 /api/cron 的权威 DTO（description/executionMode/payload/
+-- staleAfterDays/stalePolicy/nextRunAt 等前端拥有字段）。cron_task 仍是
+-- CronScheduleLauncher 到点建会话的执行真相；此表为契约读面，写时双写两表。
+CREATE TABLE IF NOT EXISTS cron_schedule_config (
+    task_id TEXT PRIMARY KEY,
+    dto_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES cron_task(task_id)
+);
+
+-- 单用户本地的 provider 覆写层（对齐 WonWork userconfig）：yml 配置目录
+-- 之上的用户改动落这里。apiKey 仅经此表持久化，不回显到 /api/config/providers。
+CREATE TABLE IF NOT EXISTS user_config (
+    provider TEXT PRIMARY KEY,
+    model TEXT,
+    base_url TEXT,
+    api_key TEXT,
+    is_enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+
+-- 快捷指令收藏（WonWork /api/favorite 契约）。单用户本地，省略 userId/systemCode 分区。
+CREATE TABLE IF NOT EXISTS favorite (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- 进程级小设置的单键存储（docs/21 §7.1）：当前只放 model.active_profile
 -- （运行时切换的模型 profile），避免为单值新建表。
 CREATE TABLE IF NOT EXISTS app_setting (
@@ -1383,3 +1417,27 @@ CREATE TABLE IF NOT EXISTS app_setting (
     setting_value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- 前端 Agent Runtime 的运行身份占位事实表（docs/44、docs/46）。
+-- Run 由前端 Runtime 拥有；后端只持久化身份占位供历史读模型 join，
+-- 不写 agent_run 运行投影。列与 ConversationRepository.insertClientRun 一致。
+CREATE TABLE IF NOT EXISTS client_run (
+    run_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    turn_id TEXT,
+    parent_run_id TEXT,
+    root_run_id TEXT,
+    owner TEXT NOT NULL DEFAULT 'frontend',
+    purpose TEXT,
+    phase TEXT NOT NULL DEFAULT 'active',
+    budget_json TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    started_at TEXT,
+    ended_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_run_conversation
+    ON client_run(conversation_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_client_run_turn
+    ON client_run(turn_id);

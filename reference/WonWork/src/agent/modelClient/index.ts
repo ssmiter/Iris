@@ -8,6 +8,7 @@ import {
 import { createOpenAIModelClient } from './openaiModelClient'
 import { createAnthropicModelClient } from './anthropicModelClient'
 import { createLocalModelClient } from './localModelClient'
+import { ArkDevProxyTransport } from '@/agent/transport/transport'
 
 // 注册云端 OpenAI 兼容 Provider
 registerModelClient('openai', (baseUrl) => createOpenAIModelClient('openai', baseUrl))
@@ -20,6 +21,14 @@ registerModelClient('spark', (baseUrl) => createOpenAIModelClient('spark', baseU
 registerModelClient('hunyuan', (baseUrl) => createOpenAIModelClient('hunyuan', baseUrl))
 registerModelClient('doubao', (baseUrl) => createOpenAIModelClient('doubao', baseUrl))
 registerModelClient('ernie', (baseUrl) => createOpenAIModelClient('ernie', baseUrl))
+registerModelClient('ark-code-latest', (baseUrl) =>
+  createOpenAIModelClient('ark-code-latest', baseUrl, {
+    transport:
+      import.meta.env.DEV && import.meta.env.VITE_USE_BACKEND_API !== 'true'
+        ? new ArkDevProxyTransport()
+        : undefined,
+  })
+)
 registerModelClient('custom', (baseUrl) => createOpenAIModelClient('custom', baseUrl))
 
 // 注册 Anthropic 兼容 Provider

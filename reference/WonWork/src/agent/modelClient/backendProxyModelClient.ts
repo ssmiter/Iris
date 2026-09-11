@@ -1,19 +1,8 @@
-/**
- * 后端代理 ModelClient（MESCLI-Online 前端循环 / MESCLI-Local Anthropic 兼容 Provider）。
- *
- * 当后端能力清单开启 `frontend_loop_online` 时，MESCLI-Online 不再走后端
- * `/api/chat/stream-sse`（后端驱动工具执行），而是走 `/api/chat/proxy`：
- * - 后端仅作为 LLM 流代理，不执行工具；
- * - 前端 Agentic 循环本地执行工具并将结果回灌结果，与 Standalone/MESCLI-Local 一致。
- *
- * 此外，MESCLI-Local 的 Anthropic 兼容 Provider（Kimi Code / Claude）在浏览器生产包中
- * 直接跨域会被 CORS 拦截，也通过此后端代理转发。
- */
-
 import type { ModelClient, ModelClientRequest, ModelClientStreamCallbacks } from './modelClient'
 import type { ChatRequest, StreamChunk } from '@/types/mescli'
 import { API_BASE, getAuthHeaders } from '@/api/client'
 import { ensureToolResultPairing } from './messageNormalizer'
+import { createRetryableStream, type StreamAttempt } from './retryingStream'
 import {
   createSSEParserState,
   parseSSEBuffer,
@@ -21,7 +10,22 @@ import {
   parseSSEData,
 } from '@/utils/sseParser'
 import type { SSEEvent } from '@/utils/sseParser'
-import { createUsageTrackingCallbacks } from './anthropicModelClient'
+import { createUsageTrackingCallbacks } from './usageTracking'
+import { isProfileProviderId, profileIdFromProviderId } from '@/types/providerProfile'
+import { useProviderProfileStore } from '@/stores/providerProfileStore'
+
+/**
+ * 供应商预设库（2026-09-07）：profile:<id> 只活在前端。后端 ProviderFactory
+ * 不认识该命名空间，发往 /api/chat/proxy 前翻译成它认识的 id——
+ * anthropic 格式 → 'anthropic'，openai 格式 → 'custom'（两者的 model/baseUrl/apiKey
+ * 本就全部由请求携带，ProviderFactory 对 custom 的注释明示这一点）。
+ */
+export function resolveProxyProviderId(providerId: string): string {
+  if (!isProfileProviderId(providerId)) return providerId
+  const profileId = profileIdFromProviderId(providerId)
+  const profile = useProviderProfileStore.getState().profiles.find((p) => p.id === profileId)
+  return profile?.meta.apiFormat === 'anthropic' ? 'anthropic' : 'custom'
+}
 
 /**
  * 后端代理 ModelClient（MESCLI-Online 前端循环 / MESCLI-Local Anthropic 兼容 Provider）。
@@ -39,7 +43,7 @@ export const BACKEND_PROXY_PROVIDER_ID = 'backend-proxy'
 
 function buildChatRequest(request: ModelClientRequest): ChatRequest {
   return {
-    provider: request.provider,
+    provider: resolveProxyProviderId(request.provider),
     model: request.model,
     apiKey: request.apiKey,
     baseUrl: request.baseUrl,
@@ -56,6 +60,8 @@ function buildChatRequest(request: ModelClientRequest): ChatRequest {
     // 透传 maxTokens：此前 ChatRequest 没有该字段，前端值被静默丢弃，
     // 后端 KimiCodeProvider 固定 16384，长 thinking 场景下最终回答被截断。
     maxTokens: request.maxTokens,
+    // 思考强度档位透传（2026-09-04，maxTokens 同款先例）
+    effort: request.effort,
     // 内部 pipeline（如 compactSummaryPipeline）不应写入历史记录
     saveToHistory: request.saveToHistory ?? false,
   }
@@ -80,23 +86,48 @@ export function createBackendProxyModelClient(): ModelClient {
     streamChat(request: ModelClientRequest, userCallbacks: ModelClientStreamCallbacks): () => void {
       const url = `${API_BASE}/api/chat/proxy`
       const chatRequest = buildChatRequest(request)
-      const abortController = new AbortController()
-      let aborted = false
-      // 是否收到过任何实质内容（content/reasoning/tool_call）。
-      // 用于"空流"检测：后端在 Key 缺失/上游异常时会只发 error chunk + [DONE]，
-      // 若 error 再被吞掉，用户看到的就是"秒回已完成、没有任何回答"（2026-07-24 根因）。
-      let receivedAnyPayload = false
 
       // 与 anthropicModelClient/openaiModelClient 对齐的用量上报：
       // 代理路径此前完全不上报 usage，设置页与上下文水位统计恒为 0。
       const { callbacks } = createUsageTrackingCallbacks(request, userCallbacks)
 
-      const abort = (): void => {
-        aborted = true
-        abortController.abort()
-      }
+      // 接入 retryingStream（2026-08-31 打断治理）：四个 client 此前唯独本通道裸
+      // reader.read()——无 idle 看守、无重试，后端代理流悬挂时前端只能干等
+      // （"打断后过几分钟才恢复"的另一半根因）。现在 90s 无 chunk 主动中断当前尝试：
+      // 未发出任何 chunk → 按策略重试；已发出 → 上抛 StreamIdleError 由 loop 呈现，
+      // 不重复内容（idle 阈值与 claude-code STREAM_IDLE_TIMEOUT_MS 同值 90s）。
+      // 无非流式兜底：/api/chat/proxy 语义即 SSE 流代理，重试已覆盖挂起场景。
+      const retryable = createRetryableStream({
+        retryOptions: { maxRetries: 2, baseDelayMs: 500, maxDelayMs: 8000 },
+        callbacks,
+        start: (streamCallbacks) =>
+          executeProxyStream({ url, chatRequest, callbacks: streamCallbacks }),
+      })
 
-      const handleEvent = (event: SSEEvent): boolean => {
+      return retryable.abort
+    },
+  }
+}
+
+function executeProxyStream(options: {
+  url: string
+  chatRequest: ChatRequest
+  callbacks: ModelClientStreamCallbacks
+}): StreamAttempt {
+  const { url, chatRequest, callbacks } = options
+  const abortController = new AbortController()
+  let aborted = false
+  // 是否收到过任何实质内容（content/reasoning/tool_call）。
+  // 用于"空流"检测：后端在 Key 缺失/上游异常时会只发 error chunk + [DONE]，
+  // 若 error 再被吞掉，用户看到的就是"秒回已完成、没有任何回答"（2026-07-24 根因）。
+  let receivedAnyPayload = false
+
+  const abort = (): void => {
+    aborted = true
+    abortController.abort()
+  }
+
+  const handleEvent = (event: SSEEvent): boolean => {
         if (event.event === 'error') {
           const parsed = parseSSEData(event.data)
           const msg =
@@ -157,65 +188,66 @@ export function createBackendProxyModelClient(): ModelClient {
         return false
       }
 
-      ;(async () => {
-        try {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...getAuthHeaders(),
-            },
-            body: JSON.stringify(chatRequest),
-            signal: abortController.signal,
-            credentials: 'include',
-          })
+  const finished = (async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify(chatRequest),
+        signal: abortController.signal,
+        credentials: 'include',
+      })
 
-          if (!response.ok) {
-            const text = await response.text()
-            throw new Error(getFriendlyErrorMessage(response, text))
-          }
+      if (!response.ok) {
+        const text = await response.text()
+        // HTTP 层失败上抛给重试层：5xx/429 按策略退避重试，4xx 不重试，
+        // 最终 onError 文案与原实现一致（getFriendlyErrorMessage）
+        throw new Error(getFriendlyErrorMessage(response, text))
+      }
 
-          const reader = response.body?.getReader()
-          if (!reader) {
-            throw new Error('Response body is null')
-          }
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('Response body is null')
+      }
 
-          const decoder = new TextDecoder()
-          const sseState = createSSEParserState()
+      const decoder = new TextDecoder()
+      const sseState = createSSEParserState()
 
-          while (!aborted) {
-            const { done, value } = await reader.read()
-            if (done) break
-            const text = decoder.decode(value, { stream: true })
-            const events = parseSSEBuffer(sseState, text)
-            for (const event of events) {
-              if (handleEvent(event)) return
-            }
-          }
-
-          const remaining = flushSSEBuffer(sseState)
-          for (const event of remaining) {
-            if (handleEvent(event)) return
-          }
-
-          // 上游正常关闭但没有显式 [DONE]：同样套用空流兜底
-          if (!aborted) {
-            if (!receivedAnyPayload) {
-              callbacks.onError(
-                new Error('模型未返回任何内容。可能是 API Key 未配置/已过期、模型名不正确，或后端代理异常——请检查设置页对应 Provider 的配置')
-              )
-            } else {
-              callbacks.onDone()
-            }
-          }
-        } catch (err) {
-          if (!aborted && (err as Error).name !== 'AbortError') {
-            callbacks.onError(err instanceof Error ? err : new Error(String(err)))
-          }
+      while (!aborted) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const text = decoder.decode(value, { stream: true })
+        const events = parseSSEBuffer(sseState, text)
+        for (const event of events) {
+          if (handleEvent(event)) return
         }
-      })()
+      }
 
-      return abort
-    },
-  }
+      const remaining = flushSSEBuffer(sseState)
+      for (const event of remaining) {
+        if (handleEvent(event)) return
+      }
+
+      // 上游正常关闭但没有显式 [DONE]：同样套用空流兜底
+      if (!aborted) {
+        if (!receivedAnyPayload) {
+          callbacks.onError(
+            new Error('模型未返回任何内容。可能是 API Key 未配置/已过期、模型名不正确，或后端代理异常——请检查设置页对应 Provider 的配置')
+          )
+        } else {
+          callbacks.onDone()
+        }
+      }
+    } catch (err) {
+      // 中断（用户停止 / idle 看守）与传输异常一律上抛：retryingStream 区分处置——
+      // 外层 aborted（用户停止）静默；idle 超时转 StreamIdleError 按策略重试；
+      // 不可重试错误经 run() 尾部 onError 呈现，文案与原实现一致。
+      throw err
+    }
+  })()
+
+  return { abort, finished }
 }

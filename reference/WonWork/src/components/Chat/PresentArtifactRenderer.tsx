@@ -15,8 +15,8 @@ export const PresentArtifactRenderer = memo(function PresentArtifactRenderer({
   const artifact = extractArtifact(message.structuredData)
   if (!artifact) {
     return (
-      <div className="mt-2 rounded-xl border border-surface-200 bg-white p-4">
-        <pre className="text-xs text-surface-600 overflow-auto">{JSON.stringify(message.structuredData, null, 2)}</pre>
+      <div className="mt-2 rounded-xl border border-[var(--wf-line)] bg-[var(--wf-card-bg)] p-4">
+        <pre className="text-xs text-[var(--wf-sub)] overflow-auto">{JSON.stringify(message.structuredData, null, 2)}</pre>
       </div>
     )
   }

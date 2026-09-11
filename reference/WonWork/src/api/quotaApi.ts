@@ -1,4 +1,4 @@
-import { isPreview, isOnline } from '@/config/product'
+import { isOnline } from '@/config/product'
 import { fetchApi } from './client'
 import { websiteCloudApi } from './websiteCloudApi'
 import type { CloudPlan } from '@/types/tokenhub'
@@ -70,25 +70,7 @@ const onlineQuotaApi = {
   },
 }
 
-// ==================== Preview 实现（BYOK 无限制） ====================
-
-const previewQuotaApi = {
-  getUsage: async (): Promise<QuotaUsage> => {
-    return {
-      planId: 'preview-byok',
-      planName: 'Preview BYOK',
-      totalTokens: -1,
-      usedTokens: 0,
-      remainingTokens: -1,
-    }
-  },
-
-  getPlans: async (): Promise<TokenPlan[]> => {
-    return []
-  },
-}
-
-export const quotaApi = isPreview ? previewQuotaApi : isOnline ? onlineQuotaApi : mescliQuotaApi
+export const quotaApi = isOnline ? onlineQuotaApi : mescliQuotaApi
 
 /** 判断额度是否为无限制 */
 export function isUnlimitedQuota(quota: QuotaUsage | null | undefined): boolean {

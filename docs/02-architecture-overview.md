@@ -1,5 +1,10 @@
 # 02 · Iris 总体架构
 
+> **2026-09 架构更新：**本文中“核心 Loop 只在后端”的旧决策已由
+> [44 · 前端 Agent Runtime 与客观后端](44-frontend-agent-runtime-rearchitecture.md)
+> 替代。领域对象、能力目录、Tool Runtime、Workspace 与历史不变量继续有效；模型请求、
+> Agent 编排和即时投影的 owner 改为 Frontend Runtime。
+
 > 状态：大陆 0 / 节点 0.4 架构定稿候选
 >
 > 目标：把瀑布流前端、Agentic 内核、Pipeline、工具平台、工作区、沙箱和 WebBridge 熔铸为一套可实现、可恢复、不过度设计的个人 AI 助手架构。
@@ -819,7 +824,7 @@ code + category + userMessage + traceId + source
 本文的 Run、Candidate Recipe 和 Capability Exposure 是长期语义边界，不要求 M0 一次实现完整管理面。M0 只需一个 root Agentic Run、可重放 Conversation Event 和能演进的数据引用；随后只实现 2～3 个 code-defined system Pipeline（如 title、compact、必要的 RAG），最多验证串行和一个明确只读 fan-out。通用 DSL、任意 DAG/join、自动轨迹挖掘、发布后台和公共 Pipeline authoring API 都后置。
 
 - 微服务、Redis、Kafka、分布式事务；
-- 前端 Agent Loop 或直连 provider；
+- 后端 Agent Loop；
 - 一个通用可视化 DAG 编辑器；
 - 自动从每次成功轨迹发布 Pipeline；
 - 关键词决定 Pipeline/Agentic；
@@ -831,9 +836,11 @@ code + category + userMessage + traceId + source
 
 ## 15. 架构决策
 
-### D02-01：核心 Loop 只在后端
+### D02-01：Frontend Runtime 是唯一 Agent Loop owner（2026-09 修订）
 
-前端只提交命令和渲染投影；删除 `/api/chat/proxy` 作为前端内核入口的设计。
+前端负责上下文、模型请求、续轮、子 Agent/Pipeline 编排和即时投影；后端负责历史事实、
+大规模能力目录、受控 Tool Runtime 与客观环境。后端可以提供透明模型传输网关，但不得
+组装 messages、选择 tools 或决定下一轮。详见 docs/44。
 
 ### D02-02：模块化单体优先
 

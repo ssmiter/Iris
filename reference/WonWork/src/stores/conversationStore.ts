@@ -3,8 +3,10 @@ import type { Conversation } from '@/types/chat'
 import { historyApi } from '@/api/client'
 import { viewStateDelete } from '@/api/viewState'
 import { useContextPanelStore } from '@/stores/contextPanelStore'
-import { useProjectStore } from '@/stores/projectStore'
-import { useConversationTitleStore } from '@/stores/conversationTitleStore'
+import { removeConversation as removeConversationTitleState } from '@/stores/conversationTitleStore'
+import { rebuildTaskSessionFamilies } from '@/agent/permissionRules'
+import { abortMainLoopRun, dropViewStash } from '@/stores/mainLoopRuns'
+import { removeConversationBrowsePath } from '@/stores/browseDirectoryStore'
 import { getErrorMessage } from '@/utils/error'
 import { toast } from 'sonner'
 
@@ -18,6 +20,12 @@ interface ConversationState {
   createConversation: (title?: string) => Promise<number | null>
   deleteConversation: (conversationId: number) => Promise<void>
   updateConversationTitle: (conversationId: number, title: string) => Promise<void>
+  /**
+   * 项目目录绑定（2026-09-09 文件浏览二阶段）：path=null 解绑。
+   * 唯一写入口：浏览面板「设为项目目录」、模型 set_browse_directory、localStorage 旧指针迁移都走这里。
+   * 返回是否成功；不写 toast（调用方按场景自行提示，迁移场景需静默）。
+   */
+  setConversationProject: (conversationId: number, path: string | null) => Promise<boolean>
   setCurrentConversation: (conversationId: number | null) => void
   getCurrentConversation: () => Conversation | undefined
 }
@@ -34,6 +42,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       const conversations = await historyApi.getConversations()
       set({ conversations, conversationsLoaded: true })
+      // 权限规则家族映射随会话列表重建（任务会话本对话档规则以父会话为键，刷新后内存映射丢失）
+      rebuildTaskSessionFamilies(conversations)
     } catch (err) {
       const msg = getErrorMessage(err, '加载会话失败')
       toast.error(msg)
@@ -73,6 +83,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   deleteConversation: async (conversationId) => {
     try {
+      // 2026-09-04 会话后台化：先停掉该会话可能仍在后台运行的主 loop 并清 stash——
+      // 否则 run 的落库目标已删除，persist 会把消息写进已删会话（且视图再无入口）
+      await abortMainLoopRun(conversationId)
+      dropViewStash(conversationId)
       await historyApi.deleteConversation(conversationId)
       // 清理对话视图状态（分支快照/压缩边界，v9.4）
       void viewStateDelete(`branches-${conversationId}`).catch(() => {})
@@ -82,11 +96,28 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentConversationId:
           state.currentConversationId === conversationId ? null : state.currentConversationId,
       }))
-      useConversationTitleStore.getState().removeConversation(conversationId)
+      removeConversationTitleState(conversationId)
+      // 浏览面板的项目目录指针（conversationPaths 条目）随会话删除清理——只删映射，
+      // 目录/产物本身在磁盘上不动
+      removeConversationBrowsePath(conversationId)
       // Note: clearing messages when deleting current conversation is handled by the Sidebar component
     } catch (err) {
       const msg = getErrorMessage(err, '删除会话失败')
       toast.error(msg)
+    }
+  },
+
+  setConversationProject: async (conversationId, path) => {
+    try {
+      await historyApi.setConversationProject(conversationId, path)
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId ? { ...c, projectPath: path ?? undefined } : c
+        ),
+      }))
+      return true
+    } catch {
+      return false
     }
   },
 
@@ -110,8 +141,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     if (previousId !== conversationId && conversationId !== null) {
       useContextPanelStore.getState().clearTasks()
-      // S4 项目模式：会话切换时幂等断言该会话绑定的项目根（D1）
-      useProjectStore.getState().assertProjectForConversation(conversationId)
     }
   },
 

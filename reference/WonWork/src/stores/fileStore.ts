@@ -75,7 +75,7 @@ async function uploadWorkspaceFiles(
       const result: WorkspaceUploadResult = await workspaceApi.upload(file)
       const isImage = file.type.startsWith('image/')
 
-      // 图片仍需在当前轮以 base64 形式被模型"看见"
+      // 图片仍需在当前轮以 base64 形式被模型“看见”
       let imageData = ''
       let previewUrl: string | undefined
       if (isImage) {

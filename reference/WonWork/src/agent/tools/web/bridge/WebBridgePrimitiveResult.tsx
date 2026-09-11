@@ -3,6 +3,7 @@ import { Monitor, ChevronDown, ChevronRight, ImageIcon, CheckCircle2, XCircle } 
 import type { ToolResultRendererProps } from '@/agent/tools/toolRenderRegistry'
 import { readFile } from '@/services/fileSystem'
 import { getWorkspaceAdapter } from '@/services/workspaceAdapters'
+import { workspaceApi } from '@/api/client'
 
 interface CandidateItem {
   selector: string
@@ -34,8 +35,7 @@ function ScreenshotPreview({ path }: { path: string }) {
 
   useEffect(() => {
     if (isBackend) {
-      // buildArtifactPath 返回的路径本身已以 /workspace 开头，不要双写
-      setDataUrl(path.startsWith('/workspace') ? path : `/workspace${path}`)
+      setDataUrl(workspaceApi.previewUrl(path))
       return
     }
 
@@ -98,7 +98,7 @@ export function WebBridgePrimitiveResult({ message }: ToolResultRendererProps) {
   if (!isWebBridgePrimitiveData(data)) {
     return (
       <div className="mt-2 rounded-xl border border-surface-200 bg-white p-3 text-xs text-surface-500">
-        WebBridge 操作结果
+        浏览器操作结果
       </div>
     )
   }
@@ -114,7 +114,7 @@ export function WebBridgePrimitiveResult({ message }: ToolResultRendererProps) {
         <div className="flex items-center gap-2">
           <Monitor size={14} className="text-primary-500" />
           <span className="text-xs font-medium text-surface-700 truncate">
-            WebBridge：{title || '浏览器操作'}
+            浏览器：{title || '网页操作'}
           </span>
         </div>
         <div className="flex items-center gap-2">

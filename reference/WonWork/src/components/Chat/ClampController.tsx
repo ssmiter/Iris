@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface ClampControllerProps {
   children: ReactNode
@@ -16,6 +17,7 @@ interface ClampControllerProps {
  * 不再需要 setTimeout + scrollHeight 的猜测式截断。
  */
 export function ClampController({ children, maxHeight = 152, className }: ClampControllerProps) {
+  const { t } = useTranslation()
   const innerRef = useRef<HTMLDivElement>(null)
   const [clampable, setClampable] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -44,7 +46,7 @@ export function ClampController({ children, maxHeight = 152, className }: ClampC
           className="wf-more-btn"
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? '收起 ▴' : '展开全部 ▾'}
+          {expanded ? t('chat.clampController.collapse') : t('chat.clampController.expandAll')}
         </button>
       )}
     </div>

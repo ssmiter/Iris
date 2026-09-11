@@ -389,7 +389,7 @@ export function applyOps(nodes: readonly RenderNode[], ops: readonly RenderOp[])
           if (node.type === 'thinking' && node.status === 'running') {
             return { ...node, status: 'done' as const }
           }
-          if (node.type === 'tool' && (node.status === 'running' || node.status === 'queued')) {
+          if (node.type === 'tool' && node.status === 'running') {
             return { ...node, status: 'done' as const }
           }
           if (node.type === 'answer' && node.status === 'streaming') {
@@ -413,7 +413,7 @@ export function applyOps(nodes: readonly RenderNode[], ops: readonly RenderOp[])
           if (node.type === 'thinking' && node.status === 'running') {
             return { ...node, status: 'done' as const }
           }
-          if (node.type === 'tool' && (node.status === 'running' || node.status === 'queued')) {
+          if (node.type === 'tool' && node.status === 'running') {
             return { ...node, status: 'cancelled' as const, summary: '用户已中断' }
           }
           if (node.type === 'answer' && node.status === 'streaming') {

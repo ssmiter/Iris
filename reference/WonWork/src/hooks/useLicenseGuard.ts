@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useLicenseStore } from '@/stores/licenseStore'
 import { useQuotaStore } from '@/stores/quotaStore'
 import { useRuntimeConfigStore } from '@/stores/runtimeConfigStore'
-import { supportsLicenseActivation, isPreview } from '@/config/product'
+import { supportsLicenseActivation } from '@/config/product'
 
 export interface LicenseGuardResult {
   /** 当前功能是否可用 */
@@ -17,7 +17,6 @@ export interface LicenseGuardResult {
  * 统一功能守卫 Hook
  *
  * 根据当前 License 状态、套餐 features 与额度判断是否允许使用某项功能。
- * Preview 模式默认放行所有功能（用于开发演示）。
  */
 export function useLicenseGuard(feature: string): LicenseGuardResult {
   const license = useLicenseStore((s) => s.license)
@@ -25,8 +24,8 @@ export function useLicenseGuard(feature: string): LicenseGuardResult {
   const byokEnabled = useRuntimeConfigStore((s) => s.config.byokEnabled)
 
   return useMemo((): LicenseGuardResult => {
-    // Preview 模式 / BYOK 测试构建：跳过 License 校验，默认放行
-    if (isPreview || byokEnabled) {
+    // BYOK 测试构建跳过 License 校验，默认放行
+    if (byokEnabled) {
       return { allowed: true }
     }
 
@@ -95,7 +94,7 @@ export function useLicenseGuard(feature: string): LicenseGuardResult {
 export function useHasValidLicense(): boolean {
   const license = useLicenseStore((s) => s.license)
   const byokEnabled = useRuntimeConfigStore((s) => s.config.byokEnabled)
-  if (isPreview || byokEnabled || !supportsLicenseActivation) return true
+  if (byokEnabled || !supportsLicenseActivation) return true
   return license?.status === 'active' || license?.status === 'trial'
 }
 
@@ -105,6 +104,6 @@ export function useHasValidLicense(): boolean {
 export function useLicenseFeature(feature: string): boolean {
   const license = useLicenseStore((s) => s.license)
   const byokEnabled = useRuntimeConfigStore((s) => s.config.byokEnabled)
-  if (isPreview || byokEnabled || !supportsLicenseActivation) return true
+  if (byokEnabled || !supportsLicenseActivation) return true
   return (license?.features || []).includes(feature)
 }

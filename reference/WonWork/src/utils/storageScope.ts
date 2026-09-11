@@ -48,7 +48,7 @@ export function getStorageScope(): StorageScope {
  * - Standalone 与 MESCLI / Website-Online 必须隔离，避免独立预览版与本机其他模式共用数据。
  * - MESCLI 内部不再按 local/online 拆分数据库。local 与 online 只是能力状态
  *   （能否访问 MES 业务数据），不是数据分区键。拆分会导致用户切换 online 后
- *   历史会话、配置全部"消失"。
+ *   历史会话、配置全部“消失”。
  * - Website-Online（官网账号体系）使用独立数据库，避免与 MESCLI 数据混用。
  */
 export function getIndexedDBName(): string {

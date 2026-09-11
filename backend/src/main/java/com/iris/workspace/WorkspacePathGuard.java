@@ -202,6 +202,25 @@ public class WorkspacePathGuard {
                     "工作区路径不能为空"
             );
         }
+        // WonWork 前端以虚拟根前缀 "/workspace" 指代工作区根（"/workspace" 即根、
+        // "/workspace/notes" 即 notes/）。Iris 后端只认相对路径，在此剥离该前缀，
+        // 兼容前端路径习惯——语义安全（/workspace 本就指向工作区根内）。
+        if (rawPath.equals("/workspace") || rawPath.equals("workspace")) {
+            rawPath = "";
+        } else if (rawPath.startsWith("/workspace/")) {
+            rawPath = rawPath.substring("/workspace/".length());
+        } else if (rawPath.startsWith("workspace/")) {
+            rawPath = rawPath.substring("workspace/".length());
+        }
+        if (rawPath.isBlank()) {
+            if (allowRoot) {
+                return "";
+            }
+            throw new ToolRuntimeException(
+                    "invalid_workspace_path",
+                    "工作区路径不能为空"
+            );
+        }
         if (rawPath.indexOf('\0') >= 0
                 || rawPath.indexOf(':') >= 0
                 || rawPath.startsWith("/")

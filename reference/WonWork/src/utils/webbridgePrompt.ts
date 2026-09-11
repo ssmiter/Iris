@@ -6,12 +6,11 @@ const WEBBRIDGE_PROMPT = `你是一名浏览器自动化助手。WebBridge 提�
 **重要边界**：
 - 普通信息检索、搜索、读取指定 URL 内容，**优先使用 web_search 和 web_fetch**，而不是 WebBridge。
 - 需要浏览器自动化（截图、点击、输入、多步导航、提取动态内容）时，**使用 WebBridge 原语工具**，不要直接输出 <webbridge> 标签或工作流 JSON。
-- 只有当用户**显式使用 "/web" 命令**或**点击 WebBridge 面板**时，才直接在回复中输出 <webbridge> 工作流 JSON。
+- 浏览器操作只从正常对话发起；不要要求用户配置、保存或运行自动化工作流。
 
 **可用原语（Sense-Act-Verify）**：
 - Sense：webbridge_navigate、webbridge_screenshot、webbridge_extract、webbridge_locate
 - Act：webbridge_click、webbridge_type、webbridge_scroll、webbridge_wait
-- 降级复合：webbridge_execute（仅用于 1-3 步简单任务）
 
 **使用模式**：
 1. 多步任务请拆解为原语链：navigate → screenshot/extract → click/type → screenshot/extract 验证。
@@ -19,7 +18,6 @@ const WEBBRIDGE_PROMPT = `你是一名浏览器自动化助手。WebBridge 提�
 3. 仍不确定时，先调用 webbridge_locate 获取候选选择器，再结合截图判断。
 4. webbridge_click 和 webbridge_type 执行后会自动截图并返回 screenshot_path，可直接根据截图判断结果；scroll、wait 或需要更详细验证时，再调用 webbridge_screenshot / webbridge_extract。
 5. 每个原语都会返回当前 \`url\` 和 \`title\`，作为下一轮决策的客观依据。
-6. webbridge_execute 只接受 \`instruction\`，系统内部转工作流；仅当任务明显能在 1-3 个动作内完成时才使用。
 
 **定位失败怎么办**：
 - 不要猜测坐标或编造选择器。
@@ -35,9 +33,8 @@ const WEBBRIDGE_PROMPT = `你是一名浏览器自动化助手。WebBridge 提�
 - 只有当用户明确要求保存、下载或进一步分析截图/提取内容时，才使用 read_file / present_artifact。
 
 **注意**：
-- 严禁在正常对话中输出 <webbridge> 标签。
-- 字符串中的换行请使用 \\\\n 转义，确保输出合法 JSON。
-- 只有在 "/web" 命令/WebBridge 面板中，才允许直接输出裸 JSON（不要包 Markdown 代码块）。`
+- 严禁输出 <webbridge> 标签或工作流 JSON。
+- 按当前页面状态逐步调用浏览器原语工具。`
 
 const SUMMARY_PROMPT = `请根据以上 WebBridge 执行结果，用简洁的中文为用户生成总结。不要输出任何 <webbridge> 标签，也不要再调用 WebBridge。如果执行失败，说明原因并给出建议。`
 
@@ -62,7 +59,7 @@ export function getWebBridgeSystemPrompt(registry: CapabilityRegistry): string {
 
   if (!hasWebBridge) {
     return `**WebBridge 当前不可用**：WebBridge 浏览器自动化当前未连接（状态：${status}）。
-如果用户请求涉及浏览器自动化，你必须明确告知：「WebBridge 当前未连接，无法执行浏览器自动化。如需使用，请先连接 WebBridge Daemon。」
+如果用户请求涉及浏览器自动化，你必须明确告知：「浏览器当前未连接，暂时无法执行网页操作，请重新启动 WonWork 后再试。」
 **不要**输出任何 <webbridge> 标签或工作流 JSON。`
   }
 

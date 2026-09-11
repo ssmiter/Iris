@@ -1,5 +1,9 @@
 # 07 · 前端架构：瀑布流对话
 
+> **2026-09 更新：**Frontend 不再只是后端投影器。独立 `agent/runtime` 拥有模型协议、
+> Agent Loop 与活动 Run 的即时投影；React 与 Zustand 仍不是 Loop。持久历史仍以后端
+> SQLite 为真相。完整职责见 [docs/44](44-frontend-agent-runtime-rearchitecture.md)。
+
 > 状态：大陆 0 / 节点 0.1 设计稿
 >
 > 范围：只定义 Iris 前端如何接收、组织和呈现一次长期 Agent 协作，不实现组件。

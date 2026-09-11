@@ -50,15 +50,15 @@ export const UnknownArtifactCard = memo(function UnknownArtifactCard({
   return (
     <ArtifactCardShell>
       <div className="flex items-start gap-3">
-        <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg bg-surface-100', iconInfo.colorClass)}>
+        <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--wf-mono-bg)]', iconInfo.colorClass)}>
           <iconInfo.icon size={20} />
         </div>
         <div className="flex-1 min-w-0 space-y-1">
           {artifact.caption && (
-            <p className="text-base font-semibold text-surface-900 leading-snug">{artifact.caption}</p>
+            <p className="text-base font-semibold text-[var(--wf-ink)] leading-snug">{artifact.caption}</p>
           )}
-          <p className="text-sm text-surface-700 truncate" title={fileName}>{fileName}</p>
-          <div className="text-xs text-surface-500">
+          <p className="text-sm text-[var(--wf-sub)] truncate" title={fileName}>{fileName}</p>
+          <div className="text-xs text-[var(--wf-mut)]">
             <span className="inline-block mr-3">{iconInfo.label}</span>
             <span className="inline-block mr-3">{artifact.mimeType}</span>
             {artifact.sizeBytes > 0 && <span>{formatFileSize(artifact.sizeBytes)}</span>}
@@ -73,7 +73,7 @@ export const UnknownArtifactCard = memo(function UnknownArtifactCard({
           rel="noopener noreferrer"
           className={cn(
             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-            'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+            'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
           )}
         >
           <Download size={14} />
@@ -84,7 +84,7 @@ export const UnknownArtifactCard = memo(function UnknownArtifactCard({
           onClick={handleCopyPath}
           className={cn(
             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium',
-            'bg-surface-100 text-surface-700 hover:bg-surface-200 transition-colors'
+            'bg-[var(--wf-mono-bg)] text-[var(--wf-sub)] hover:bg-[var(--wf-hover)] transition-colors'
           )}
         >
           <Copy size={14} />

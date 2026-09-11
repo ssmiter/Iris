@@ -11,43 +11,77 @@ export function normalizeMarkdown(content: string): string {
  * LLM 有时会把表格行、标题、列表全部输出在同一行内（例如 `文本|表头|...||行|...|###标题- 列表`），
  * 导致 ReactMarkdown 无法识别 block 元素。该函数会把这种被压缩的结构拆回标准 Markdown，
  * 同时保留已经格式良好的内容。
+ *
+ * 围栏保护：代码块（```）内和行内代码（`...`）段一律不改动——
+ * 否则 `a || b` 会被规则 3 拆成 `a |\n| b`、`##temp` 会被规则 1 插空格，显示出来的代码是错的。
  */
 export function formatStreamingMarkdown(content: string): string {
-  let text = content.replace(/\r\n/g, '\n')
+  const text = content.replace(/\r\n/g, '\n')
+  const lines = text.split('\n')
+  const result: string[] = []
+  let inCodeBlock = false
 
-  // 1. 修复标题 # 后没空格（包括行内）
-  text = text.replace(/(?<![#\n])(#{1,6})([^#\s])/g, '$1 $2')
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock
+      result.push(line)
+      continue
+    }
+    if (inCodeBlock) {
+      result.push(line)
+      continue
+    }
+    result.push(applyStreamingRulesToLine(line))
+  }
+
+  // 7. 补表格前空行、标题空格（fixStreamingMarkdownSyntax 自身已有围栏跟踪）
+  return fixStreamingMarkdownSyntax(result.join('\n'))
+}
+
+/** 对单行应用结构修复规则 1-6；行内代码段（`...`）原样保留 */
+function applyStreamingRulesToLine(line: string): string {
+  const segments = line.split(/(`[^`\n]*`)/)
+  return segments
+    .map((segment, index) => (index % 2 === 1 ? segment : applyStreamingRulesToPlain(segment)))
+    .join('')
+}
+
+function applyStreamingRulesToPlain(text: string): string {
+  // 0. 保护整行表格行：以 | 开头并以 | 结尾且至少包含两个 | 的行，
+  //    只拆分被压缩到同一行的表格边界 ||，避免内部的 # / - 被规则 1-6 误改。
+  const trimmed = text.trim()
+  const pipeCount = (trimmed.match(/\|/g) ?? []).length
+  if (trimmed.startsWith('|') && trimmed.endsWith('|') && pipeCount >= 2) {
+    return text.replace(/\|\|/g, '|\n|')
+  }
+
+  let out = text
+
+  // 1. 修复行内标题 # 后没空格（行首标题由 fixStreamingMarkdownSyntax 兜底）
+  out = out.replace(/(?<![#\n])(#{1,6})([^#\s])/g, '$1 $2')
 
   // 2. 把被压缩到同一行的标题与前面表格行/列表项分开：|###标题、)###标题、）###标题
-  text = text.replace(/(\|)\s*(#{1,6}\s)/g, '$1\n\n$2')
-  text = text.replace(/([)）])\s*(#{1,6}\s)/g, '$1\n\n$2')
+  //    排除标题后同一行还出现 | 的情况（如 | # | 表格单元格）
+  out = out.replace(/(\|)\s*(#{1,6}\s)(?![^\n]*\|)/g, '$1\n\n$2')
+  out = out.replace(/([)）])\s*(#{1,6}\s)/g, '$1\n\n$2')
 
   // 3. 拆分表格行边界：|| -> |\n|
-  text = text.replace(/\|\|/g, '|\n|')
+  out = out.replace(/\|\|/g, '|\n|')
 
   // 4. 把同一行内混合的表格行与文本/标题拆到不同行
-  const lines = text.split('\n')
-  const splitLines: string[] = []
   const tableRowPattern = /(\|[^|\n]*(?:\|[^|\n]*)+\|)/g
-  for (const line of lines) {
-    if (line.includes('|') && tableRowPattern.test(line)) {
-      tableRowPattern.lastIndex = 0
-      const segments = line.split(tableRowPattern).filter(Boolean)
-      splitLines.push(...segments)
-    } else {
-      splitLines.push(line)
-    }
+  if (out.includes('|') && tableRowPattern.test(out)) {
+    tableRowPattern.lastIndex = 0
+    out = out.split(tableRowPattern).filter(Boolean).join('\n')
   }
-  text = splitLines.join('\n')
 
   // 5. 在标题和列表之间插入换行
-  text = text.replace(/(#{1,6}\s[^\n]+?)(\n?-\s[^\n]+)/g, '$1\n$2')
+  out = out.replace(/(#{1,6}\s[^\n]+?)(\n?-\s[^\n]+)/g, '$1\n$2')
 
   // 6. 在两个列表项之间插入换行
-  text = text.replace(/(-\s[^\n]+?)(-\s[^\n]+)/g, '$1\n$2')
+  out = out.replace(/(-\s[^\n]+?)(-\s[^\n]+)/g, '$1\n$2')
 
-  // 7. 补表格前空行、标题空格
-  return fixStreamingMarkdownSyntax(text)
+  return out
 }
 
 /**

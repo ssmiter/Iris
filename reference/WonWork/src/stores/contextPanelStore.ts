@@ -2,18 +2,15 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TaskStatus, TaskProgressItem } from '@/types/mescli'
 
-interface ContextFile {
-  id: string
-  name: string
-  type: string
-  size: number
-  downloadUrl?: string
-}
-
+/**
+ * 右侧面板状态。
+ * 2026-07-31：contextFiles 移出本 store——它是 attachments+messages 的纯派生数据，
+ * 现由 ContextFilesPanel 内 useMemo 直接推导，不再经"effect 同步 + persist 落盘"绕路
+ * （原实现每次流式 flush 都会重写派生副本并写 localStorage）。
+ */
 interface ContextPanelState {
   isOpen: boolean
   tasks: TaskProgressItem[]
-  contextFiles: ContextFile[]
 
   togglePanel: () => void
   setOpen: (open: boolean) => void
@@ -21,8 +18,6 @@ interface ContextPanelState {
   updateTaskStatus: (id: string, status: TaskStatus) => void
   addTask: (task: Omit<TaskProgressItem, 'id'>) => void
   clearTasks: () => void
-  setContextFiles: (files: ContextFile[]) => void
-  removeContextFile: (id: string) => void
 }
 
 export const useContextPanelStore = create<ContextPanelState>()(
@@ -30,7 +25,6 @@ export const useContextPanelStore = create<ContextPanelState>()(
     (set) => ({
       isOpen: false,
       tasks: [],
-      contextFiles: [],
 
       togglePanel: () => set((s) => ({ isOpen: !s.isOpen })),
       setOpen: (open) => set({ isOpen: open }),
@@ -45,16 +39,10 @@ export const useContextPanelStore = create<ContextPanelState>()(
           tasks: [...s.tasks, { ...task, id: `task-${s.tasks.length}-${Date.now()}` }],
         })),
       clearTasks: () => set({ tasks: [] }),
-
-      setContextFiles: (files) => set({ contextFiles: files }),
-      removeContextFile: (id) =>
-        set((s) => ({
-          contextFiles: s.contextFiles.filter((f) => f.id !== id),
-        })),
     }),
     {
       name: 'wonclaw-context-panel',
-      partialize: (state) => ({ isOpen: state.isOpen, contextFiles: state.contextFiles }),
+      partialize: (state) => ({ isOpen: state.isOpen }),
     }
   )
 )

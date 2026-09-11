@@ -70,9 +70,22 @@ export const webFetchTool = createTool<WebFetchOptions, WebFetchResult>({
       }
     )
 
+    // 2026-07-29 两点结构性修复：
+    // 1) 模型可见文本是 content（extractOutputText 优先 content 字段），cached_path 必须内嵌到
+    //    内容尾部，否则模型不知道去哪深读全文；
+    // 2) 软 404 识别：站点返回 200 但正文是"主题不存在"类错误页时显式标注，
+    //    避免模型把错误提示页当正文引用（保守启发式：标题命中，或正文极短且命中）
+    const soft404 =
+      /404|not\s*found|页面不存在|内容不存在|主题不存在|文章不存在|资源不存在/i.test(result.title ?? '') ||
+      (result.totalChars > 0 && result.totalChars < 300 && /不存在|not\s*found|404/i.test(result.content))
+
+    const notices = [`完整页面已缓存到 ${cachedPath}，可用 read_file（带 offset/limit 参数）深读全文`]
+    if (soft404) notices.push('⚠ 该页面疑似错误提示页（软 404：抓取成功但内容是无效提示），请核对后再引用')
+
     return {
       ...result,
-      summary,
+      content: `${result.content}\n\n[${notices.join('；')}]`,
+      summary: soft404 ? `${summary} ⚠ 疑似错误提示页（软 404），引用前请核对内容。` : summary,
       cached_path: cachedPath,
     }
   },

@@ -576,6 +576,7 @@ public class ToolRuntimeRepository {
                         rs.getString("tool_name"),
                         rs.getString("snapshot_hash"),
                         rs.getString("status"),
+                        rs.getString("risk_level"),
                         rs.getString("decision_key"),
                         rs.getLong("version"),
                         Instant.parse(rs.getString("expires_at"))
@@ -897,6 +898,7 @@ public class ToolRuntimeRepository {
             String toolName,
             String snapshotHash,
             String status,
+            String riskLevel,
             String decisionKey,
             long version,
             Instant expiresAt

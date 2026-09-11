@@ -1,51 +1,77 @@
 /**
- * 插件架构类型
- *
- * 参考 E:\code\WonWork\learn\05\plugin\plugin-overview.md
+ * 插件化架构类型定义（MVP）
+ * 插件包格式：ZIP + manifest.json
  */
 
-// ==================== 插件清单 ====================
+export type PluginContributionType = 'skill' | 'webbridge_action'
 
-export interface PluginManifest {
+export interface PluginContribution {
+  type: PluginContributionType
   id: string
   name: string
-  version: string
-  description: string
-  author: string
-  /** 入口 JS 文件路径（相对于插件根目录） */
-  entry: string
-  /** 所需权限列表 */
-  permissions?: string[]
-  /** 最小引擎版本 */
-  minEngineVersion?: string
-  /** 图标 URL */
-  iconUrl?: string
-  /** 主页 URL */
-  homepageUrl?: string
-  /** 配置 schema（JSON Schema） */
-  configSchema?: Record<string, unknown>
-  /** 功能清单 */
-  capabilities?: string[]
+  description?: string
+  // 类型相关的元数据
+  metadata?: Record<string, unknown>
 }
 
-// ==================== 已安装插件 ====================
+export interface PluginManifest {
+  /** 插件唯一标识 */
+  id: string
+  /** 插件名称 */
+  name: string
+  /** 版本号，遵循 semver */
+  version: string
+  /** 插件描述 */
+  description?: string
+  /** 作者 */
+  author?: string
+  /** 兼容的 WonWork 核心版本范围 */
+  targetCoreVersion?: string
+  /** 依赖的其他插件 */
+  dependencies?: Record<string, string>
+  /** 插件贡献的能力清单 */
+  contributions?: PluginContribution[]
+  /** 入口文件（动态加载前端组件时使用） */
+  entry?: string
+  /** 图标 */
+  icon?: string
+}
+
+export interface PluginPackage {
+  manifest: PluginManifest
+  /** ZIP 包原始二进制数据 */
+  blob: Blob
+}
 
 export interface InstalledPlugin {
+  id: string
   manifest: PluginManifest
-  /** 安装路径 */
-  installPath: string
-  /** 是否启用 */
-  enabled: boolean
-  /** 用户自定义配置 */
-  config?: Record<string, unknown>
+  isEnabled: boolean
   installedAt: string
   updatedAt: string
+  packageHash?: string
 }
-
-// ==================== 校验结果 ====================
 
 export interface PluginValidationResult {
   valid: boolean
   errors: string[]
-  warnings: string[]
+}
+
+export function validateManifest(manifest: Partial<PluginManifest>): PluginValidationResult {
+  const errors: string[] = []
+  if (!manifest.id) errors.push('缺少插件 ID')
+  if (!manifest.name) errors.push('缺少插件名称')
+  if (!manifest.version) errors.push('缺少插件版本')
+  if (manifest.contributions) {
+    const seenIds = new Set<string>()
+    for (const c of manifest.contributions) {
+      if (!c.id) errors.push('贡献项缺少 ID')
+      if (!c.type) errors.push(`贡献项 ${c.id || '?'} 缺少类型`)
+      if (c.id && seenIds.has(`${c.type}:${c.id}`)) {
+        errors.push(`重复的贡献项：${c.type}:${c.id}`)
+      }
+      if (c.id) seenIds.add(`${c.type}:${c.id}`)
+    }
+  }
+  return { valid: errors.length === 0, errors }
 }

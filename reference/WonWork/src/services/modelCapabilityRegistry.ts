@@ -31,6 +31,8 @@ export interface ModelCapability {
   userOverride?: number
   /** 同源学习的输出上限 */
   maxOutputTokens?: number
+  /** 用户显式选择的思考强度档位（仅对声明支持的模型生效） */
+  userEffort?: EffortLevel
   source: CapabilitySource
   updatedAt: number
 }
@@ -270,4 +272,100 @@ export function resolveMaxOutputTokens(provider: string, model: string): number 
 /** 查询某模型的完整能力记录（设置页展示用） */
 export function getCapability(provider: string, model: string): ModelCapability | undefined {
   return findCapability(provider, model)
+}
+
+// ===== 思考强度（effort）档位：语义照抄 claude-code src/utils/effort.ts =====
+
+export type EffortLevel = 'low' | 'medium' | 'high' | 'max'
+
+/** Claude/DeepSeek/OpenAI 风格档位（CC EFFORT_LEVELS 精简集，xhigh 暂不开放） */
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high']
+
+/** Kimi K3 / GLM 5.2+ 风格档位：无 medium、有 max（官方枚举 low/high/max，发 medium 必 400） */
+const TRI_EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'high', 'max']
+
+/**
+ * 模型是否支持 effort 参数（照抄 claude-code modelSupportsEffort 的判定哲学）：
+ * **能力按模型家族判定、与协议链解耦**（2026-09-07/08 定版）——
+ * 家族规则按「代际」写（主版本号比较），同家族新代发布自动覆盖、不用追名单；
+ * 新家族进名单前必须核实官方文档（K2 实证：不支持 effort 的模型同发
+ * thinking+reasoning_effort 必 400）。未知模型一律 false（CC 对 3P 未知默认不声明）。
+ * wire 参数名由 apiFormat 决定（anthropic→output_config.effort / openai→reasoning_effort）。
+ * effort 只在用户显式选档时才发送（默认不发送），上游不认时报错可见，
+ * 用户改回"自动"即恢复不发送。
+ */
+export function modelSupportsEffort(provider: string, model: string): boolean {
+  return isEffortCapableModelName(model.toLowerCase())
+}
+
+/** 该模型可展示的档位集：Kimi K3+/GLM 5.2+ 官方枚举是 low/high/max，其余用三档经典集 */
+export function effortLevelsForModel(model: string): readonly EffortLevel[] {
+  const m = model.toLowerCase()
+  if (matchKimiGen(m) >= 3 || matchGlmGen(m) !== null) return TRI_EFFORT_LEVELS
+  return EFFORT_LEVELS
+}
+
+/** 模型家族能力（链无关）：各家族官宣支持 effort 的代际并集（2026-09-08 核） */
+function isEffortCapableModelName(m: string): boolean {
+  // Claude：effort 自 4.6 代引入（opus-4-6/4-7、sonnet-4-6，CC 白名单同款），5 代起延续；
+  // haiku 排除（CC 同款）。fable-5 等新命名由「主版本 ≥5」规则自动覆盖
+  const claude = m.match(/(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?/)
+  if (claude) {
+    const major = +claude[1]
+    const minor = +(claude[2] ?? 0)
+    if (major >= 5 || (major === 4 && minor >= 6)) return true
+  }
+  // DeepSeek：V4 代起官宣 reasoning_effort（含 flash；CC 白名单的 deepseek-v4-pro 同款）
+  const ds = m.match(/deepseek-v(\d+)/)
+  if (ds && +ds[1] >= 4) return true
+  if (m.includes('deepseek-chat')) return true
+  // OpenAI 推理系：o1/o3/o4 前缀 + gpt-5 代起
+  if (/^(?:o1|o3|o4)/.test(m)) return true
+  const gpt = m.match(/gpt-(\d+)/)
+  if (gpt && +gpt[1] >= 5) return true
+  // Kimi：K3 代起官宣 reasoning_effort（low/high/max）；K2 只有 thinking 开关无档位
+  if (matchKimiGen(m) >= 3) return true
+  // GLM：5.2 代起官宣 reasoning_effort（5.2 全七档/5.3 三档且 thinking 恒开）；
+  // 5.1 不支持 max 档，为保单一档位集不列入
+  if (matchGlmGen(m) !== null) return true
+  return false
+}
+
+/** Kimi 代际：kimi-k3 / k3 / k3-256k 等裸写都算；k 前须非字母数字防误命中，无命中返 0 */
+function matchKimiGen(m: string): number {
+  const k = m.match(/(?:^|[^a-z0-9])k(\d+)(?:[-.]|$)/)
+  return k ? +k[1] : 0
+}
+
+/** GLM 代际：≥5.2 返回版本标记，否则 null（5.1 缺 max 档不入列，见上注） */
+function matchGlmGen(m: string): true | null {
+  const glm = m.match(/glm-(\d+)(?:\.(\d+))?/)
+  if (!glm) return null
+  const major = +glm[1]
+  const minor = +(glm[2] ?? 0)
+  return major > 5 || (major === 5 && minor >= 2) ? true : null
+}
+
+/** 用户显式选择的档位（设置持久化；null=恢复默认不发送） */
+export function setUserEffort(provider: string, model: string, effort: EffortLevel | null): void {
+  const existing = findCapability(provider, model)
+  upsert({
+    id: model.toLowerCase(),
+    provider,
+    userEffort: effort ?? undefined,
+    source: existing?.source ?? 'guess',
+    updatedAt: Date.now(),
+  })
+}
+
+/**
+ * 解析本次请求应发送的档位：仅当模型声明支持且用户显式选择过时返回，
+ * 否则 undefined（= 不发送 effort 参数，上游用默认 high——CC resolveAppliedEffort 同款语义）。
+ * 存储档位须在当前模型的档位集内（换模型后如 K3 无 medium，陈旧值自动回落"自动"）。
+ */
+export function resolveUserEffort(provider: string, model: string): EffortLevel | undefined {
+  if (!modelSupportsEffort(provider, model)) return undefined
+  const stored = findCapability(provider, model)?.userEffort
+  if (!stored) return undefined
+  return effortLevelsForModel(model).includes(stored) ? stored : undefined
 }

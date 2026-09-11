@@ -1,0 +1,32 @@
+.ww-kb-tool {
+  display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 11px;
+  border: 1px solid var(--wf-line); border-radius: 10px; background: var(--wf-card-bg);
+  box-shadow: none; color: var(--wf-ink); text-align: left;
+}
+.ww-kb-tool header, .ww-kb-tool footer { display: flex; align-items: center; gap: 6px; }
+.ww-kb-tool header svg { color: var(--wf-accent); }
+.ww-kb-tool header span { margin-left: auto; font-size: 10px; color: var(--wf-faint); }
+.ww-kb-tool footer { font-size: 10px; color: var(--wf-faint); }
+.ww-kb-tool-list { display: grid; gap: 4px; }
+.ww-kb-tool-citation {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--wf-bg);
+  color: var(--wf-ink); text-align: left; transition: border-color .16s ease, background .16s ease;
+}
+.ww-kb-tool-citation:hover { border-color: var(--wf-line); background: var(--wf-hover); }
+.ww-kb-tool-domain, .ww-kb-tool-domain.online {
+  padding: 3px 5px; border-radius: 5px;
+  background: color-mix(in srgb, var(--wf-accent) 10%, transparent); color: var(--wf-accent);
+  font: 650 8px/1.2 inherit; letter-spacing: .05em;
+}
+.ww-kb-tool-copy { display: grid; min-width: 0; flex: 1; }
+.ww-kb-tool-copy b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.ww-kb-tool-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wf-faint); font-size: 10px; }
+.ww-kb-tool-revision { display: flex; align-items: center; gap: 4px; color: var(--wf-mut); font-size: 9px; font-weight: 600; }
+.ww-kb-tool-warning { padding: 6px 8px; border-radius: 7px; background: var(--wf-hover); color: var(--wf-sub); font-size: 10px; }
+.ww-kb-tool-empty { padding: 8px; color: var(--wf-faint); font-size: 11px; }
+.ww-kb-tool-read { display: grid; grid-template-columns: auto 1fr auto; align-items: center; cursor: pointer; }
+.ww-kb-tool-read span { display: grid; }
+.ww-kb-tool-read b { font-size: 12px; }
+.ww-kb-tool-read small { color: var(--wf-faint); font-size: 10px; }
+@media (prefers-reduced-motion: reduce) { .ww-kb-tool-citation { transition: none; } }
