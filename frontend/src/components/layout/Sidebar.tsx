@@ -26,7 +26,6 @@ import {
   Wrench,
   Puzzle,
   Boxes,
-  BookOpenCheck,
   Sparkles,
   MoreHorizontal,
   Pencil,
@@ -60,7 +59,6 @@ const MORE_ITEMS = [
   // 【Iris 迁移 2026-09 禁用】客户工具包（mescli-packages）是 MES 业务页面，Iris 无此场景。
   // 骨架保留（页面/组件/API 未删），入口隐藏；恢复时取消下行注释。
   // { id: 'mescli-packages', labelKey: 'layout.sidebar.mescliPackages', icon: <Boxes size={18} />, feature: undefined },
-  { id: 'knowledge', labelKey: 'layout.sidebar.knowledge', icon: <BookOpenCheck size={18} />, feature: undefined, requiresKnowledge: true },
   // MCP 插件市场（2026-08-06）：不加 feature 字段恒可见，市场不可用（内网/standalone）时视图层自降级
   { id: 'mcp-market', labelKey: 'layout.sidebar.mcpMarket', icon: <Sparkles size={18} />, feature: undefined },
 ] as const
@@ -71,7 +69,6 @@ interface SidebarProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
   onOpenSettings: () => void
-  knowledgeEnabled: boolean
 }
 
 // ── Conversation context menu ──────────────────────────
@@ -261,7 +258,6 @@ function UserMenu({
               {moreItems.map((item) => (
                 <button
                   key={item.id}
-                  data-testid={item.id === 'knowledge' ? 'knowledge-account-menu-button' : undefined}
                   className="wf-umenu-row wf-press"
                   onClick={() => { onClose(); onNavigate(item.id) }}
                 >
@@ -442,7 +438,7 @@ function SearchPalette({
 
 // ── Sidebar ────────────────────────────────────────────
 
-export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse, onOpenSettings, knowledgeEnabled }: SidebarProps) {
+export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse, onOpenSettings }: SidebarProps) {
   const { t } = useTranslation()
   // 【Iris 2026-09】本地个人版恒为本地身份：无多身份徽标/副标题，展示固定本地用户
   const { user } = useAuthStore()
@@ -472,7 +468,6 @@ export function Sidebar({ activeView, onNavigate, isCollapsed, onToggleCollapse,
     }))
 
   const isMoreAvailable = (item: (typeof MORE_ITEMS)[number]): boolean => {
-    if ('requiresKnowledge' in item && item.requiresKnowledge && !knowledgeEnabled) return false
     // 【Iris】requiresMes 入口隐藏：Iris 无 MES 登录，企业数据项恒不可用
     if ('requiresMes' in item && item.requiresMes) return false
     if (isFeatureHidden(item.feature)) return false

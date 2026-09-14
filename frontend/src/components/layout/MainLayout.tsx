@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/utils'
 import { Sidebar } from './Sidebar'
@@ -20,6 +20,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useConversationStore } from '@/stores/conversationStore'
 import { ArtifactDock } from '@/components/chat/ArtifactDock'
 import { useArtifactDockStore } from '@/stores/artifactDockStore'
+
 import { BrowseDirectoryWindow } from '@/components/Browse/BrowseDirectoryWindow'
 import { useBrowseDirectoryStore } from '@/stores/browseDirectoryStore'
 import { MemoryDock } from '@/components/Memory/MemoryDock'
@@ -30,12 +31,9 @@ import { useCommercialNoticeStore } from '@/stores/commercialNoticeStore'
 import { usePermissionStore } from '@/stores/permissionStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useAdminStore } from '@/stores/adminStore'
-import { useKnowledgeNavigationStore } from '@/stores/knowledgeNavigationStore'
 import { useDevModeUnlock } from '@/hooks/useDevModeUnlock'
 import { FEATURE_FLAGS } from '@/config/product'
 import { Lock, AlertTriangle, Wrench } from 'lucide-react'
-
-const KnowledgeWorkspace = lazy(() => import('@/components/Knowledge/KnowledgeWorkspace'))
 
 const VIEW_FEATURES: Record<string, string | undefined> = {
   chat: FEATURE_FLAGS.chat,
@@ -54,9 +52,6 @@ export function MainLayout() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   // 【Iris 2026-09】LoginModal 与登录入口已随登录体系删除——本地个人版无登录态概念
   const [guardMessage, setGuardMessage] = useState<string | null>(null)
-  // 知识库后端未在 Iris 实现（/api/knowledge/* 一律 404）。功能整体关闭：
-  // 恒 false，启动不再探测 capabilities 端点，下游 Sidebar/ChatView 据此隐藏入口。
-  const knowledgeEnabled = false
   const permissions = usePermissionStore((s) => s.permissions)
   const commercialNotice = useCommercialNoticeStore((s) => s.notice)
   const dismissCommercialNotice = useCommercialNoticeStore((s) => s.dismiss)
@@ -203,10 +198,6 @@ export function MainLayout() {
       const { allowed, reason } = canNavigateTo(view)
       if (allowed) {
         setGuardMessage(null)
-        if (view === 'knowledge') {
-          const dock = useArtifactDockStore.getState()
-          if (dock.isOpen && !dock.currentArtifactId) dock.close()
-        }
         // 任何导航都收走廊（能力房全覆盖后，点侧栏"对话"是主要回家路径——
         // 此前 view==='chat' 分支不关，全覆盖后用户会被困在能力房只剩 Esc）
         useCorridorStore.getState().close()
@@ -218,11 +209,6 @@ export function MainLayout() {
     },
     [canNavigateTo, openSettings]
   )
-
-  const pendingKnowledgeCitation = useKnowledgeNavigationStore((state) => state.pendingCitation)
-  useEffect(() => {
-    if (pendingKnowledgeCitation && knowledgeEnabled) handleNavigate('knowledge')
-  }, [handleNavigate, knowledgeEnabled, pendingKnowledgeCitation])
 
   // 定时任务执行结果落库为会话 → 行内「查看结果」直达该会话（2026-08-08 闭环最后一步）。
   // 2026-09-04 会话后台化：detach/attach 取代 stopStreaming——切走不杀正在跑的 loop。
@@ -239,7 +225,7 @@ export function MainLayout() {
   const renderView = () => {
     switch (activeView) {
       case 'chat':
-        return <ChatView onNavigate={handleNavigate} knowledgeEnabled={knowledgeEnabled} />
+        return <ChatView onNavigate={handleNavigate} />
       case 'memory':
         return <MemoryManagerView />
       case 'agent-swarm':
@@ -252,12 +238,6 @@ export function MainLayout() {
         return <PluginManagerView />
       case 'mescli-packages':
         return <MescliPackageManagerView />
-      case 'knowledge':
-        return (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-slate-500">{t('layout.loadingKnowledgeWorkspace')}</div>}>
-            <KnowledgeWorkspace />
-          </Suspense>
-        )
       // 设置已迁覆盖层（SettingsOverlay），不再是 activeView 分支
       default:
         return <ChatView />
@@ -269,8 +249,8 @@ export function MainLayout() {
   // 元素身份不变则 reconciler 跳过整棵子树，走廊交互 render 保持 <1 帧。
   // ChatView 内部靠 store 订阅自更新，父级 memo 不影响其数据新鲜度。
   const chatElement = useMemo(
-    () => <ChatView onNavigate={handleNavigate} knowledgeEnabled={knowledgeEnabled} />,
-    [handleNavigate, knowledgeEnabled]
+    () => <ChatView onNavigate={handleNavigate} />,
+    [handleNavigate]
   )
 
   return (
@@ -281,7 +261,6 @@ export function MainLayout() {
         isCollapsed={isCollapsed}
         onToggleCollapse={() => setIsCollapsed(!isCollapsed)}
         onOpenSettings={openSettings}
-        knowledgeEnabled={knowledgeEnabled}
       />
       <main className="ww-app-main flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {guardMessage && (

@@ -11,7 +11,6 @@
  */
 
 import type { Message } from '@/types/mescli'
-import type { KnowledgeCapabilities, KnowledgeCollection, KnowledgeSourceDomain } from '@/types/knowledge'
 import type { FrontendToolRegistry } from '@/agent/toolRegistry'
 import type { CapabilityRegistry } from '@/utils/capabilityRegistry'
 import { getIdentityPrompt, getModeBoundaryTable, getModeMarketingPrompt } from '@/utils/identityPrompt'
@@ -39,7 +38,6 @@ export type SystemPromptSectionName =
   | 'marketing'
   | 'memory'
   | 'skill'
-  | 'knowledge'
   | 'admin_mode'
   | 'conventions'
 
@@ -367,54 +365,6 @@ export function buildWorkflowListingSection(
     role: 'system',
     content,
     section: 'skill',
-    priority: 8,
-  }
-}
-
-/**
- * 知识库清单（knowledge_index，2026-08-16，知识库 agent 流程融合第一步）
- *
- * 与 skill 层级 1 清单同款纪律：常驻 system 尾部，前缀缓存红线 = 逐字节稳定——
- * 按 (domain, id) 确定性排序、格式钉死、15 条封顶，内容只在知识库启停/增删库/改简介时变化（低频）。
- * 不在每轮 trailingMeta 重复注入的原因：知识库内容变更极少，缓存命中≈免费；
- * 且 system 段天然免疫 compact 摘要（首条消息注入会被压缩掉，故不采用）。
- * 未启用或无内容返回 null（不制造动态噪音，buildRecentFilesTailNote 同款纪律）。
- */
-export function buildKnowledgeIndexSection(
-  caps: KnowledgeCapabilities | null,
-  collections: Record<KnowledgeSourceDomain, KnowledgeCollection[]>
-): SystemPromptSection | null {
-  if (!caps?.enabled) return null
-  const MAX_LISTED = 15 // memory_index 同款封顶
-  const MAX_LINE_CHARS = 250 // skill 清单同款单行硬上限
-  const all = [
-    ...collections.local.map((c) => ({ c, domain: 'local' as const })),
-    ...(caps.onlineAvailable
-      ? collections.online.map((c) => ({ c, domain: 'online' as const }))
-      : []),
-  ].sort((a, b) =>
-    a.domain === b.domain ? a.c.id.localeCompare(b.c.id) : a.domain.localeCompare(b.domain)
-  )
-  if (all.length === 0) return null
-  const lines = all.slice(0, MAX_LISTED).map(({ c, domain }) => {
-    const label = domain === 'local' ? '本地' : '企业'
-    const desc = (c.description ?? '').replace(/\s+/g, ' ').trim() || '（无简介）'
-    const head = `- [${label}] ${c.name}（id: ${c.id.slice(0, 8)}）: `
-    const budget = Math.max(0, MAX_LINE_CHARS - head.length)
-    const text = desc.length > budget ? desc.slice(0, Math.max(0, budget - 1)) + '…' : desc
-    return head + text
-  })
-  const overflow = all.length - MAX_LISTED
-  const content = [
-    '## 知识库清单（knowledge_index）',
-    '可用知识库目录（是目录不是内容）：问题涉及某库资料时用 knowledge_search 检索、knowledge_read 按引用精读（延迟加载工具，先 read_capability 加载）；想浏览某库结构可 grep/list /knowledge 目录（只有元数据卡片）；引用纪律见「知识库」一节。用户可在知识库页维护资料。',
-    ...lines,
-    ...(overflow > 0 ? [`…另有 ${overflow} 个知识库未列出。`] : []),
-  ].join('\n')
-  return {
-    role: 'system',
-    content,
-    section: 'knowledge',
     priority: 8,
   }
 }

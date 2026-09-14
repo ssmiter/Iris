@@ -27,7 +27,6 @@ import { RightPanel } from './RightPanel'
 import { Portal } from '@/components/common/Portal'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { parseKnowledgeInvocation } from '@/components/Knowledge/knowledgeInvocation'
 import { toast } from 'sonner'
 import { showMemoryToast, dismissMemoryToast } from '@/components/Memory/MemoryToast'
 import { MemoryMote } from '@/components/Memory/MemoryMote'
@@ -46,7 +45,6 @@ import { openTaskConversation } from './TaskSessionCard'
 
 interface ChatViewProps {
   onNavigate?: (view: string) => void
-  knowledgeEnabled?: boolean
 }
 
 function providerDisplayName(t: TFunction, providerId: string): string {
@@ -104,7 +102,7 @@ async function probeProviderKey(provider: string): Promise<boolean> {
   }
 }
 
-export function ChatView({ onNavigate, knowledgeEnabled }: ChatViewProps) {
+export function ChatView({ onNavigate }: ChatViewProps) {
   const { t } = useTranslation()
   // R4: 按字段选择器订阅，避免整 store 变化触发 ChatView 重渲染
   const messages = useChatStore((s) => s.messages)
@@ -389,13 +387,7 @@ export function ChatView({ onNavigate, knowledgeEnabled }: ChatViewProps) {
 
   const handleSend = useCallback(
     (content: string, attachmentIds?: string[]) => {
-      const invocation = parseKnowledgeInvocation(content)
-      sendMessage(
-        invocation?.query ?? content,
-        attachmentIds,
-        // 知识检索范围只由显式 /knowledge 斜杠命令指定（2026-08-17：输入框镜头按钮已撤）
-        invocation?.scope ? { knowledgeScope: invocation.scope } : undefined,
-      )
+      sendMessage(content, attachmentIds)
     },
     [sendMessage]
   )

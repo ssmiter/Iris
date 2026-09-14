@@ -37,17 +37,6 @@ export function bumpCommandFreq(name: string): void {
 /** 内置命令表（Skill 命令动态生成，见 getAllCommands） */
 export const BUILTIN_COMMANDS: SlashCommand[] = [
   {
-    name: 'knowledge',
-    aliases: ['知识库', '知识'],
-    description: i18n.t('chat.commands.knowledge.description'),
-    argumentHint: '<问题>',
-    group: 'builtin',
-    type: 'prompt',
-    // InputArea/ChatView converts this command to a scoped normal user request
-    // before the generic slash dispatcher is reached.
-    run: async () => undefined,
-  },
-  {
     name: 'compact',
     description: i18n.t('chat.commands.compact.description'),
     argumentHint: '[摘要指令]',

@@ -58,16 +58,6 @@ function validatePath(path: unknown): { ok: true; path: string } | { ok: false; 
         '正确流程：grep(pattern="关键词", path="/capabilities") 检索、或 list_capabilities 浏览目录定位工具 → read_capability("工具路径") 加载后调用（工具路径见检索结果的「路径」行）。',
     }
   }
-  // /knowledge 同理：知识卡片只有元数据，语义检索/精读统一走 knowledge_search/knowledge_read
-  // （citation 钉版本 + Online ACL 重校验，正文绝不物化成可直读文件）。
-  if (trimmed === '/knowledge' || trimmed.startsWith('/knowledge/')) {
-    return {
-      ok: false,
-      error:
-        '/knowledge 不支持 read_file/写操作，它是检索专用目录（卡片只有元数据，没有正文）。' +
-        '正确流程：grep(pattern="关键词", path="/knowledge") 检索定位知识库/文档卡片 → knowledge_search 语义检索片段、knowledge_read 按卡片上的 documentId 精读原文（两个工具先 read_capability 加载，schema 见卡片上的加载指令行）。',
-    }
-  }
   // /project 命名空间已退役（2026-09-01 P0-7 登记根吸收）：显式报错指路，绝不静默改写
   if (trimmed === '/project' || trimmed.startsWith('/project/')) {
     return {
@@ -114,7 +104,7 @@ function findClosestLines(content: string, oldStr: string): string {
 export const readFileTool: Tool<{ path: string; offset?: number; limit?: number }> = {
   name: 'read_file',
   description:
-    '读取文件内容，输出带行号前缀（形如 12→内容，行号是显示前缀、不属于文件内容）。path 用 /workspace/ 虚拟路径或物理绝对路径（如 E:/code/proj/src/a.ts；/capabilities、/knowledge 是检索专用目录，请用 grep/glob/list_files）。可指定 offset（从第几行开始，1-based）和 limit（最多读取多少行）以控制返回长度，单文件上限 100K 字符。',
+    '读取文件内容，输出带行号前缀（形如 12→内容，行号是显示前缀、不属于文件内容）。path 用 /workspace/ 虚拟路径或物理绝对路径（如 E:/code/proj/src/a.ts；/capabilities 是检索专用目录，请用 grep/glob/list_files）。可指定 offset（从第几行开始，1-based）和 limit（最多读取多少行）以控制返回长度，单文件上限 100K 字符。',
   inputSchema: {
     type: 'object',
     properties: {

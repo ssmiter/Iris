@@ -8,7 +8,6 @@ import { decisionTree, platformComposition } from './selection'
 import { feedbackNature } from './feedbackNature'
 import { systemSignals } from './systemSignals'
 import { memory } from './memory'
-import { knowledge } from './knowledge'
 import { collaborationModes } from './collaborationModes'
 import { answerStyle } from './answerStyle'
 import {
@@ -40,7 +39,6 @@ export const MAIN_SECTIONS: PromptSectionDef[] = [
   feedbackNature,
   systemSignals,
   memory,
-  knowledge,
   collaborationModes,
   answerStyle,
   serialParallel,

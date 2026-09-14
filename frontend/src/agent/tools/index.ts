@@ -54,7 +54,6 @@ import { registerFactTool, recallFactsTool, forgetFactTool } from './factTools'
 import { createAskUserTool } from './askUserTool'
 import { updateBoardTool } from './updateBoardTool'
 import { setBrowseDirectoryTool } from './setBrowseDirectoryTool'
-import { KnowledgeToolResultRenderer } from './knowledgeToolRenderers'
 
 /**
  * 向 ToolRegistry 注册 Standalone 模式下可用的本地工具
@@ -266,16 +265,6 @@ registerToolRenderer('str_replace', {
 
 // memory_read：工具已退役（2026-09-03 记忆文件化），其水墨卡片渲染器一并删除——
 // 旧历史里的 memory_read 调用记录回落到默认结果渲染。
-
-registerToolRenderer('knowledge_search', {
-  resultRenderer: KnowledgeToolResultRenderer,
-  promoteResult: true,
-})
-
-registerToolRenderer('knowledge_read', {
-  resultRenderer: KnowledgeToolResultRenderer,
-  promoteResult: true,
-})
 
 registerToolRenderer('iris_aps_review_result', {
   resultRenderer: ApsScheduleResultCard,

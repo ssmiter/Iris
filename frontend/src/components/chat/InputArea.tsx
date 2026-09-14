@@ -623,8 +623,7 @@ export function InputArea({ onSend, onStop, isLoading, isStreaming, disabled, on
               <span key={hintKey} className="wf-rowhint wf-hint-swap">{hintText}</span>
             )}
 
-            {/* 辅助控件：权限模式 + 文件上传（融入胶囊风格）；
-                知识检索范围只走 /knowledge 斜杠命令，输入框不再放常驻按钮（2026-08-17 用户拍板） */}
+            {/* 辅助控件：权限模式 + 文件上传（融入胶囊风格） */}
             <PermissionModeSelect />
 
             {/* File upload button */}
