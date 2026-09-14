@@ -27,7 +27,10 @@ public final class ConversationQueryService {
     }
 
     public Mono<ConversationPage> list(String cursor, int limit) {
-        int safeLimit = validateLimit(limit, 30);
+        // 会话列表是全量侧栏展示（WonWork/Iris 侧栏不分页），上限独立于消息分页的 100——
+        // 100 是单会话历史消息翻页的合理页大小，套到"全部会话数"上会让启动期
+        // 会话列表加载确定性 400（前端按全量 pageSize 拉取）。
+        int safeLimit = validateLimit(limit, 30, 100000);
         return Mono.fromCallable(() -> requireResult(
                         readTransactions.execute(status ->
                                 repository.list(cursor, safeLimit)
@@ -66,13 +69,17 @@ public final class ConversationQueryService {
     }
 
     private int validateLimit(int limit, int defaultLimit) {
+        return validateLimit(limit, defaultLimit, 100);
+    }
+
+    private int validateLimit(int limit, int defaultLimit, int maxLimit) {
         int value = limit <= 0 ? defaultLimit : limit;
-        if (value > 100) {
+        if (value > maxLimit) {
             throw new ApiProblemException(
                     HttpStatus.BAD_REQUEST,
                     "invalid_request",
                     "validation",
-                    "limit 不能超过 100。"
+                    "limit 不能超过 " + maxLimit + "。"
             );
         }
         return value;

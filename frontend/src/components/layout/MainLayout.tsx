@@ -54,24 +54,12 @@ export function MainLayout() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   // 【Iris 2026-09】LoginModal 与登录入口已随登录体系删除——本地个人版无登录态概念
   const [guardMessage, setGuardMessage] = useState<string | null>(null)
-  const [knowledgeEnabled, setKnowledgeEnabled] = useState(false)
+  // 知识库后端未在 Iris 实现（/api/knowledge/* 一律 404）。功能整体关闭：
+  // 恒 false，启动不再探测 capabilities 端点，下游 Sidebar/ChatView 据此隐藏入口。
+  const knowledgeEnabled = false
   const permissions = usePermissionStore((s) => s.permissions)
   const commercialNotice = useCommercialNoticeStore((s) => s.notice)
   const dismissCommercialNotice = useCommercialNoticeStore((s) => s.dismiss)
-
-  // 仅探测轻量 capability；完整知识工作区与其 CSS/Markdown 渲染器保持 lazy-load。
-  useEffect(() => {
-    let active = true
-    void import('@/api/knowledgeApi')
-      .then(({ knowledgeApi }) => knowledgeApi.capabilities())
-      .then((capabilities) => { if (active) setKnowledgeEnabled(capabilities.enabled) })
-      .catch(() => { if (active) setKnowledgeEnabled(false) })
-    return () => { active = false }
-  }, [])
-
-  useEffect(() => {
-    if (!knowledgeEnabled && activeView === 'knowledge') setActiveView('chat')
-  }, [activeView, knowledgeEnabled])
 
   // 走廊（能力页蓝图 v12「两个房间，一条走廊」）：对话=常驻基底层永不卸载，
   // 能力房=覆盖层从右滑入全覆盖主舞台（对话退后作底层视差，打开后即被完全遮住）；
