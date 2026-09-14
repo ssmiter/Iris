@@ -160,7 +160,7 @@ public class ChatProxyController {
         ObjectNode upstream = objectMapper.createObjectNode();
         upstream.put("model", model(body, target));
         upstream.put("stream", true);
-        upstream.set("messages", withSystemPrompt(body, messages));
+        upstream.set("messages", withSystemPrompt(body, normalizeOpenAiMessages(messages)));
         copyArrayIfPresent(body, upstream, "tools");
         copyIfNumber(body, upstream, "temperature");
         copyIfPresent(body, upstream, "response_format");
@@ -296,6 +296,41 @@ public class ChatProxyController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "messages 不能为空");
         }
         return (ArrayNode) value;
+    }
+
+    /**
+     * 把内部 camelCase 消息翻译成 OpenAI snake_case wire 格式。
+     *
+     * <p>前端 agent 层的 Message 用 camelCase（reasoningContent / toolCalls /
+     * toolCallId），而 DeepSeek 等上游只认 snake_case（reasoning_content /
+     * tool_calls / tool_call_id）。此前直接透传，tool_call_id 缺失被上游判 400
+     * （"missing field tool_call_id"），thinking 模型还因缺 reasoning_content 判
+     * 400（"must be passed back"）——第二轮续写因此拿到空响应。对照
+     * AIGateway DeepSeekProvider.BuildMessages 的字段映射。</p>
+     */
+    private ArrayNode normalizeOpenAiMessages(ArrayNode source) {
+        ArrayNode result = objectMapper.createArrayNode();
+        for (JsonNode message : source) {
+            ObjectNode converted = objectMapper.createObjectNode();
+            String role = text(message, "role");
+            converted.put("role", role == null ? "user" : role);
+            converted.put("content", textOrEmpty(message, "content"));
+
+            String reasoning = text(message, "reasoningContent");
+            if (blank(reasoning)) reasoning = text(message, "reasoning_content");
+            if (!blank(reasoning)) converted.put("reasoning_content", reasoning);
+
+            JsonNode calls = message.path("toolCalls");
+            if (!calls.isArray()) calls = message.path("tool_calls");
+            if (calls.isArray() && !calls.isEmpty()) converted.set("tool_calls", calls);
+
+            String toolCallId = text(message, "toolCallId");
+            if (blank(toolCallId)) toolCallId = text(message, "tool_call_id");
+            if (!blank(toolCallId)) converted.put("tool_call_id", toolCallId);
+
+            result.add(converted);
+        }
+        return result;
     }
 
     private ArrayNode withSystemPrompt(JsonNode body, ArrayNode messages) {

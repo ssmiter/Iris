@@ -243,8 +243,19 @@ public final class ToolExecutionApiController {
     }
 
     private String safe(Throwable error) {
-        return error.getMessage() == null || error.getMessage().isBlank()
-                ? error.getClass().getSimpleName() : error.getMessage();
+        // ToolRuntime wraps non-ToolRuntimeException causes inside
+        // IllegalStateException("Tool runtime failed", cause). Surface the
+        // deepest meaningful message so the frontend sees the real root cause
+        // instead of the opaque wrapper text.
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        if (message == null || message.isBlank()) {
+            message = root.getClass().getSimpleName();
+        }
+        return error == root ? message : message + "（包装自 " + error.getMessage() + "）";
     }
 
     public record ExecuteRequest(

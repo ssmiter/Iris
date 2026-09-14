@@ -43,7 +43,7 @@ public final class WorkspaceItemsApiController {
                      AND v.artifact_version = a.latest_version
                     WHERE a.conversation_id = :conversationId
                       AND v.workspace_path IS NOT NULL
-                    ORDER BY created_at ASC, artifact_id ASC
+                    ORDER BY a.created_at ASC, a.artifact_id ASC
                     """)
                     .param("conversationId", id)
                     .query((rs, row) -> {
