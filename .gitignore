@@ -24,6 +24,8 @@ target/
 frontend/.iris_tmp/
 frontend/tmp_ctx/
 reference/WonWork/*.rar
+# 本地临时存放（个人暂存，不入库）
+local/
 
 # 密钥与本地配置
 .env
