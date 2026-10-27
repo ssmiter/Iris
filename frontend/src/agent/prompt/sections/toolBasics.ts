@@ -1,13 +1,5 @@
 import type { PromptSectionDef } from '../types'
 
-function formatToolSchema(schema: unknown): string {
-  try {
-    return JSON.stringify(schema, null, 2)
-  } catch {
-    return String(schema)
-  }
-}
-
 /** 何时调用工具：诚实底线 + 调用目的性。（压缩标记的说明移至「系统信号」节） */
 export const whenToCallTools: PromptSectionDef = {
   id: 'when-to-call',
@@ -33,25 +25,21 @@ export const callableTools: PromptSectionDef = {
 
     const toolDescriptions = visibleTools
       .map((tool) => {
-        const schema = formatToolSchema(tool.inputSchema)
         const usageNote = tool.usagePrompt
           ? `\n  补充说明：\n${tool.usagePrompt
               .split('\n')
               .map((line) => `  ${line}`)
               .join('\n')}`
           : ''
-        return `- **${tool.name}**：${tool.description}\n  参数 schema:\n${schema
-          .split('\n')
-          .map((line) => `  ${line}`)
-          .join('\n')}${usageNote}`
+        return `- **${tool.name}**：${tool.description}${usageNote}`
       })
       .join('\n\n')
 
     const modeNote =
-      '所有工具调用由前端本地执行，结果直接回传给你继续推理。'
+      '参数以当前模型工具定义为准，不在此重复 schema。前端编排工具调用，本地后端或对应服务执行其客观能力；结果与证据回传后再判断是否完成。'
 
     const deferredToolsNote = hasDeferredTools
-      ? '\n\n**更多工具**：当前还有部分后端/MES/SQL/MCP 工具未直接注入上下文，需经能力发现后按需加载（见 {ref:discovery|能力发现}）。'
+      ? '\n\n**更多工具**：当前还有部分后端、数据或外部服务能力未直接注入上下文，需经能力发现后按需加载（见 {ref:discovery|能力发现}）。'
       : ''
 
     return `${hasLocalTools ? toolDescriptions : '当前没有可用的前端本地工具。'}

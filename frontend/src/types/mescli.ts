@@ -71,6 +71,8 @@ export type ToolErrorCategory =
 export interface ToolCatalogItem {
   name: string
   description: string
+  /** 明确公开给模型的工具使用合同 */
+  prompt?: string
   parameters?: unknown
   riskLevel?: ToolRiskLevel
   isReadOnly?: boolean
@@ -254,6 +256,8 @@ export interface CapabilitySchemaResponse {
   name: string
   /** 工具描述 */
   description: string
+  /** 明确公开给模型的工具使用合同 */
+  prompt?: string
   /** 完整参数 schema */
   parameters?: unknown
   /** 风险等级 */

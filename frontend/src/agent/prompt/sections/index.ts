@@ -10,6 +10,8 @@ import { systemSignals } from './systemSignals'
 import { memory } from './memory'
 import { collaborationModes } from './collaborationModes'
 import { answerStyle } from './answerStyle'
+import { executionThinking } from './executionThinking'
+import { longWaits } from './longWaits'
 import {
   serialParallel,
   preCallCheck,
@@ -37,6 +39,7 @@ export const MAIN_SECTIONS: PromptSectionDef[] = [
   decisionTree,
   platformComposition,
   feedbackNature,
+  executionThinking,
   systemSignals,
   memory,
   collaborationModes,
@@ -47,4 +50,5 @@ export const MAIN_SECTIONS: PromptSectionDef[] = [
   stopCondition,
   errorSop,
   attitude,
+  longWaits,
 ]

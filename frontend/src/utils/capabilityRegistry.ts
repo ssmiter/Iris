@@ -40,7 +40,7 @@ const ALL_CAPABILITIES: CapabilityItem[] = [
   {
     id: 'chat',
     name: '通用 AI 对话',
-    description: '回答工业、生产管理、MES 相关的通用知识问题，进行文本生成、分析、翻译、总结等。',
+    description: '进行知识问答、文本生成、分析、翻译与总结；需要实时事实时使用实际可用工具。',
     category: 'core',
   },
   {
@@ -65,7 +65,7 @@ const ALL_CAPABILITIES: CapabilityItem[] = [
   {
     id: 'local_frontend_tools',
     name: '前端本地工具',
-    description: '在前端本地执行文件处理（read_file / write_file / list_files / glob / grep / delete_file）等工具，无需等待后端响应。',
+    description: '前端编排文件与检索工具，本地后端或对应服务执行客观操作；以当前工具定义、授权目录和回执为准。',
     category: 'tool',
   },
   {
@@ -76,8 +76,8 @@ const ALL_CAPABILITIES: CapabilityItem[] = [
   },
   {
     id: 'agent_swarm',
-    name: 'Agent Swarm',
-    description: '多 Agent 协作 swarm，分解复杂任务为子任务，由多个专业 Agent 并行或串行执行。',
+    name: '子 Agent 协作',
+    description: '通过实际可用的 agent 工具委派独立子任务；只读调研与执行任务遵守各自工具和权限范围。',
     category: 'agent',
   },
   {

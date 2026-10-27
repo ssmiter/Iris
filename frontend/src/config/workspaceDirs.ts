@@ -54,18 +54,18 @@ export const WORKSPACE_STANDARD_DIRS: WorkspaceDirSpec[] = [
   },
   {
     name: 'sync',
-    semantics: "外部资料副本：确需纳入工作区的外部资料（交付物、反复处理的数据集）放 sync/<name>/ 下；沙箱内必须用 os.path.join(os.environ['WONWORK_WORKSPACE_ROOT'], 'sync', '<name>') 拼接，不能直接写 /workspace/sync/...",
+    semantics: '外部资料副本：确需纳入工作区且来源访问已获准的交付物或数据集，放 sync/<name>/ 下；脚本的实际路径映射以当前工具契约为准',
     retention: '手动清理',
     deliverable: true,
   },
   {
     name: 'scripts',
-    semantics: '可复用脚本沉淀处：复杂 shell 命令写成 .sh（run_command 执行），复杂 Python 处理写成 .py（execute_python_script 用）',
+    semantics: '可复用脚本：复杂 PowerShell 命令可保存为 .ps1，复杂 Python 处理可保存为 .py；仅使用当前可用且获准的执行能力运行',
     retention: '长期保留',
   },
   {
     name: 'templates',
-    semantics: '企业模板：PPT/Word 报表规范等，生成文档时优先参考',
+    semantics: '文档模板：PPT/Word 等格式与报表规范，生成文档时优先参考适用模板',
     retention: '长期保留',
   },
   {
@@ -80,7 +80,7 @@ export function buildWorkspaceDirsGuide(dateDir: string): string {
   const lines = WORKSPACE_STANDARD_DIRS.map(
     (d) => `- /workspace/${d.name}/ — ${d.semantics}；保留策略：${d.retention}`
   )
-  return `标准目录（按用途选择写入位置，不要随意新建顶层目录）：\n${lines.join('\n')}\n\n今日日期目录：${dateDir}（写入 outputs/scratch/uploads 时使用）。`
+  return `标准目录（按用途选择写入位置，不要随意新建顶层目录）：\n${lines.join('\n')}\n\n日期目录格式：${dateDir}（按本次日期组织 outputs/scratch/uploads；工具已返回路径时使用实际路径）。`
 }
 
 /**

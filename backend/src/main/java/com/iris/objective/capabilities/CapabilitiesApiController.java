@@ -91,6 +91,10 @@ public class CapabilitiesApiController {
                     out.put("path", binding.capabilityPath());
                     out.put("name", binding.manifest().name());
                     out.put("description", binding.manifest().description());
+                    // Only the model-facing contract, never the binding or executor configuration.
+                    if (binding.manifest().prompt() != null) {
+                        out.put("prompt", binding.manifest().prompt());
+                    }
                     out.put("parameters", binding.manifest().inputSchema());
                     out.put("riskLevel", binding.manifest().riskLevel().name().toLowerCase());
                     out.put("tier", path.startsWith("/system/") ? "primitive" : "domain_operation");
@@ -110,16 +114,22 @@ public class CapabilitiesApiController {
 
     private void collect(CapabilityNode node, List<Map<String, Object>> out) {
         if (node.path() != null && !node.path().isEmpty() && node.children().isEmpty()) {
-            capabilities.read(node.path(), LOCAL).ifPresent(binding -> out.add(Map.of(
-                    "name", binding.manifest().name(),
-                    "path", node.path(),
-                    "description", binding.manifest().description() == null
-                            ? "" : binding.manifest().description(),
-                    "parameters", binding.manifest().inputSchema(),
-                    "riskLevel", binding.manifest().riskLevel().name().toLowerCase(),
-                    "tier", node.path().startsWith("/system/") ? "primitive" : "domain_operation",
-                    "loadStrategy", "deferred"
-            )));
+            capabilities.read(node.path(), LOCAL).ifPresent(binding -> {
+                Map<String, Object> item = new java.util.LinkedHashMap<>(Map.of(
+                        "name", binding.manifest().name(),
+                        "path", node.path(),
+                        "description", binding.manifest().description() == null
+                                ? "" : binding.manifest().description(),
+                        "parameters", binding.manifest().inputSchema(),
+                        "riskLevel", binding.manifest().riskLevel().name().toLowerCase(),
+                        "tier", node.path().startsWith("/system/") ? "primitive" : "domain_operation",
+                        "loadStrategy", "deferred"
+                ));
+                if (binding.manifest().prompt() != null) {
+                    item.put("prompt", binding.manifest().prompt());
+                }
+                out.add(item);
+            });
         }
         for (CapabilityNode child : node.children()) {
             collect(child, out);

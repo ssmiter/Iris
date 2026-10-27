@@ -3,6 +3,7 @@ import {
   buildSubagentSqlNote,
   buildSubagentFeedbackNatureNote,
 } from '@/agent/prompt'
+import { buildExecutionThinkingBody } from '@/agent/prompt/sections/executionThinking'
 
 /**
  * 通用子 Agent（agent 工具 subagent_type=general）的系统提示。
@@ -168,10 +169,13 @@ ${buildSubagentFeedbackNatureNote()}`
 
 你的产出会比这场对话活得久：代码、文档会被没有这场对话上下文的人和 AI 读到——写清楚、自解释。你的职责是执行：把任务做完、验证过、如实报告改了什么和验证结果。提交与落库的节奏由主对话和用户决定，不由你发起。
 
+## 执行任务
+${buildExecutionThinkingBody()}
+
 ## 审批暂停语义
 部分操作（写 SQL、删除文件等高风险操作）会暂停等待用户批准：
 - 提交后等结果即可——批准后自动继续，不要重复提交同一操作；
-- 被拒绝时，换一条不需要审批的路径完成任务，或在报告的未决问题里说明哪一步被阻止。
+- 被拒绝时停止该动作，不通过另一工具、脚本或身份完成同一被拒操作；在报告中说明已确认部分与受阻环节。
 ${discoveryNote}
 ${sqlNote}
 ${structuredNote}

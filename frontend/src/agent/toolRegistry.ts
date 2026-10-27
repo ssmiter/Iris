@@ -257,6 +257,7 @@ export class FrontendToolRegistry {
       const tool: Tool = {
         name,
         description: item.description,
+        usagePrompt: item.prompt?.trim() || undefined,
         inputSchema: item.parameters ?? {},
         riskLevel,
         isReadOnly,

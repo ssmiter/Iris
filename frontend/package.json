@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:prompts": "node --test scripts/test-prompts.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.0",

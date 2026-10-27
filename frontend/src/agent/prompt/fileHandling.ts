@@ -1,32 +1,22 @@
 import { buildWorkspaceDirsGuide } from '@/config/workspaceDirs'
 
-/**
- * 文件处理规范提示（原 localToolPrompt.getFileHandlingPrompt 原样搬运）。
- * 注意：本段含当日日期目录，是 session 级内容——它作为独立的
- * file_handling 顶层 system 段注入，不影响 tool_usage 段的前缀稳定性。
- * 【Iris 2026-09】standalone 已删除，恒为本地模式（工作区以后端为权威源）。
- */
 export function buildFileHandlingPrompt(_mode?: string): string {
-  const modeLine =
-    '- 本地模式下，工作区以后端为权威源；文件读写 list 通过 /api/workspace 操作真实磁盘，写操作仍受 read-before-write 与审批流保护。'
-
-  const today = new Date()
-  const dateDir = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
+  const dirsGuide = buildWorkspaceDirsGuide('{yyyyMMdd}')
 
   return `## 文件处理规范
 
-- **/workspace/ 是统一命名空间**：前端工具与 Python 沙箱都通过它共享文件。
-${buildWorkspaceDirsGuide(dateDir)}
-- **前端文件工具（read_file / write_file / str_replace / list_files / glob / grep / delete_file）接受两类路径**：<code>/workspace/</code> 虚拟路径，以及物理绝对路径（如 <code>E:\\code\\proj\\src\\a.ts</code>）。物理路径受目录登记闸保护：未登记目录首次访问会请你向用户请求授权，授权后该目录及子目录不再询问。读文件用 read_file、改文件用 str_replace、找文件用 glob、查内容用 grep——不要拿 run_command 的 cat/head/tail/grep 当文件工具用。
-- **Python 沙箱是本地执行环境管理，不是安全隔离容器**；在 Process 模式下它可以访问 C:/D:/E: 等本地路径，这是 WonWork 为内部用户提供的灵活能力，不是漏洞。
-- 读取或修改已授权目录外的文件，先经目录授权（"目录未登记"失败时**原样重发同一调用**即触发授权卡，用户确认一次后不再询问）；不要为读取而把外部文件或目录复制进工作区。只有确需纳入工作区的外部资料（交付物、反复处理的数据集）才放 <code>/workspace/sync/&lt;name&gt;/</code>。
-- 工作区文件统一以 "/workspace/" 为前缀。后端生成的 Word/Excel/PPT/图片等文件会自动落入 "/workspace/outputs/{yyyyMMdd}/..."，可通过 list_files 查看、read_file 读取文本、execute_python_script 读取二进制内容。
-- 用户上传的附件已保存到 <code>/workspace/uploads/{yyyyMMdd}/</code>，用户消息中以「[工作区文件: 名称] 路径：...」引用；需要内容时用 read_file 读取（图片已内嵌 base64，无需再读）。若附件以内联「[文件: 名称]」形式出现，则内容已随消息给出，可直接引用。
-- **写文件前必须先读**：调用 write_file 前，必须先调用 read_file 获取当前完整内容，并在 ".expectedContent" 字段回传。str_replace 同样必须先 read_file 再逐字复制 old_string。
-- 如果目标文件不存在，write_file 会创建新文件，此时无需 expectedContent。
-- delete_file 是高风险、不可恢复操作，执行前必须向用户确认，禁止静默删除。
-- 读取大文件时，优先使用 offset/limit 参数控制返回长度，避免上下文爆炸。
-- Office/PDF/图片等二进制文件不要直接全文 read_file；优先使用 execute_python_script 配合 python-docx/openpyxl/python-pptx/Pillow 等库提取文本或转换。
-- **execute_python_script 的 OUTPUT_PATH 是强制写入目标**：任何需要作为本次产出返回的文件，必须写入 OUTPUT_PATH（框架会自动包装 stdout 兜底，但显式写入更可靠）。脚本可以直接读写工作区文件；需要额外依赖时通过 pip_packages 参数申请安装。用 matplotlib 绘图时沙箱已自动配置中文字体，**不要手动设置 plt.rcParams 的 font.sans-serif**——指定系统不存在的字体会让中文重新变成方框。
-${modeLine}`
+- **/workspace/ 是文件工具的虚拟命名空间**，不等于操作系统绝对路径。工作区位置、物理路径支持与可访问范围，以后端当前配置、工具契约和目录授权为准；脚本/文档工具若需要实际路径，按其契约映射，不直接把虚拟路径当 OS 路径。
+${dirsGuide}
+- **工具名不是可用性保证**：以下文件、脚本、文档能力只在当前已注册或经发现加载后使用；缺失时先通过当前可用发现入口确认，不能臆造同名工具。文本读取优先 read_file，局部修改优先 str_replace，定位文件用 glob/list_files，查内容用 grep，创建/追加用 write_file；已有专用能力时，不用命令或 Python 代替文件原语。
+- **目录授权由现有执行链处理**：文件工具支持的虚拟路径或物理绝对路径，均受实际路径围栏与授权限制。遇到未登记目录，等待执行链给出的授权/登记结果；不要自行原样重发来触发审批卡，不承诺永久免询问。若仍失败，核对路径是否存在、登记与连接状态，必要时请用户在现有授权入口处理。拒绝、取消或未授权时停止该动作，不用命令、Python、复制到工作区、换路径别名等方式访问同一受限内容。独立且已获准的工作可以继续。
+- 外部资料不是为了绕过读取限制而复制进工作区。只有用户确需纳入工作区且来源访问已获准时，才将其放入 <code>/workspace/sync/&lt;name&gt;/</code>。
+- 后端生成的文档、图片等交付物按当前输出契约落盘；未指定位置时优先采用 <code>/workspace/outputs/{yyyyMMdd}/...</code> 的目录规范。以工具回执里的实际文件路径为准，用当前文件/产物能力核验，不保证所有工具自动写入同一目录。
+- 用户上传附件通常位于 <code>/workspace/uploads/{yyyyMMdd}/</code>，以消息中的「[工作区文件: 名称] 路径：...」或工具回执为准，需要内容时使用已注册的读取能力。图片若已内嵌且清晰可用，不重复读取；以内联「[文件: 名称]」给出的内容可直接使用。附件目录不是对其他本机路径的授权。
+- **已有与新文件分开处理**：修改、覆盖或追加已有文件前先读取相关现状；整体覆盖必须读到完整内容，分页/截断的片段不能当作完整文件。write_file 覆盖已有文件时按当前契约回传 <code>expectedContent</code>，不带显示行号或包装；str_replace 从已读内容逐字复制 <code>old_string</code>，唯一匹配或明确所需的批量替换。并发冲突时重新读取核对，不强行覆盖。
+- **确认不存在的新文件**可以直接创建，无需读取不存在的内容，也无需为满足 read-before-write 伪造 <code>expectedContent</code>。权限拒绝、连接错误或未读取成功不代表文件不存在。追加使用契约支持的 <code>append</code> 参数，是否需要版本校验字段以当前 schema 为准；不得用追加绕过覆盖保护。
+- 删除不可当作清理障碍的捷径。使用当前删除能力前明确用户意图、目标和影响，遵守确认与审批流程；不静默删除，也不假设可恢复。所有写入/删除都服从执行链，拒绝后不拆分、改写或换工具完成同一效果。
+- 大文本优先按 read_file 的 <code>offset/limit</code> 分段读取，保留行号上下文；要完整改写时须读全，不用截断内容覆盖文件。
+- Office/PDF/图片等二进制文件，优先使用当前可用的格式读取/视觉能力；没有专用能力时，可发现并使用获准的 Python/文档处理工具配合 python-docx、openpyxl、python-pptx、Pillow 等适用库提取或转换，不把二进制当普通文本全文读取。
+- **Python 不提供额外授权保证**：不承诺隔离容器，也不因运行在本机就认为任意盘符可访问或获准。输入文件声明、环境变量、工作目录、依赖申请及输出位置均以当前工具 schema/说明为准；不要硬编码旧产品环境变量或假定每轮 cwd 规则。仅在契约提供时使用对应输入目录/输出变量与依赖参数，产物必须保存到本次工具要求的位置并核验返回路径。
+- 绘图时检查当前环境的中文字体支持；工具已配置字体时不要随意覆盖，缺字时依据实际可用字体修正，不承诺自动预装。文档与图表生成后核对内容、格式和可打开性，文件存在或进程退出成功不等于交付物正确。`
 }

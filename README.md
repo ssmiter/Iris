@@ -140,7 +140,8 @@ Claude Code 是 Iris 内核能力的对标：Agentic 循环、工具与环境深
 | [docs/12](docs/12-agent-kernel-study.md) · [13](docs/13-backend-study.md) | 研究基线：Claude Code 内核、企业级 agent 后端 |
 | [docs/14–17](docs/14-waterfall-layout.md) | 前端系列：瀑布流布局、输入系统、状态管理、主题响应式 |
 | [docs/18–24](docs/18-turn-command-and-sse.md) | 后端与体验系列：Turn/SSE、历史、Tool Runtime、模型协议、上下文压缩、运行时投影与丝滑交互 |
-| [docs/25](docs/25-agent-system-prompt.md) | Agent System Prompt：事实观、能力发现、平台组合、恢复止损与持续评估 |
+| [docs/25](docs/25-agent-system-prompt.md) | Agent System Prompt 的历史设计背景；当前运行接线见 docs/47 |
+| [docs/47](docs/47-prompt-assets.md) | 提示词资产维护入口：前端运行接线、借鉴取舍、结构检查与行为探针 |
 | [docs/26](docs/26-application-object-capabilities.md) | 探索假设：Application 对象、能力语义目录与 Agentic 求解怎样协作 |
 
 ## 技术栈

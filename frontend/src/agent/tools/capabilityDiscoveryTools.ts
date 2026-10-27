@@ -42,6 +42,7 @@ interface ReadCapabilityOutput {
   path: string
   name: string
   description: string
+  prompt?: string
   parameters?: unknown
   schemaText: string
   /** 目录误读时直接承载给模型的引导文本（extractOutputText 优先取 content，避免模型看到 JSON 包装） */
@@ -188,9 +189,11 @@ export function formatReadCapabilityResult(output: ReadCapabilityOutput): string
       ? output.parameters
       : JSON.stringify(output.parameters ?? {}, null, 2),
     '```',
-    '',
-    `现在你可以直接调用工具 ${output.name}。`,
   ]
+  if (output.prompt?.trim()) {
+    lines.push('', '使用说明：', output.prompt.trim())
+  }
+  lines.push('', `现在你可以直接调用工具 ${output.name}。`)
   return lines.join('\n')
 }
 
@@ -410,6 +413,9 @@ export function createReadCapabilityTool(
         const existing = registry.get(response.name)
         if (existing) {
           existing.description = response.description
+          if (response.prompt !== undefined) {
+            existing.usagePrompt = response.prompt.trim() || undefined
+          }
           existing.inputSchema = response.parameters ?? {}
           existing.deferred = false
           existing.alwaysLoad = false
@@ -423,6 +429,7 @@ export function createReadCapabilityTool(
           const tool: Tool = {
             name: response.name,
             description: response.description,
+            usagePrompt: response.prompt?.trim() || undefined,
             inputSchema: response.parameters ?? {},
             riskLevel: response.riskLevel ?? 'standard',
             isReadOnly:
@@ -448,11 +455,13 @@ export function createReadCapabilityTool(
         path: response.path,
         name: response.name,
         description: response.description,
+        prompt: response.prompt?.trim() || undefined,
         parameters: response.parameters,
         schemaText: formatReadCapabilityResult({
           path: response.path,
           name: response.name,
           description: response.description,
+          prompt: response.prompt,
           parameters: response.parameters,
           schemaText: '',
         }),

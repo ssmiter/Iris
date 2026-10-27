@@ -1,6 +1,6 @@
 # 25 · Agent System Prompt：模型与 Iris 操作系统之间的接口
 
-> 状态：首版结构已落地，内容会随单 Agent 内核反复打磨。
+> 阅读定位：本文保留 Java 后端 Agent 时代的设计背景；其中 `AgentSystemPrompt`、`ModelContextAssembler` 与调用协议的接线说明不代表当前运行实现。当前前端提示词资产、维护入口和验证协议见 [docs/47](47-prompt-assets.md)，前端运行时与后端客观层分别见 [docs/44](44-frontend-agent-runtime-rearchitecture.md)、[docs/46](46-backend-objective-layer.md)。
 >
 > Prompt 不是品牌文案，也不是一份工具说明书。它规定模型如何理解 Iris 提供的环境、
 > 如何发现能力、如何把 observation 当作事实、如何在失败后恢复，以及何时停止。
